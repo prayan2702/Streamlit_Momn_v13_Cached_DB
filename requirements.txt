@@ -66,4 +66,4 @@ smartapi-python==1.5.5
 pyotp==2.9.0
 websocket-client==1.8.0
 logzero==1.7.0
-
+pyarrow>=14.0.0
