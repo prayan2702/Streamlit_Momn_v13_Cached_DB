@@ -29,7 +29,7 @@ import yfinance as yf
 from dateutil.relativedelta import relativedelta
 
 # ── Config ────────────────────────────────────────────────────
-GITHUB_BASE   = "https://raw.githubusercontent.com/prayan2702/Streamlit-momn/refs/heads/main"
+GITHUB_BASE   = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
 CACHE_DIR     = Path("cache")
 CHUNK_SIZE    = 50       # symbols per yfinance.download call
 CHUNK_SLEEP   = 0.5     # seconds between chunks (yfinance rate limit safe)
