@@ -1,1 +1,41 @@
+name: Daily Cache Builder
 
+on:
+  schedule:
+    # Roz 3:00 PM UTC = 8:30 PM IST, Monday-Friday (weekdays only)
+    - cron: '0 15 * * 1-5'
+
+  # Manual trigger bhi possible hai (GitHub Actions tab se)
+  workflow_dispatch:
+
+jobs:
+  build-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install yfinance pandas pyarrow requests python-dateutil numpy
+
+      - name: Build cache
+        run: python cache_builder.py
+
+      - name: Commit and push cache files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/
+          git diff --staged --quiet || git commit -m "🔄 Daily cache: $(date +'%Y-%m-%d %H:%M UTC')"
+          git push
