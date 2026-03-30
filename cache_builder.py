@@ -36,6 +36,21 @@ CHUNK_SLEEP   = 0.5     # seconds between chunks (yfinance rate limit safe)
 RECENT_MONTHS = 40       # recent data kitne months ka store karein
 EXTRA_SYMBOLS = ["GOLDBEES.NS", "SILVERBEES.NS"]
 
+# NSE direct download URL — same file jo aap manually download karte ho
+NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+
+# NSE website ke liye browser-like headers zaroori hain (403 avoid karne ke liye)
+NSE_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Referer":         "https://www.nseindia.com/",
+}
+
 # ── Helpers ───────────────────────────────────────────────────
 def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
@@ -43,15 +58,66 @@ def log(msg: str):
 
 
 def load_symbols() -> list:
-    """NSE_EQ_ALL.csv se symbols load + GOLDBEES/SILVERBEES add."""
-    log("Loading symbol list from GitHub...")
-    url = f"{GITHUB_BASE}/NSE_EQ_ALL.csv"
-    df  = pd.read_csv(url)
-    symbols = (df['Symbol'].astype(str).str.strip() + '.NS').tolist()
+    """
+    NSE EQUITY_L.csv directly from NSE website download karo.
+    Same file jo manually download karte ho:
+      https://www.nseindia.com/static/market-data/securities-available-for-trading
+      → Securities available for Equity segment (.csv)
+
+    Filter: SERIES == 'EQ' only (same as app ka parse_equity_csv)
+    Then: GOLDBEES + SILVERBEES add karo
+    Fallback: GitHub repo ka NSE_EQ_ALL.csv use karo
+    """
+    log("Downloading EQUITY_L.csv from NSE...")
+
+    # ── Primary: NSE direct download ─────────────────────────
+    try:
+        # NSE ke liye pehle homepage visit simulate karna padta hai
+        session = requests.Session()
+        session.get("https://www.nseindia.com", headers=NSE_HEADERS, timeout=15)
+        time.sleep(1)  # brief pause
+
+        resp = session.get(NSE_EQUITY_URL, headers=NSE_HEADERS, timeout=30)
+        resp.raise_for_status()
+
+        from io import StringIO
+        df = pd.read_csv(StringIO(resp.text), skipinitialspace=True)
+        df.columns = [c.strip() for c in df.columns]
+
+        # Filter: sirf EQ series
+        if 'SERIES' in df.columns:
+            df = df[df['SERIES'].str.strip() == 'EQ'].copy()
+
+        df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
+        df = df.reset_index(drop=True)
+
+        symbols = (df['SYMBOL'] + '.NS').tolist()
+        log(f"  ✅ NSE EQUITY_L.csv: {len(df):,} EQ stocks downloaded")
+
+        # CSV bhi save karo cache/ mein (reference ke liye)
+        df.to_csv(CACHE_DIR / "EQUITY_L.csv", index=False)
+        log(f"  Saved: cache/EQUITY_L.csv")
+
+    except Exception as e:
+        log(f"  ⚠️  NSE direct download failed: {e}")
+        log(f"  Falling back to GitHub NSE_EQ_ALL.csv...")
+
+        # ── Fallback: GitHub repo ka NSE_EQ_ALL.csv ──────────
+        try:
+            url = f"{GITHUB_BASE}/NSE_EQ_ALL.csv"
+            df  = pd.read_csv(url)
+            symbols = (df['Symbol'].astype(str).str.strip() + '.NS').tolist()
+            log(f"  ✅ GitHub fallback: {len(symbols):,} symbols loaded")
+        except Exception as e2:
+            log(f"  ❌ Fallback also failed: {e2}")
+            raise RuntimeError("Symbol list load karna possible nahi hua.") from e2
+
+    # ── GOLDBEES + SILVERBEES add karo ────────────────────────
     for s in EXTRA_SYMBOLS:
         if s not in symbols:
             symbols.append(s)
-    log(f"  Symbols loaded: {len(symbols):,} (incl. GOLDBEES & SILVERBEES)")
+
+    log(f"  Total symbols: {len(symbols):,} (incl. GOLDBEES & SILVERBEES)")
     return symbols
 
 
@@ -211,6 +277,7 @@ def build_cache():
         "data_end"           : end_date.strftime("%Y-%m-%d"),
         "recent_months"      : RECENT_MONTHS,
         "source"             : "YFinance",
+        "symbol_source"      : "NSE EQUITY_L.csv (direct)",
         "extra_symbols"      : EXTRA_SYMBOLS,
         "close_shape"        : list(close.shape),
         "high_shape"         : list(high.shape),

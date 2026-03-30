@@ -99,9 +99,10 @@ def get_cache_status_html() -> str:
         color, bdr, text, icon = "#fee2e2", "#fca5a5", "#7f1d1d", "❌"
         freshness = f"{int(age)} din purana — stale!"
 
-    fetched  = meta.get("symbols_fetched", "?")
-    build_dt = meta.get("build_date", "?")
-    src      = meta.get("source", "YFinance")
+    fetched   = meta.get("symbols_fetched", "?")
+    build_dt  = meta.get("build_date", "?")
+    src       = meta.get("source", "YFinance")
+    sym_src   = meta.get("symbol_source", "NSE EQUITY_L.csv")
 
     return f"""
     <div style="background:{color};border:1px solid {bdr};border-left:4px solid {bdr};
@@ -110,7 +111,8 @@ def get_cache_status_html() -> str:
       <span style="font-size:11.5px;margin-top:4px;display:block;">
         📅 Build date: <b>{build_dt}</b> &nbsp;·&nbsp;
         📋 Symbols: <b>{fetched:,}</b> &nbsp;·&nbsp;
-        📡 Source: <b>{src}</b><br>
+        📡 Data: <b>{src}</b><br>
+        📋 Symbol list: <b>{sym_src}</b> (+ GOLDBEES &amp; SILVERBEES)<br>
         ⚡ "Pre-cached (Instant)" select karo → <b>&lt;5 sec</b> mein data ready
       </span>
     </div>"""
