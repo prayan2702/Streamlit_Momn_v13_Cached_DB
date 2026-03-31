@@ -1,1 +1,61 @@
+name: Daily Cache Builder — Upstox
 
+on:
+  schedule:
+    # Roz 4:00 PM UTC = 9:30 PM IST, Monday–Friday
+    - cron: '0 16 * * 1-5'
+
+  workflow_dispatch:   # Manual trigger
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-cache-upstox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # Sequential fetch ~60-70 min for 2100 symbols × 3 decades
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '3.11'
+
+      # ── SECURITY: Mask all secret values in logs ──────────────
+      # ::add-mask:: GitHub Actions command — agar koi bhi
+      # secret value accidentally log/print ho to *** se replace ho jaata hai.
+      # Ye sabse important security step hai public repo ke liye.
+      - name: Mask secrets in logs
+        run: |
+          echo "::add-mask::${{ secrets.UPSTOX_CLIENT_ID }}"
+          echo "::add-mask::${{ secrets.UPSTOX_CLIENT_SECRET }}"
+          echo "::add-mask::${{ secrets.UPSTOX_REDIRECT_URI }}"
+          echo "::add-mask::${{ secrets.UPSTOX_MOBILE }}"
+          echo "::add-mask::${{ secrets.UPSTOX_PIN }}"
+          echo "::add-mask::${{ secrets.UPSTOX_TOTP_SECRET }}"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas pyarrow requests python-dateutil numpy pyotp
+
+      - name: Build Upstox cache
+        env:
+          UPSTOX_CLIENT_ID:     ${{ secrets.UPSTOX_CLIENT_ID }}
+          UPSTOX_CLIENT_SECRET: ${{ secrets.UPSTOX_CLIENT_SECRET }}
+          UPSTOX_REDIRECT_URI:  ${{ secrets.UPSTOX_REDIRECT_URI }}
+          UPSTOX_MOBILE:        ${{ secrets.UPSTOX_MOBILE }}
+          UPSTOX_PIN:           ${{ secrets.UPSTOX_PIN }}
+          UPSTOX_TOTP_SECRET:   ${{ secrets.UPSTOX_TOTP_SECRET }}
+        run: python cache_builder_upstox.py
+
+      - name: Commit and push cache files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/
+          git diff --staged --quiet || git commit -m "🔄 Upstox cache: $(date +'%Y-%m-%d %H:%M UTC')"
+          git push
