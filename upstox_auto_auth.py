@@ -1,16 +1,17 @@
 """
 upstox_auto_auth.py
 ===================
-Fix: UDAPI10000 = request body mein client_id + redirect_uri bhi chahiye,
-sirf query params mein nahi — ye hi root cause tha.
+Correct Upstox headless auth flow:
 
-Correct Upstox headless login flow:
-  Step 1: GET dialog → udapi_api_key cookie
-  Step 2: POST dialog (x-api-key header + body mein client_id bhi)
-          → {mobile_num, client_id, redirect_uri, response_type}
-  Step 3: POST dialog (x-api-key header + body mein client_id bhi)
-          → {mobile_num, client_secret, totp, client_id, redirect_uri, response_type}
-  Step 4: auth_code → access_token
+Step 1: GET dialog → udapi_api_key cookie
+Step 2: POST api-v2.upstox.com/user/v1/send_otp_for_mobile
+        headers: x-api-key = udapi_api_key cookie
+        body:    {mobile_num}
+Step 3: POST api-v2.upstox.com/user/v1/login
+        headers: x-api-key = udapi_api_key cookie
+        body:    {mobile_num, mpin, totp}
+        response: redirect_url containing ?code=...
+Step 4: code → access_token via token endpoint
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -23,8 +24,11 @@ import urllib.parse
 import pyotp
 import requests
 
-_AUTH_DIALOG = "https://api.upstox.com/v2/login/authorization/dialog"
-_TOKEN_URL   = "https://api.upstox.com/v2/login/authorization/token"
+_AUTH_DIALOG   = "https://api.upstox.com/v2/login/authorization/dialog"
+_TOKEN_URL     = "https://api.upstox.com/v2/login/authorization/token"
+_API_V2_BASE   = "https://api-v2.upstox.com"
+_SEND_OTP_EP   = f"{_API_V2_BASE}/user/v1/send_otp_for_mobile"
+_LOGIN_EP      = f"{_API_V2_BASE}/user/v1/login"
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -48,7 +52,7 @@ def _extract_code(url: str):
 
 
 def _exchange_code(session, auth_code, client_id, client_secret, redirect_uri) -> str:
-    _safe_log("Step 4: Exchanging auth_code for access_token...")
+    _safe_log("Step 4: Exchanging code for access_token...")
     try:
         resp = session.post(
             _TOKEN_URL,
@@ -69,7 +73,7 @@ def _exchange_code(session, auth_code, client_id, client_secret, redirect_uri) -
         token = resp.json().get("access_token", "")
         if not token:
             raise RuntimeError("access_token missing in response")
-        _safe_log(f"  Token OK: {_mask(token)} (len={len(token)}) ✅")
+        _safe_log(f"  Token: {_mask(token)} (len={len(token)}) ✅")
         return token
     except requests.HTTPError as e:
         raise RuntimeError(
@@ -94,14 +98,13 @@ def get_upstox_token_automated(
         "Accept-Encoding": "gzip, deflate, br",
     })
 
-    # Query params (for GET only)
     auth_params = {
         "response_type": "code",
         "client_id":     client_id,
         "redirect_uri":  redirect_uri,
     }
 
-    # ── Step 1: Load dialog → udapi_api_key cookie ─────────────
+    # ── Step 1: GET dialog → udapi_api_key cookie ──────────────
     _safe_log("Step 1: Loading auth dialog page...")
     try:
         r1 = session.get(
@@ -117,37 +120,29 @@ def get_upstox_token_automated(
     if api_key:
         _safe_log(f"  udapi_api_key: {_mask(api_key)} ✅")
     else:
-        _safe_log("  WARNING: udapi_api_key not found")
+        _safe_log("  WARNING: udapi_api_key not in cookies")
 
     time.sleep(1.5)
 
-    # Common headers for Steps 2 & 3
-    # KEY FIX: x-api-key header with udapi_api_key cookie value
-    api_headers = {
+    # Internal API headers — x-api-key is the session key
+    int_headers = {
         "Accept":       "application/json, */*",
         "Content-Type": "application/json",
-        "Origin":       "https://api.upstox.com",
-        "Referer":      r1.url,
         "x-api-key":    api_key,
+        "Origin":       _API_V2_BASE,
+        "Referer":      r1.url,
     }
 
-    # ── Step 2: Submit mobile ──────────────────────────────────
-    # KEY FIX: client_id + redirect_uri + response_type in JSON BODY
-    _safe_log(f"Step 2: Submitting mobile {_mask(mobile, 3)}*****...")
+    # ── Step 2: Send OTP to mobile ────────────────────────────
+    _safe_log(f"Step 2: Send OTP to {_mask(mobile, 3)}*****...")
     step2_ok = False
 
     for mkey in ["mobile_num", "mobileNum"]:
         try:
-            body2 = {
-                mkey:             mobile,
-                "client_id":      client_id,        # ← KEY FIX
-                "redirect_uri":   redirect_uri,      # ← KEY FIX
-                "response_type":  "code",            # ← KEY FIX
-            }
             r2 = session.post(
-                _AUTH_DIALOG,
-                json=body2,
-                headers=api_headers,
+                _SEND_OTP_EP,
+                json={mkey: mobile},
+                headers=int_headers,
                 allow_redirects=False,
                 timeout=20,
             )
@@ -155,104 +150,105 @@ def get_upstox_token_automated(
 
             if r2.status_code in (200, 201):
                 step2_ok = True
-                loc = r2.headers.get("Location", "")
-                if loc:
-                    code = _extract_code(loc)
-                    if code:
-                        _safe_log("  Got auth_code at Step 2!")
-                        return _exchange_code(session, code, client_id, client_secret, redirect_uri)
-                break
-
-            if r2.status_code in (400, 401):
+                _safe_log("  OTP sent ✅")
                 try:
-                    errs = r2.json().get("errors") or []
-                    ec   = errs[0].get("errorCode", "") if errs else ""
-                    _safe_log(f"  Error: {ec}")
+                    body = r2.json()
+                    _safe_log(f"  Response status: {body.get('status', '')}")
                 except Exception:
                     pass
+                break
+
+            # Log error (not values)
+            try:
+                errs = r2.json().get("errors") or []
+                ec = errs[0].get("errorCode", "") if errs else ""
+                msg = errs[0].get("message", "") if errs else ""
+                _safe_log(f"  Error: {ec} — {msg}")
+            except Exception:
+                pass
 
         except Exception as e:
             _safe_log(f"  {mkey}: {type(e).__name__}")
 
     if not step2_ok:
-        _safe_log("  Step 2 inconclusive — continuing to Step 3...")
+        _safe_log("  Step 2 failed — login might not need OTP (MPIN+TOTP flow)")
+        _safe_log("  Continuing to Step 3 (direct MPIN+TOTP login)...")
 
-    time.sleep(1)
+    time.sleep(2)  # OTP delivery wait
 
-    # ── Step 3: Submit PIN + TOTP ──────────────────────────────
-    # KEY FIX: client_id + redirect_uri + response_type in BODY here too
-    _safe_log("Step 3: Submitting PIN + TOTP (values masked)...")
+    # ── Step 3: Login with MPIN + TOTP ───────────────────────
+    _safe_log("Step 3: Login with MPIN + TOTP (values masked)...")
 
-    def _try_step3(totp_val: str):
-        # "client_secret" key = PIN in Upstox API (confusing naming!)
+    def _do_login(totp_val: str):
+        """
+        Try login with internal endpoint.
+        Upstox uses 'mpin' key for PIN in internal API.
+        Response contains redirect_url with auth_code.
+        """
         payloads = [
-            # Format A — "client_secret" key for PIN (Upstox standard)
-            {
-                "mobile_num":    mobile,
-                "client_secret": pin,
-                "totp":          totp_val,
-                "client_id":     client_id,
-                "redirect_uri":  redirect_uri,
-                "response_type": "code",
-            },
-            # Format B — "pin" key
-            {
-                "mobile_num":    mobile,
-                "pin":           pin,
-                "totp":          totp_val,
-                "client_id":     client_id,
-                "redirect_uri":  redirect_uri,
-                "response_type": "code",
-            },
-            # Format C — "mpin" key
-            {
-                "mobile_num":    mobile,
-                "mpin":          pin,
-                "totp":          totp_val,
-                "client_id":     client_id,
-                "redirect_uri":  redirect_uri,
-                "response_type": "code",
-            },
+            # Format A — mpin (Upstox internal API standard)
+            {"mobile_num": mobile, "mpin": pin, "totp": totp_val},
+            # Format B — client_secret (older format)
+            {"mobile_num": mobile, "client_secret": pin, "totp": totp_val},
+            # Format C — pin
+            {"mobile_num": mobile, "pin": pin, "totp": totp_val},
         ]
 
         for idx, pld in enumerate(payloads):
             try:
                 r3 = session.post(
-                    _AUTH_DIALOG,
+                    _LOGIN_EP,
                     json=pld,
-                    headers=api_headers,
+                    headers=int_headers,
                     allow_redirects=False,
                     timeout=20,
                 )
                 _safe_log(f"  fmt{idx+1}: HTTP {r3.status_code}")
 
-                # Check Location redirect
+                # 200 with redirect_url in body (most common)
+                try:
+                    body = r3.json()
+                    _safe_log(f"  Body keys: {list(body.keys())}")
+
+                    # Check redirect_url in body
+                    for key in ("redirect_url", "redirectUrl", "data"):
+                        val = body.get(key, "")
+                        if isinstance(val, str) and val:
+                            code = _extract_code(val)
+                            if code:
+                                _safe_log(f"  auth_code from body[{key}] ✅")
+                                return code
+                        # data might be a dict
+                        if isinstance(val, dict):
+                            for subkey in ("redirect_url", "redirectUrl", "code"):
+                                subval = val.get(subkey, "")
+                                if subval:
+                                    code = _extract_code(subval) if "redirect" in subkey else subval
+                                    if code:
+                                        return code
+
+                    if "code" in body:
+                        return body["code"]
+
+                    # Error info (no values)
+                    if r3.status_code >= 400:
+                        errs = body.get("errors") or []
+                        ec = errs[0].get("errorCode", "") if errs else body.get("error", "")
+                        emsg = errs[0].get("message", "") if errs else ""
+                        _safe_log(f"  Error: {ec} — {emsg}")
+
+                except Exception as je:
+                    _safe_log(f"  JSON parse: {type(je).__name__}")
+
+                # Location header redirect
                 loc = r3.headers.get("Location", "")
                 if loc:
                     code = _extract_code(loc)
                     if code:
-                        _safe_log(f"  auth_code from redirect ✅")
+                        _safe_log(f"  auth_code from Location header ✅")
                         return code
 
-                # Check JSON body
-                try:
-                    body = r3.json()
-                    if "code" in body:
-                        _safe_log(f"  auth_code in body ✅")
-                        return body["code"]
-                    for key in ("redirect_url", "redirectUrl", "url"):
-                        if key in body:
-                            code = _extract_code(body[key])
-                            if code:
-                                return code
-                    if r3.status_code >= 400:
-                        errs = body.get("errors") or []
-                        ec   = errs[0].get("errorCode", "") if errs else body.get("error", "")
-                        _safe_log(f"  Error: {ec}")
-                except Exception:
-                    pass
-
-                # HTML body scan
+                # HTML scan
                 if r3.status_code == 200 and r3.text:
                     m = re.search(r"[?&]code=([^&\"'\s]+)", r3.text)
                     if m:
@@ -265,26 +261,26 @@ def get_upstox_token_automated(
         return None
 
     totp_code = pyotp.TOTP(totp_secret).now()
-    auth_code = _try_step3(totp_code)
+    auth_code = _do_login(totp_code)
 
     if not auth_code:
         _safe_log("  Waiting 31s for fresh TOTP window...")
         time.sleep(31)
         totp_code = pyotp.TOTP(totp_secret).now()
-        _safe_log("  Retry with fresh TOTP (masked)...")
-        auth_code = _try_step3(totp_code)
+        _safe_log("  Retry (fresh TOTP, masked)...")
+        auth_code = _do_login(totp_code)
 
     if not auth_code:
         raise RuntimeError(
-            "Upstox auth failed — auth_code nahi mila.\n"
-            "Debug karo:\n"
-            "  1. TOTP verify karo:\n"
-            "     python -c \"import pyotp; print(pyotp.TOTP('YOUR_SECRET').now())\"\n"
-            "     Upstox app ke OTP se match karna chahiye\n"
-            "  2. UPSTOX_PIN — 6-digit (Upstox app login PIN)\n"
-            "  3. UPSTOX_MOBILE — 10-digit bina +91\n"
-            "  4. UPSTOX_REDIRECT_URI — developer.upstox.com pe jo set hai exactly wahi\n"
-            "Values logs mein kabhi nahi dikhti."
+            "Upstox auth failed.\n"
+            "Checks:\n"
+            "  1. UPSTOX_MOBILE: 10-digit, bina +91\n"
+            "  2. UPSTOX_PIN: Upstox app 6-digit MPIN\n"
+            "  3. TOTP verify locally:\n"
+            "     python -c \"import pyotp; print(pyotp.TOTP('SECRET').now())\"\n"
+            "     Upstox app OTP se match karna chahiye\n"
+            "  4. UPSTOX_REDIRECT_URI: developer.upstox.com pe exactly jo hai\n"
+            "Values logs mein nahi dikhti."
         )
 
     return _exchange_code(session, auth_code, client_id, client_secret, redirect_uri)
