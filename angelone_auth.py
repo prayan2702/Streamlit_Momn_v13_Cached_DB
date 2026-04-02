@@ -78,9 +78,23 @@ def get_angelone_client(sidebar=True):
                 st.session_state["angelone_client"] = obj
                 st.rerun()
             else:
-                # Auto-login failed — show error but still no credentials in UI
+                # Auto-login failed — show actionable error, no credentials in UI
                 container = st.sidebar if sidebar else st
-                container.error(f"Angel One auto-login failed: {err}")
+                # "Invalid API Key" = SmartAPI app expired/deleted ya galat key
+                err_lower = (err or "").lower()
+                if "invalid api key" in err_lower or "app not found" in err_lower:
+                    container.error(
+                        f"🔴 **Angel One API Key Invalid**\n\n"
+                        f"Streamlit Secrets mein jo `api_key` hai woh expired ya galat hai.\n\n"
+                        f"**Fix karein:**\n"
+                        f"1. [Angel One SmartAPI Console](https://smartapi.angelbroking.com/) open karein\n"
+                        f"2. Apna existing app check karein (ya naya banayein)\n"
+                        f"3. Naya **API Key** copy karein\n"
+                        f"4. Streamlit Cloud → Secrets mein `angelone.api_key` update karein\n"
+                        f"5. App restart karein"
+                    )
+                else:
+                    container.error(f"Angel One auto-login failed: {err}")
         return st.session_state.get("angelone_client", None)
 
     # ── 3. No secrets → blank manual form (nothing prefilled) ─────────────────

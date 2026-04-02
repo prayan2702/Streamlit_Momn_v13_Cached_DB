@@ -28,7 +28,13 @@ def getStdev(data):
     return np.std(getMaskDailyChange(data) * 100)
 
 def getAbsReturns(data):
-    return round((data.iloc[-1] / data.iloc[0] - 1) * 100, 2)
+    # ffill() → interior/trailing NaN fill (holidays ke beech ke gaps)
+    # bfill() → leading NaN fill (agar window ka pehla din Indian market holiday ho)
+    # Yeh fix "kabhi kabhi roc3M/roc12M blank" bug solve karta hai:
+    # pd.bdate_range mein Indian market holidays include hote hain (weekdays hain),
+    # to dates['date3M'] exact holiday pe land kar sakta hai → iloc[0] = NaN → ROC = NaN
+    d = data.ffill().bfill()
+    return round((d.iloc[-1] / d.iloc[0] - 1) * 100, 2)
 
 def getVolatility(data):
     return round(data.std(ddof=0) * np.sqrt(252) * 100, 2)
@@ -117,7 +123,9 @@ def build_dfStats(close, high, volume, dates, ranking_method):
 
     dfStats = pd.DataFrame(index=symbol)
     dfStats['Close']   = round(data12M.iloc[-1], 2)
-    data12M_Temp = data12M.fillna(0)
+    # ffill() — market holidays ke NaN ko aage ke close se fill karo
+    # (pehle fillna(0) tha jo 0 price se DMA calculate karta tha — galat!)
+    data12M_Temp = data12M.ffill()
     dfStats['dma200d'] = round(data12M_Temp.rolling(window=200).mean().iloc[-1], 2)
 
     dfStats['roc12M'] = getAbsReturns(data12M)

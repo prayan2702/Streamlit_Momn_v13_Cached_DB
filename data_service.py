@@ -157,6 +157,31 @@ def fetch_yfinance(symbols, start_date, chunk_size, progress_bar, status_text):
     return close, high, volume, failed_symbols
 
 # ─────────────────────────────────────────────────────────────
+# SECTION G — TRAILING NaN TRIMMER (SHARED UTILITY)
+# ─────────────────────────────────────────────────────────────
+def _trim_trailing_nan(close: pd.DataFrame, high: pd.DataFrame, volume: pd.DataFrame):
+    """
+    Trailing all-NaN rows hatata hai (e.g., aaj ka date jab market candle
+    abhi finalize nahi hua — Upstox / Angel One dono ke liye).
+
+    Problem: pd.bdate_range(start, end_date) mein aaj ka date include hota hai,
+    lekin broker API ka today's candle market close ke baad available hota hai.
+    Agar user aaj ka date select kare to last row = all NaN → ROC/ZScore sab NaN.
+
+    Fix: Last row jahan SABHI symbols NaN hain, usse drop karo. Calculations
+    automatically last valid trading day use kar lenge.
+    """
+    if close.empty:
+        return close, high, volume
+    # Last date jahan at least 1 symbol ka data hai
+    last_valid_idx = close.dropna(how='all').index
+    if len(last_valid_idx) == 0:
+        return close, high, volume
+    trim_to = last_valid_idx[-1]
+    return close.loc[:trim_to], high.loc[:trim_to], volume.loc[:trim_to]
+
+
+# ─────────────────────────────────────────────────────────────
 # SECTION H — UPSTOX BULK FETCHER (LIVE)
 # ─────────────────────────────────────────────────────────────
 UPSTOX_MAX_LOOKBACK_MONTHS = 120
@@ -223,7 +248,14 @@ def fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status
     close  = pd.DataFrame({s: v.reindex(all_idx) for s, v in close_map.items()}, index=all_idx)
     high   = pd.DataFrame({s: v.reindex(all_idx) for s, v in high_map.items()},  index=all_idx)
     volume = pd.DataFrame({s: v.reindex(all_idx) for s, v in vol_map.items()},   index=all_idx)
-    
+
+    # ── FIX: Aaj ka incomplete/missing candle trim karo ─────
+    # Agar user ne aaj ka date select kiya aur market candle finalize
+    # nahi hua to last row = all NaN → ROC/ZScore sab blank hote hain.
+    close, high, volume = _trim_trailing_nan(close, high, volume)
+    last_date = close.index[-1].strftime('%d-%b-%Y') if not close.empty else "N/A"
+    status_text.text(f"Done - {len(close_map)}/{total} fetched | Last trading day: {last_date}")
+
     return close, high, volume, failed
 
 
@@ -460,6 +492,11 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
     if close.empty:
         st.error("No data fetched from Angel One. Try re-logging in and retry.")
         st.stop()
+
+    # ── FIX: Aaj ka incomplete/missing candle trim karo ─────
+    close, high, volume = _trim_trailing_nan(close, high, volume)
+    last_date = close.index[-1].strftime('%d-%b-%Y') if not close.empty else "N/A"
+    status_text.text(f"Done — {len(close_map)}/{total} fetched | Last trading day: {last_date}")
 
     return close, high, volume, failed
 
