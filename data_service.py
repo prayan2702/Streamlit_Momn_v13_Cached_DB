@@ -187,7 +187,17 @@ def _trim_trailing_nan(close: pd.DataFrame, high: pd.DataFrame, volume: pd.DataF
 UPSTOX_MAX_LOOKBACK_MONTHS = 120
 
 def fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status_text):
-    access_token = get_upstox_access_token(sidebar=True)
+    # Token directly session_state se lo — sidebar mein pehle se render ho chuka hai.
+    # get_upstox_access_token(sidebar=True) yahan dobara call karne se
+    # same key='upstox_auth_code_input' widget do baar banta hai → Streamlit duplicate key error.
+    _token_data = st.session_state.get("upstox_token_data", {})
+    access_token = _token_data.get("access_token", "") if isinstance(_token_data, dict) else ""
+    if not access_token:
+        # Fallback: auth function se try karo (no-UI path — already logged in case)
+        try:
+            access_token = get_upstox_access_token(sidebar=False) or ""
+        except Exception:
+            access_token = ""
     if not access_token:
         progress_bar.progress(0.0)
         st.error("Please complete Upstox login in the sidebar first, then retry.")
@@ -396,9 +406,12 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
     """
     global _ANGELONE_LAST_RUN_TIME
 
-    client = get_angelone_client(sidebar=True)
+    # Client directly session_state se lo — sidebar mein pehle se render ho chuka hai.
+    # get_angelone_client(sidebar=True) yahan dobara call karne se duplicate key error aata hai.
+    client = st.session_state.get("angelone_client", None)
     if not client:
         progress_bar.progress(0.0)
+        st.error("Please complete Angel One login in the sidebar first, then retry.")
         st.stop()
 
     # ── Cooldown check ───────────────────────────────────────
