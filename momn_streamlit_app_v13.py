@@ -1234,9 +1234,13 @@ elif st.session_state.current_step == 2:
 
     col_run, col_info = st.columns([1, 2])
     with col_run:
-        run_clicked = st.button("▶ Start Data Download", type="primary",
-                                use_container_width=True,
-                                disabled=st.session_state.get("_downloading", False))
+        _running = st.session_state.get("_run_download", False)
+        run_clicked = st.button(
+            "⏳ Downloading..." if _running else "▶ Start Data Download",
+            type="primary",
+            use_container_width=True,
+            disabled=_running,
+        )
     with col_info:
         n_loaded = len(st.session_state.symbols) if st.session_state.symbols else "—"
         st.markdown(f"""
@@ -1250,161 +1254,198 @@ elif st.session_state.current_step == 2:
         📡 Source: <b style="color:var(--teal)">{api_source}</b>
         </div>""", unsafe_allow_html=True)
 
+    # ── Button click: set persistent trigger, save params, rerun ─
+    # We DON'T run the download inside `if run_clicked:` because
+    # Streamlit can rerun during a long download (WebSocket reconnect),
+    # at which point run_clicked=False and _downloading stays True forever.
+    # Instead: button sets a session-state flag; download runs on next render
+    # via `if _run_download:` — survives reconnects, always cleans up.
     if run_clicked:
-        st.session_state["_downloading"] = True
-        dates    = build_dates(end_date)
-        prog_bar = st.progress(0)
+        st.session_state["_run_download"]      = True
+        st.session_state["_run_filter_params"] = filter_params
+        st.session_state["_run_api_source"]    = api_source
+        st.session_state["_run_end_date"]      = end_date
+        st.session_state["_run_u"]             = U
+        st.rerun()
+
+    if st.session_state.get("_run_download", False):
+        # Restore params saved at click-time
+        _filter_params = st.session_state.get("_run_filter_params", filter_params)
+        _api_source    = st.session_state.get("_run_api_source",    api_source)
+        _end_date      = st.session_state.get("_run_end_date",      end_date)
+        _U             = st.session_state.get("_run_u",             U)
+
+        dates     = build_dates(_end_date)
+        prog_bar  = st.progress(0)
         status_tx = st.empty()
+        _download_ok = False
+        try:
 
-        # ══════════════════════════════════════════════════════
-        # BRANCH A — Pre-cached (Instant load from GitHub)
-        # ══════════════════════════════════════════════════════
-        if api_source == "📦 Pre-cached (Instant)":
-            if not _CACHE_AVAILABLE:
-                st.error("❌ cache_loader.py nahi mila. cache_loader.py repo mein add karo.")
-                st.stop()
+            # ══════════════════════════════════════════════════════
+            # BRANCH A — Pre-cached (Instant load from GitHub)
+            # ══════════════════════════════════════════════════════
+            if _api_source == "📦 Pre-cached (Instant)":
+                if not _CACHE_AVAILABLE:
+                    st.error("❌ cache_loader.py nahi mila. cache_loader.py repo mein add karo.")
+                    st.stop()
 
-            status_tx.markdown("⚡ **Pre-cached data GitHub se load ho raha hai...**")
-            prog_bar.progress(0.1)
-            try:
-                close, high, volume = load_cache()
-                prog_bar.progress(0.85)
-                status_tx.markdown("✅ **Cache loaded!** Calculations shuru ho rahi hain...")
+                status_tx.markdown("⚡ **Pre-cached data GitHub se load ho raha hai...**")
+                prog_bar.progress(0.1)
+                try:
+                    close, high, volume = load_cache()
+                    prog_bar.progress(0.85)
+                    status_tx.markdown("✅ **Cache loaded!** Calculations shuru ho rahi hain...")
 
-                # Cache ke symbols hi symbols hain — failed_blank check karo
-                meta           = get_cache_meta()
-                failed_symbols = meta.get("failed_symbols", [])
+                    # Cache ke symbols hi symbols hain — failed_blank check karo
+                    meta           = get_cache_meta()
+                    failed_symbols = meta.get("failed_symbols", [])
 
-                # Volume check for failed_blank
+                    # Volume check for failed_blank
+                    volume12M_check = volume.loc[dates['date12M']:].copy() if not volume.empty else pd.DataFrame()
+                    median_volume   = volume12M_check.median() if not volume12M_check.empty else pd.Series()
+                    failed_blank    = median_volume[median_volume.isna()].index.tolist()
+                    failed_blank    = [t.replace('.NS','') for t in failed_blank]
+                    st.session_state.failed_blank = failed_blank
+
+                    age = get_cache_age_days()
+                    if age > 3:
+                        st.warning(
+                            f"⚠️ Cache {int(age)} din purana hai (build: {meta.get('build_date','?')}). "
+                            "Data slightly stale ho sakta hai. "
+                            "YFinance se fresh fetch ke liye 'YFinance' select karo."
+                        )
+                    else:
+                        st.success(
+                            f"✅ Cache loaded! "
+                            f"{meta.get('symbols_fetched','?'):,} symbols | "
+                            f"Build: {meta.get('build_date','?')} | "
+                            f"Age: {int(age)} din"
+                        )
+
+                except Exception as e:
+                    st.error(f"❌ Cache load failed: {e}. YFinance select karke retry karo.")
+                    st.stop()
+
+            # ══════════════════════════════════════════════════════
+            # BRANCH B — Live fetch (YFinance / Upstox / Angel One)
+            # ══════════════════════════════════════════════════════
+            else:
+                # ── Load symbols ──────────────────────────────────
+                if st.session_state.symbols is None or st.session_state.universe != U:
+                    with st.spinner(f"Loading {_U} symbols…"):
+                        try:
+                            if _U == "AllNSE":
+                                url = f"{GITHUB_BASE}/NSE_EQ_ALL.csv"
+                                df_sym = pd.read_csv(url)
+                                df_sym['Yahoo_Symbol'] = df_sym['Symbol'].astype(str).str.strip() + '.NS'
+                                syms_ns = df_sym['Yahoo_Symbol'].tolist()
+                            else:
+                                syms_ns = load_symbols_from_github(_U)
+                            syms_ns = add_extra_symbols(syms_ns)
+                            st.session_state.symbols = syms_ns
+                        except Exception as e:
+                            st.error(f"Symbol list load failed: {e}"); st.stop()
+
+                symbols = st.session_state.symbols
+                CHUNK   = 50 if __api_source == "Upstox" else (15 if _U == "AllNSE" else 50)
+                st.markdown(f"""
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 12px 0;">
+                  <span style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-bdr);
+                               border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
+                    📦 Chunk: {CHUNK}
+                  </span>
+                  <span style="background:var(--green-bg);color:var(--green);border:1px solid var(--green-bdr);
+                               border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
+                    📋 Symbols: {len(symbols):,}
+                  </span>
+                  <span style="background:var(--violet-bg);color:var(--violet);border:1px solid #c4b5fd;
+                               border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
+                    📡 Source: {_api_source}
+                  </span>
+                  <span style="background:var(--amber-bg);color:#92400e;border:1px solid #fcd34d;
+                               border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
+                    🥇 GOLDBEES &amp; 🥈 SILVERBEES included
+                  </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Use data_service if available AND source is not YFinance
+                _use_ds = _DS_AVAILABLE and _api_source in ("Upstox", "Angel One")
+                try:
+                    if _use_ds:
+                        close, high, volume, failed_symbols = fetch_data(
+                            api_source   = _api_source,
+                            symbols      = symbols,
+                            start_date   = dates['startDate'],
+                            end_date     = dates['endDate'],
+                            chunk_size   = CHUNK,
+                            progress_bar = prog_bar,
+                            status_text  = status_tx,
+                        )
+                    else:
+                        # YFinance inline fallback
+                        close, high, volume, failed_symbols = _fetch_yfinance_inline(
+                            symbols, dates['startDate'], dates['endDate'],
+                            prog_bar, status_tx, chunk_size=CHUNK
+                        )
+                except Exception as e:
+                    st.error(f"Data fetch error: {e}"); st.stop()
+
+                if close is None or close.empty:
+                    st.session_state["_downloading"] = False
+                    st.error("❌ Data fetch hua nahi. Internet / token check karo."); st.stop()
+
+                # ── Failed symbols ────────────────────────────────
+                # 1. API se directly failed (instrument not found / network error)
+                api_failed = [t.replace('.NS','') for t in (failed_symbols or [])]
+                # 2. Volume-based blank detection (data fetched but all NaN)
                 volume12M_check = volume.loc[dates['date12M']:].copy() if not volume.empty else pd.DataFrame()
                 median_volume   = volume12M_check.median() if not volume12M_check.empty else pd.Series()
-                failed_blank    = median_volume[median_volume.isna()].index.tolist()
-                failed_blank    = [t.replace('.NS','') for t in failed_blank]
+                vol_blank       = median_volume[median_volume.isna()].index.tolist()
+                vol_blank       = [t.replace('.NS','') for t in vol_blank]
+                # Merge both lists (dedup, preserve order)
+                failed_blank = list(dict.fromkeys(api_failed + vol_blank))
                 st.session_state.failed_blank = failed_blank
 
-                age = get_cache_age_days()
-                if age > 3:
-                    st.warning(
-                        f"⚠️ Cache {int(age)} din purana hai (build: {meta.get('build_date','?')}). "
-                        "Data slightly stale ho sakta hai. "
-                        "YFinance se fresh fetch ke liye 'YFinance' select karo."
-                    )
+                if failed_blank:
+                    st.warning(f"⚠ {len(failed_blank)} stocks failed to download (blank data):")
+                    st.dataframe(pd.DataFrame({'S.No.': range(1, len(failed_blank)+1),
+                                               'Failed Stocks': failed_blank}).set_index('S.No.'),
+                                 use_container_width=False)
                 else:
-                    st.success(
-                        f"✅ Cache loaded! "
-                        f"{meta.get('symbols_fetched','?'):,} symbols | "
-                        f"Build: {meta.get('build_date','?')} | "
-                        f"Age: {int(age)} din"
-                    )
+                    st.success("✅ All stocks downloaded successfully!")
 
-            except Exception as e:
-                st.error(f"❌ Cache load failed: {e}. YFinance select karke retry karo.")
-                st.stop()
-
-        # ══════════════════════════════════════════════════════
-        # BRANCH B — Live fetch (YFinance / Upstox / Angel One)
-        # ══════════════════════════════════════════════════════
-        else:
-            # ── Load symbols ──────────────────────────────────
-            if st.session_state.symbols is None or st.session_state.universe != U:
-                with st.spinner(f"Loading {U} symbols…"):
-                    try:
-                        if U == "AllNSE":
-                            url = f"{GITHUB_BASE}/NSE_EQ_ALL.csv"
-                            df_sym = pd.read_csv(url)
-                            df_sym['Yahoo_Symbol'] = df_sym['Symbol'].astype(str).str.strip() + '.NS'
-                            syms_ns = df_sym['Yahoo_Symbol'].tolist()
-                        else:
-                            syms_ns = load_symbols_from_github(U)
-                        syms_ns = add_extra_symbols(syms_ns)
-                        st.session_state.symbols = syms_ns
-                    except Exception as e:
-                        st.error(f"Symbol list load failed: {e}"); st.stop()
-
-            symbols = st.session_state.symbols
-            CHUNK   = 50 if api_source == "Upstox" else (15 if U == "AllNSE" else 50)
-            st.markdown(f"""
-            <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 12px 0;">
-              <span style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-bdr);
-                           border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
-                📦 Chunk: {CHUNK}
-              </span>
-              <span style="background:var(--green-bg);color:var(--green);border:1px solid var(--green-bdr);
-                           border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
-                📋 Symbols: {len(symbols):,}
-              </span>
-              <span style="background:var(--violet-bg);color:var(--violet);border:1px solid #c4b5fd;
-                           border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
-                📡 Source: {api_source}
-              </span>
-              <span style="background:var(--amber-bg);color:#92400e;border:1px solid #fcd34d;
-                           border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
-                🥇 GOLDBEES &amp; 🥈 SILVERBEES included
-              </span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Use data_service if available AND source is not YFinance
-            _use_ds = _DS_AVAILABLE and api_source in ("Upstox", "Angel One")
+            # ── Calculate metrics ─────────────────────────────────
+            status_tx.markdown("⏳ **Calculating momentum metrics...**")
+            prog_bar.progress(0.92)
             try:
-                if _use_ds:
-                    close, high, volume, failed_symbols = fetch_data(
-                        api_source   = api_source,
-                        symbols      = symbols,
-                        start_date   = dates['startDate'],
-                        end_date     = dates['endDate'],
-                        chunk_size   = CHUNK,
-                        progress_bar = prog_bar,
-                        status_text  = status_tx,
-                    )
-                else:
-                    # YFinance inline fallback
-                    close, high, volume, failed_symbols = _fetch_yfinance_inline(
-                        symbols, dates['startDate'], dates['endDate'],
-                        prog_bar, status_tx, chunk_size=CHUNK
-                    )
+                dfStats   = build_dfStats(close, high, volume, dates, st.session_state.ranking_method)
+                dfFiltered = apply_filters(dfStats.copy(), _filter_params)
+                st.session_state.dfStats    = dfStats
+                st.session_state.dfFiltered = dfFiltered
+                st.session_state.screener_done = True
+                st.session_state["_downloading"] = False   # unlock filters
+                prog_bar.progress(1.0)
+                status_tx.markdown("✅ **Screener complete!**")
+
+                _download_ok = True
+
             except Exception as e:
-                st.error(f"Data fetch error: {e}"); st.stop()
+                # StopException (st.stop) silently re-raises; all others show error.
+                _cls = type(e).__name__
+                if "StopException" not in _cls and "RerunException" not in _cls:
+                    st.error(f"Download/Calculation error: {e}")
+                raise
 
-            if close is None or close.empty:
-                st.session_state["_downloading"] = False
-                st.error("❌ Data fetch hua nahi. Internet / token check karo."); st.stop()
+        finally:
+            # ALWAYS clear the flag — even on st.stop() or any error.
+            # This prevents the permanently-disabled-button stuck state.
+            st.session_state["_run_download"] = False
 
-            # ── Failed symbols ────────────────────────────────
-            # 1. API se directly failed (instrument not found / network error)
-            api_failed = [t.replace('.NS','') for t in (failed_symbols or [])]
-            # 2. Volume-based blank detection (data fetched but all NaN)
-            volume12M_check = volume.loc[dates['date12M']:].copy() if not volume.empty else pd.DataFrame()
-            median_volume   = volume12M_check.median() if not volume12M_check.empty else pd.Series()
-            vol_blank       = median_volume[median_volume.isna()].index.tolist()
-            vol_blank       = [t.replace('.NS','') for t in vol_blank]
-            # Merge both lists (dedup, preserve order)
-            failed_blank = list(dict.fromkeys(api_failed + vol_blank))
-            st.session_state.failed_blank = failed_blank
+        if _download_ok:
+            st.rerun()  # fresh render → shows results cleanly
 
-            if failed_blank:
-                st.warning(f"⚠ {len(failed_blank)} stocks failed to download (blank data):")
-                st.dataframe(pd.DataFrame({'S.No.': range(1, len(failed_blank)+1),
-                                           'Failed Stocks': failed_blank}).set_index('S.No.'),
-                             use_container_width=False)
-            else:
-                st.success("✅ All stocks downloaded successfully!")
 
-        # ── Calculate metrics ─────────────────────────────────
-        status_tx.markdown("⏳ **Calculating momentum metrics...**")
-        prog_bar.progress(0.92)
-        try:
-            dfStats   = build_dfStats(close, high, volume, dates, st.session_state.ranking_method)
-            dfFiltered = apply_filters(dfStats.copy(), filter_params)
-            st.session_state.dfStats    = dfStats
-            st.session_state.dfFiltered = dfFiltered
-            st.session_state.screener_done = True
-            st.session_state["_downloading"] = False   # unlock filters
-            prog_bar.progress(1.0)
-            status_tx.markdown("✅ **Screener complete!**")
-        except Exception as e:
-            st.session_state["_downloading"] = False
-            st.error(f"Calculation error: {e}"); st.stop()
 
     # ── Display results ───────────────────────────────────────
     if st.session_state.screener_done and st.session_state.dfFiltered is not None:
