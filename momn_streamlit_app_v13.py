@@ -565,8 +565,14 @@ APPS_SCRIPT_URL = (
 )
 GITHUB_BASE = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
 
-USERNAME = "prayan"
-PASSWORD = "prayan"
+# ── Credentials: st.secrets se lo (NEVER hardcode in source code) ──────────
+# Streamlit Cloud → App Settings → Secrets mein add karo:
+#   [auth]
+#   username = "your_username"
+#   password = "your_password"
+_auth = st.secrets.get("auth", {})
+USERNAME = _auth.get("username", "")
+PASSWORD = _auth.get("password", "")
 
 # ═══════════════════════════════════════════════════════════════
 # SESSION STATE INIT
