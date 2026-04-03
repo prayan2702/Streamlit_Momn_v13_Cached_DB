@@ -1443,14 +1443,8 @@ elif st.session_state.current_step == 2:
                 # Merge both lists (dedup, preserve order)
                 failed_blank = list(dict.fromkeys(api_failed + vol_blank))
                 st.session_state.failed_blank = failed_blank
-
-                if failed_blank:
-                    st.warning(f"⚠ {len(failed_blank)} stocks failed to download (blank data):")
-                    st.dataframe(pd.DataFrame({'S.No.': range(1, len(failed_blank)+1),
-                                               'Failed Stocks': failed_blank}).set_index('S.No.'),
-                                 use_container_width=False)
-                else:
-                    st.success("✅ All stocks downloaded successfully!")
+                # Note: failed stocks display results section mein hoga (rerun ke baad)
+                # Yahan show karne se wo 1 second ke liye dikha aur rerun pe gaayab ho jaata tha
 
             # ── Calculate metrics ─────────────────────────────────
             status_tx.markdown("⏳ **Calculating momentum metrics...**")
@@ -1498,6 +1492,18 @@ elif st.session_state.current_step == 2:
             {metric_card("Top-N Universe", f"Top {top_n}", "blue")}
             {metric_card("End Date", st.session_state.lookback_date.strftime('%d %b %Y'), "amber")}
         </div>""", unsafe_allow_html=True)
+
+        # ── Failed stocks — persistent (rerun ke baad bhi dikhta hai) ─
+        _fb = st.session_state.failed_blank or []
+        if _fb:
+            with st.expander(f"⚠️ {len(_fb)} stocks failed to download — click to view", expanded=False):
+                st.dataframe(
+                    pd.DataFrame({'S.No.': range(1, len(_fb)+1),
+                                  'Failed Stock': _fb}).set_index('S.No.'),
+                    use_container_width=False
+                )
+        else:
+            st.success("✅ All stocks downloaded successfully!")
 
         tab1, tab2 = st.tabs(["✅ Filtered (Top Ranked)", "📊 All Stocks (Unfiltered)"])
         with tab1:
