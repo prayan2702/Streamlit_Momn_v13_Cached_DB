@@ -481,7 +481,8 @@ html, body, [class*="css"] {
     box-shadow: 0 8px 32px rgba(0,0,0,.10);
     padding: 40px 44px;
     width: 100%;
-    max-width: 400px;
+    text-align: center;
+    margin-bottom: 0;
 }
 .login-logo {
     text-align: center;
@@ -838,17 +839,16 @@ def format_simple_sheet(file_name, sheet_name):
 # LOGIN
 # ═══════════════════════════════════════════════════════════════
 def login_page():
-    st.markdown("""
-    <div class="login-wrap">
-      <div class="login-card">
-        <div class="login-logo">📈</div>
-        <div class="login-title">Momn Screener</div>
-        <div class="login-sub">NSE Momentum Strategy &nbsp;·&nbsp; v13</div>
-      </div>
-    </div>
-    """, unsafe_allow_html=True)
     _, mid, _ = st.columns([1, 1.4, 1])
     with mid:
+        st.markdown("""
+        <div class="login-card">
+          <div class="login-logo">📈</div>
+          <div class="login-title">Momn Screener</div>
+          <div class="login-sub">NSE Momentum Strategy &nbsp;·&nbsp; v13</div>
+        </div>
+        <div style="height:12px;"></div>
+        """, unsafe_allow_html=True)
         with st.form(key="login_form", clear_on_submit=True):
             u = st.text_input("👤 Username", placeholder="Enter username")
             p = st.text_input("🔒 Password", type="password", placeholder="Enter password")
@@ -1321,6 +1321,43 @@ elif st.session_state.current_step == 2:
                             f"Build: {meta.get('build_date','?')} | "
                             f"Age: {int(age)} din"
                         )
+
+                    # ── Missing stocks detection + optional top-up ─────
+                    _universe_syms = st.session_state.symbols or []
+                    _cache_syms    = set(close.columns.str.replace('.NS','',regex=False).str.upper())
+                    _missing = [
+                        s for s in _universe_syms
+                        if s.replace('.NS','').upper() not in _cache_syms
+                    ]
+                    if _missing:
+                        st.info(
+                            f"ℹ️ Cache mein **{len(_missing)} stocks missing** hain "
+                            f"(universe: {len(_universe_syms)}, cache: {len(_cache_syms)}). "
+                            f"YFinance se fetch karke merge kar sakte hain."
+                        )
+                        st.session_state["_cache_missing_syms"] = _missing
+                        if st.button(
+                            f"📡 Fetch {len(_missing)} missing stocks from YFinance & merge",
+                            key="fetch_missing_btn", type="secondary"
+                        ):
+                            with st.spinner(f"YFinance se {len(_missing)} missing stocks fetch ho rahi hain..."):
+                                try:
+                                    _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
+                                        _missing, dates['startDate'], dates['endDate'],
+                                        prog_bar, status_tx, chunk_size=15
+                                    )
+                                    if not _m_close.empty:
+                                        # Merge: close ke index align karo
+                                        _all_idx = close.index.union(_m_close.index)
+                                        close  = close.reindex(_all_idx).combine_first(_m_close.reindex(_all_idx))
+                                        high   = high.reindex(_all_idx).combine_first(_m_high.reindex(_all_idx))
+                                        volume = volume.reindex(_all_idx).combine_first(_m_vol.reindex(_all_idx))
+                                        st.success(
+                                            f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
+                                            f"Total: {close.shape[1]:,} symbols"
+                                        )
+                                except Exception as _me:
+                                    st.warning(f"Missing stocks fetch failed: {_me}")
 
                 except Exception as e:
                     st.error(f"❌ Cache load failed: {e}. YFinance select karke retry karo.")

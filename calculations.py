@@ -81,8 +81,14 @@ def getBeta(dfNifty, data12M):
     return [round(cov.loc[k, 'Nifty'] / var, 2) for k in cov.columns[1:]]
 
 def calculate_z_score(data):
-    mean, std = data.mean(), data.std()
-    return ((data - mean) / std).round(2)
+    # inf replace pehle karo — agar kisi stock ka sharpe=inf (vol=0 wale stocks: GOLDBEES etc.)
+    # to mean=inf → std=NaN → sabka z_score=NaN → fillna(0) → sabka z_score=0!
+    # Ye hi pre-cached mode mein "all z-scores zero" bug ka root cause tha.
+    clean = data.replace([np.inf, -np.inf], np.nan)
+    mean, std = clean.mean(), clean.std()
+    if std == 0 or pd.isna(std):
+        return pd.Series(0.0, index=data.index)
+    return ((clean - mean) / std).round(2)
 
 
 def build_dfStats(close, high, volume, dates, ranking_method):
