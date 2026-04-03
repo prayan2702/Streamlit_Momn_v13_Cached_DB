@@ -1,14 +1,14 @@
 {
-  "build_date": "2026-04-02",
-  "build_time_utc": "15:56:58",
-  "build_duration_min": 4.3,
+  "build_date": "2026-04-03",
+  "build_time_utc": "15:37:06",
+  "build_duration_min": 3.6,
   "symbols_total": 2134,
   "symbols_fetched": 2134,
   "symbols_failed": 0,
   "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-02",
-  "data_end": "2026-04-02",
+  "data_start_recent": "2022-12-03",
+  "data_end": "2026-04-03",
   "recent_months": 40,
   "source": "YFinance",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
@@ -28,5 +28,5 @@
     822,
     2134
   ],
-  "ath_count": 2129
+  "ath_count": 2133
 }
