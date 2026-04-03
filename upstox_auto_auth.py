@@ -1,11 +1,15 @@
 """
 upstox_auto_auth.py
 ===================
-Key insight: udapi_api_key cookie = CLIENT_ID hi hai.
-Toh x-api-key = os.environ["UPSTOX_CLIENT_ID"] directly.
+Correct flow discovered from browser logs:
+  - Login domain: login.upstox.com (NOT api-v2.upstox.com)
+  - Auth code redirect: goes to REDIRECT_URI with ?code=...
+  - For automation: REDIRECT_URI must be https://127.0.0.1/
+    (requests catches the ConnectionError and extracts code from URL)
 
-Baaki issue: exact endpoint URL aur request format.
-Multiple combinations try karta hai.
+IMPORTANT: REDIRECT_URI must be https://127.0.0.1/ in:
+  1. Upstox Developer Console (app settings)
+  2. GitHub Secret UPSTOX_REDIRECT_URI
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -17,9 +21,11 @@ import urllib.parse
 
 import pyotp
 import requests
+from requests.exceptions import ConnectionError as ReqConnError
 
-_AUTH_DIALOG = "https://api.upstox.com/v2/login/authorization/dialog"
+_LOGIN_BASE  = "https://login.upstox.com"
 _TOKEN_URL   = "https://api.upstox.com/v2/login/authorization/token"
+_AUTH_DIALOG = "https://api.upstox.com/v2/login/authorization/dialog"
 
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -82,6 +88,18 @@ def get_upstox_token_automated(
     mobile, pin, totp_secret
 ) -> str:
 
+    # REDIRECT_URI check — must be 127.0.0.1 for automation
+    if "127.0.0.1" not in redirect_uri and "localhost" not in redirect_uri:
+        _safe_log(
+            f"  WARNING: REDIRECT_URI = {redirect_uri[:30]}..."
+        )
+        _safe_log(
+            "  For automation, REDIRECT_URI should be https://127.0.0.1/"
+        )
+        _safe_log(
+            "  Change it in: Upstox Dev Console + UPSTOX_REDIRECT_URI Secret"
+        )
+
     session = requests.Session()
     session.headers.update({
         "User-Agent":      _BROWSER_UA,
@@ -89,144 +107,143 @@ def get_upstox_token_automated(
         "Accept-Encoding": "gzip, deflate, br",
     })
 
-    auth_params = {
-        "response_type": "code",
-        "client_id":     client_id,
-        "redirect_uri":  redirect_uri,
-    }
+    # ── Step 1: Load login page → session cookies ──────────────
+    _safe_log("Step 1: Loading Upstox login page...")
 
-    # ── Step 1: Load dialog page ───────────────────────────────
-    _safe_log("Step 1: Loading auth dialog page...")
+    login_url = (
+        f"{_LOGIN_BASE}/"
+        f"?client_id={client_id}"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
+        f"&response_type=code"
+        f"&state=auto"
+    )
+
     try:
-        r1 = session.get(
-            _AUTH_DIALOG, params=auth_params,
-            allow_redirects=True, timeout=20,
-        )
-        _safe_log(f"  Status: {r1.status_code}")
+        r1 = session.get(login_url, allow_redirects=True, timeout=20)
+        _safe_log(f"  Status: {r1.status_code} | URL: {r1.url[:60]}")
         _safe_log(f"  Cookies: {list(session.cookies.keys())}")
     except Exception as e:
-        raise RuntimeError(f"Step 1 failed: {type(e).__name__}") from None
-
-    # KEY INSIGHT: x-api-key = CLIENT_ID (confirmed from cookie = client_id)
-    x_api_key = client_id
-    _safe_log(f"  Using x-api-key = CLIENT_ID: {_mask(x_api_key)} ✅")
+        # Try dialog URL as fallback
+        _safe_log(f"  login.upstox.com failed ({type(e).__name__}) — trying dialog URL...")
+        try:
+            r1 = session.get(
+                _AUTH_DIALOG,
+                params={"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri},
+                allow_redirects=True, timeout=20,
+            )
+            _safe_log(f"  Dialog status: {r1.status_code}")
+        except Exception as e2:
+            raise RuntimeError(f"Step 1 failed: {type(e2).__name__}") from None
 
     time.sleep(1.5)
 
-    # All internal API call variations to try
-    # Format: (base_url, path, mobile_key)
-    STEP2_ATTEMPTS = [
-        ("https://api-v2.upstox.com",   "/user/v1/otp",                 "mobile_num"),
-        ("https://api-v2.upstox.com",   "/user/v1/send_otp_for_mobile", "mobile_num"),
-        ("https://api.upstox.com",      "/user/v1/otp",                 "mobile_num"),
-        ("https://api.upstox.com",      "/user/v1/send_otp",            "mobile_num"),
-        ("https://api-v2.upstox.com",   "/user/v1/otp",                 "mobileNum"),
-    ]
+    # x-api-key = client_id (confirmed from udapi_api_key cookie = client_id)
+    x_api_key = client_id
 
-    STEP3_ATTEMPTS = [
-        ("https://api-v2.upstox.com",  "/user/v1/login"),
-        ("https://api-v2.upstox.com",  "/user/v1/verify"),
-        ("https://api.upstox.com",     "/user/v1/login"),
-        ("https://api-v2.upstox.com",  "/user/v1/otp/verify"),
-    ]
-
-    def _make_headers(base_url: str) -> dict:
+    def _headers_for(origin: str) -> dict:
         return {
             "Accept":       "application/json, */*",
             "Content-Type": "application/json",
             "x-api-key":    x_api_key,
-            "Origin":       base_url,
+            "Origin":       origin,
             "Referer":      r1.url,
         }
 
-    # ── Step 2: Send OTP ──────────────────────────────────────
+    # ── Step 2: Send OTP / mobile verify ─────────────────────
     _safe_log(f"Step 2: Send OTP to {_mask(mobile, 3)}*****...")
     step2_ok = False
 
-    for base, path, mkey in STEP2_ATTEMPTS:
-        url = base + path
-        try:
-            r2 = session.post(
-                url,
-                json={mkey: mobile},
-                headers=_make_headers(base),
-                allow_redirects=False,
-                timeout=15,
-            )
-            status = r2.status_code
-            _safe_log(f"  {path}+{mkey}: HTTP {status}")
+    step2_candidates = [
+        (f"{_LOGIN_BASE}/api/v1/mobile/otp",          "login.upstox.com"),
+        (f"{_LOGIN_BASE}/api/v1/send-otp",             "login.upstox.com"),
+        (f"{_LOGIN_BASE}/api/mobile/otp",              "login.upstox.com"),
+        ("https://api-v2.upstox.com/user/v1/otp",     "api-v2.upstox.com"),
+    ]
+    mobile_keys = ["mobile_num", "mobileNum", "mobile", "phone"]
 
-            if status in (200, 201):
-                step2_ok = True
-                _safe_log("  OTP sent ✅")
-                # Check early auth_code
-                try:
-                    body = r2.json()
-                    for k in ("redirect_url", "code"):
-                        val = body.get(k, "")
-                        if val:
-                            code = _extract_code(val) if "redirect" in k else val
-                            if code:
-                                return _exchange_code(session, code, client_id, client_secret, redirect_uri)
-                except Exception:
-                    pass
-                break
-
-            # Log error details (no credential values)
+    for ep, origin in step2_candidates:
+        if step2_ok:
+            break
+        for mkey in mobile_keys[:2]:
             try:
-                errs = r2.json().get("errors") or []
-                ec   = errs[0].get("errorCode", "") if errs else ""
-                emsg = errs[0].get("message", "")   if errs else ""
-                if ec:
-                    _safe_log(f"    Error: {ec} — {emsg}")
-            except Exception:
-                pass
+                r2 = session.post(
+                    ep,
+                    json={mkey: mobile},
+                    headers=_headers_for(f"https://{origin}"),
+                    allow_redirects=False,
+                    timeout=15,
+                )
+                _safe_log(f"  {ep.split('/')[-1]}+{mkey}: HTTP {r2.status_code}")
 
-        except Exception as e:
-            _safe_log(f"  {path}: {type(e).__name__}")
+                if r2.status_code in (200, 201):
+                    step2_ok = True
+                    _safe_log("  OTP sent ✅")
+                    break
+                elif r2.status_code == 404:
+                    break  # endpoint doesn't exist, try next
+                else:
+                    try:
+                        errs = r2.json().get("errors") or []
+                        ec   = errs[0].get("errorCode", "") if errs else ""
+                        emsg = errs[0].get("message", "")   if errs else ""
+                        if ec:
+                            _safe_log(f"    {ec}: {emsg}")
+                    except Exception:
+                        pass
+            except Exception as e:
+                _safe_log(f"  {type(e).__name__}")
 
     if not step2_ok:
-        _safe_log("  OTP step inconclusive — continuing to login...")
+        _safe_log("  Step 2 inconclusive — trying direct login (Step 3)...")
 
     time.sleep(2)
 
-    # ── Step 3: Login with MPIN + TOTP ─────────────────────────
-    _safe_log("Step 3: Login MPIN+TOTP (values masked)...")
+    # ── Step 3: Submit PIN + TOTP ─────────────────────────────
+    _safe_log("Step 3: Login with MPIN+TOTP (values masked)...")
+
+    step3_candidates = [
+        (f"{_LOGIN_BASE}/api/v1/login",         "login.upstox.com"),
+        (f"{_LOGIN_BASE}/api/v1/otp/verify",    "login.upstox.com"),
+        (f"{_LOGIN_BASE}/api/login",            "login.upstox.com"),
+        (f"{_LOGIN_BASE}/api/v1/auth",          "login.upstox.com"),
+        ("https://api-v2.upstox.com/user/v1/login", "api-v2.upstox.com"),
+    ]
+    pin_keys = ["mpin", "client_secret", "pin", "password"]
 
     def _do_login(totp_val: str):
-        pin_keys = ["mpin", "client_secret", "pin"]
-
-        for base, path in STEP3_ATTEMPTS:
-            url = base + path
+        for ep, origin in step3_candidates:
             for pkey in pin_keys:
                 pld = {"mobile_num": mobile, pkey: pin, "totp": totp_val}
                 try:
                     r3 = session.post(
-                        url, json=pld,
-                        headers=_make_headers(base),
+                        ep, json=pld,
+                        headers=_headers_for(f"https://{origin}"),
                         allow_redirects=False,
                         timeout=20,
                     )
-                    _safe_log(f"  {path}+{pkey}: HTTP {r3.status_code}")
+                    _safe_log(f"  {ep.split('/')[-1]}+{pkey}: HTTP {r3.status_code}")
 
-                    # Parse response
+                    # 404 = endpoint not found, skip to next
+                    if r3.status_code == 404:
+                        break
+
                     try:
                         body = r3.json()
-                        bkeys = list(body.keys())
-                        _safe_log(f"    Body keys: {bkeys}")
+                        bkeys = [k for k in body.keys() if k != "errors"]
+                        if bkeys:
+                            _safe_log(f"    Body keys: {list(body.keys())}")
 
-                        # Check data.redirect_url
+                        # Extract auth_code from various response formats
                         data = body.get("data", {})
                         if isinstance(data, dict):
-                            for k in ("redirect_url", "redirectUrl", "redirect"):
+                            for k in ("redirect_url", "redirectUrl", "redirect", "code"):
                                 val = data.get(k, "")
                                 if val:
-                                    code = _extract_code(val)
+                                    code = _extract_code(val) if "redirect" in k else val
                                     if code:
                                         _safe_log(f"    auth_code from data.{k} ✅")
                                         return code
 
-                        # Top-level redirect_url or code
                         for k in ("redirect_url", "redirectUrl", "code"):
                             val = body.get(k, "")
                             if val:
@@ -235,17 +252,17 @@ def get_upstox_token_automated(
                                     _safe_log(f"    auth_code from {k} ✅")
                                     return code
 
-                        # Error logging (no values)
                         if r3.status_code >= 400:
                             errs = body.get("errors") or []
                             ec   = errs[0].get("errorCode", "") if errs else ""
                             emsg = errs[0].get("message", "")   if errs else ""
-                            _safe_log(f"    Error: {ec} — {emsg}")
+                            if ec:
+                                _safe_log(f"    Error: {ec} — {emsg}")
 
                     except Exception:
                         pass
 
-                    # Location header
+                    # Location header (redirect to redirect_uri)
                     loc = r3.headers.get("Location", "")
                     if loc:
                         code = _extract_code(loc)
@@ -253,14 +270,28 @@ def get_upstox_token_automated(
                             _safe_log(f"    auth_code from Location ✅")
                             return code
 
-                    # HTML
+                    # HTML scan
                     if r3.status_code == 200 and r3.text:
                         m = re.search(r"[?&]code=([^&\"'\s]+)", r3.text)
                         if m:
                             return m.group(1)
 
+                except ReqConnError as ce:
+                    # Connection to 127.0.0.1 refused = SUCCESS!
+                    # Extract code from the URL it tried to connect to
+                    err_str = str(ce)
+                    code = _extract_code(err_str)
+                    if not code:
+                        m = re.search(r"code=([^&\"'\s&]+)", err_str)
+                        if m:
+                            code = m.group(1)
+                    if code:
+                        _safe_log(f"    auth_code from 127.0.0.1 redirect ✅")
+                        return code
+                    _safe_log(f"    Connection error (127.0.0.1 redirect): {type(ce).__name__}")
+
                 except Exception as e:
-                    _safe_log(f"  {path}: {type(e).__name__}")
+                    _safe_log(f"  {type(e).__name__}")
 
                 time.sleep(0.2)
         return None
@@ -272,16 +303,19 @@ def get_upstox_token_automated(
         _safe_log("  Waiting 31s for fresh TOTP window...")
         time.sleep(31)
         totp_code = pyotp.TOTP(totp_secret).now()
-        _safe_log("  Retry (fresh TOTP)...")
+        _safe_log("  Retry with fresh TOTP (masked)...")
         auth_code = _do_login(totp_code)
 
     if not auth_code:
         raise RuntimeError(
-            "Upstox auth failed.\n"
-            "Browser DevTools se exact endpoint find karo:\n"
-            "  1. Chrome → F12 → Network → Fetch/XHR\n"
-            "  2. Login page pe mobile submit karo\n"
-            "  3. Request URL + headers + body share karo\n"
+            "Upstox auth failed.\n\n"
+            "SOLUTION — REDIRECT_URI change karo:\n"
+            "  1. developer.upstox.com → My Apps → App edit\n"
+            "     Redirect URL change karo: https://127.0.0.1/\n"
+            "  2. GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/\n"
+            "  3. Workflow dobara run karo\n\n"
+            "Yeh zaroori hai kyunki automation mein browser nahi hota\n"
+            "jo Streamlit URL pe redirect handle kare.\n"
             "Values logs mein nahi dikhti."
         )
 
