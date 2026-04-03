@@ -1347,7 +1347,7 @@ elif st.session_state.current_step == 2:
                             st.error(f"Symbol list load failed: {e}"); st.stop()
 
                 symbols = st.session_state.symbols
-                CHUNK   = 50 if __api_source == "Upstox" else (15 if _U == "AllNSE" else 50)
+                CHUNK   = 50 if _api_source == "Upstox" else (15 if _U == "AllNSE" else 50)
                 st.markdown(f"""
                 <div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 12px 0;">
                   <span style="background:var(--blue-bg);color:var(--blue);border:1px solid var(--blue-bdr);
