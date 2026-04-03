@@ -998,53 +998,128 @@ if st.session_state.current_step == 1:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── AllNSE: CSV upload ────────────────────────────────────
+    # ── AllNSE: Load Symbol List button + NSE auto-fetch ─────
     if chosen_u == "AllNSE":
-        st.markdown("""
-        <div class="nse-link-box">
-          <div>📥</div>
-          <div>
-            <a href="https://www.nseindia.com/static/market-data/securities-available-for-trading" target="_blank">
-              NSE — Securities Available for Trading</a>
-            <div class="hint">EQUITY_L.csv download karo → browse karo neeche | Ya GitHub fallback automatically use hoga</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        # NSE headers (same as cache_builder.py)
+        _NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+        _NSE_HEADERS = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Referer": "https://www.nseindia.com/",
+        }
 
-        uploaded = st.file_uploader("📂 Browse EQUITY_L.csv (optional — GitHub fallback available)",
-                                     type=["csv"], key="equity_csv")
-        if uploaded:
-            try:
-                eq_df = parse_equity_csv(uploaded)
-                st.session_state.eq_df  = eq_df
-                syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
-                syms_ns = add_extra_symbols(syms_ns)
-                st.session_state.symbols = syms_ns
-                st.session_state.universe_label = f"AllNSE (CSV — {len(syms_ns):,} stocks)"
-                st.success(f"✅ CSV loaded: **{len(syms_ns):,}** EQ stocks (incl. GOLDBEES & SILVERBEES)")
-                st.dataframe(eq_df[["SYMBOL","NAME OF COMPANY"]].head(20),
-                             use_container_width=True, height=280)
-            except Exception as e:
-                st.error(f"CSV parse error: {e}")
+        def _fetch_nse_equity_csv():
+            """NSE EQUITY_L.csv fetch karo (same logic as cache_builder.py)."""
+            import io as _io
+            session = requests.Session()
+            session.get("https://www.nseindia.com", headers=_NSE_HEADERS, timeout=15)
+            time.sleep(1)
+            resp = session.get(_NSE_EQUITY_URL, headers=_NSE_HEADERS, timeout=30)
+            resp.raise_for_status()
+            df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
+            df.columns = [c.strip() for c in df.columns]
+            if 'SERIES' in df.columns:
+                df = df[df['SERIES'].str.strip() == 'EQ'].copy()
+            df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
+            return df.reset_index(drop=True)
 
-        if not st.session_state.symbols:
-            st.info("💡 CSV upload nahi hua — GitHub fallback (NSE_EQ_ALL.csv) use hoga screener run pe.")
-            st.markdown("""
-            <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
-                        padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
-            ➕ <b>Auto-included:</b> &nbsp;
-            <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
-            &nbsp;
-            <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
-            &nbsp; — har universe ke saath automatically add honge
-            </div>
-            """, unsafe_allow_html=True)
-        else:
+        # ── Status display if already loaded ─────────────────
+        if st.session_state.symbols and st.session_state.universe == "AllNSE":
             n = len(st.session_state.symbols)
             st.markdown(f"""<div class="metric-row">
                 {metric_card("Loaded Symbols", f"{n:,}", "green")}
-                {metric_card("Universe", "AllNSE", "blue")}
+                {metric_card("Source", st.session_state.get("allnse_source","NSE"), "blue")}
             </div>""", unsafe_allow_html=True)
+            if st.button("🔄 Reload Symbol List", type="secondary"):
+                st.session_state.symbols = None
+                st.session_state.eq_df   = None
+                st.rerun()
+        else:
+            # ── Load button ───────────────────────────────────
+            st.markdown("""
+            <div class="nse-link-box">
+              <div>📥</div>
+              <div>
+                <b>NSE — Securities Available for Trading</b>
+                <div class="hint">Button dabao → NSE website se auto-fetch hoga | Ya manually CSV browse karo</div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            btn_col, _ = st.columns([1, 2])
+            with btn_col:
+                load_btn = st.button("📡 Load Symbol List (NSE Auto-Fetch)", type="primary",
+                                     use_container_width=True)
+
+            if load_btn:
+                with st.spinner("🌐 NSE website se EQUITY_L.csv fetch ho raha hai..."):
+                    try:
+                        eq_df = _fetch_nse_equity_csv()
+                        syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
+                        syms_ns = add_extra_symbols(syms_ns)
+                        st.session_state.eq_df  = eq_df
+                        st.session_state.symbols = syms_ns
+                        st.session_state.universe_label = f"AllNSE (NSE — {len(syms_ns):,} stocks)"
+                        st.session_state["allnse_source"] = "NSE Live"
+                        st.success(
+                            f"✅ NSE se {len(syms_ns):,} EQ stocks loaded "
+                            f"(incl. GOLDBEES & SILVERBEES)"
+                        )
+                        st.rerun()
+                    except Exception as e:
+                        st.warning(
+                            f"⚠️ NSE auto-fetch failed: `{e}`\n\n"
+                            "Manually EQUITY_L.csv download karein aur neeche browse karein."
+                        )
+                        st.session_state["_nse_fetch_failed"] = True
+
+            # ── Fallback file uploader ────────────────────────
+            # Always shown (primary path if auto-fetch fails, secondary otherwise)
+            show_uploader = st.session_state.get("_nse_fetch_failed", False)
+            if not load_btn:  # show uploader hint before first attempt too
+                show_uploader = True
+
+            if show_uploader:
+                st.markdown(
+                    f'<a href="https://www.nseindia.com/static/market-data/securities-available-for-trading" '
+                    f'target="_blank" style="font-size:12px;">📥 NSE se manually EQUITY_L.csv download karein</a>',
+                    unsafe_allow_html=True
+                )
+                uploaded = st.file_uploader(
+                    "📂 EQUITY_L.csv browse karein (manual fallback)",
+                    type=["csv"], key="equity_csv"
+                )
+                if uploaded:
+                    try:
+                        eq_df = parse_equity_csv(uploaded)
+                        syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
+                        syms_ns = add_extra_symbols(syms_ns)
+                        st.session_state.eq_df  = eq_df
+                        st.session_state.symbols = syms_ns
+                        st.session_state.universe_label = f"AllNSE (CSV — {len(syms_ns):,} stocks)"
+                        st.session_state["allnse_source"] = "CSV Upload"
+                        st.success(f"✅ CSV loaded: **{len(syms_ns):,}** EQ stocks (incl. GOLDBEES & SILVERBEES)")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"CSV parse error: {e}")
+
+            if not st.session_state.symbols:
+                st.info("💡 Symbol list load nahi hua — GitHub fallback (NSE_EQ_ALL.csv) screener run pe use hoga.")
+                st.markdown("""
+                <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
+                            padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
+                ➕ <b>Auto-included:</b> &nbsp;
+                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
+                &nbsp;
+                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
+                &nbsp; — har universe ke saath automatically add honge
+                </div>
+                """, unsafe_allow_html=True)
 
     # ── Other universes: auto-fetch info ─────────────────────
     else:
@@ -1112,25 +1187,46 @@ elif st.session_state.current_step == 2:
         )
 
     # ── Filter settings ───────────────────────────────────────
-    with st.expander("🔧 Filter Settings", expanded=True):
-        fc1, fc2, fc3 = st.columns(3)
-        with fc1:
-            use_dma200 = st.checkbox("Close > 200-day DMA",  value=True)
-            use_roc12  = st.checkbox("12M ROC > 5.5%",        value=True)
-            use_roc_cap= st.checkbox("12M return < 1000x",    value=True)
-        with fc2:
-            volm_min    = st.slider("Avg Vol (Cr) >",    0.0, 10.0, 1.0, 0.1)
-            circuit_max = st.slider("Circuit hits/yr <", 1, 100, 20, 1)
-            circuit5    = st.slider("5% circuit 3M ≤",  0, 30, 10, 1)
-        with fc3:
-            use_ath   = st.checkbox("Within 25% of ATH",  value=True)
-            close_min = st.slider("Min CMP ₹",            0.0, 500.0, 30.0, 5.0)
+    # Lock filter panel during download so accidental slider touch
+    # doesn't reset the page and restart the download.
+    _downloading = st.session_state.get("_downloading", False)
 
-    filter_params = {
-        "use_dma200": use_dma200, "use_roc12": use_roc12, "use_roc_cap": use_roc_cap,
-        "volm_cr_min": volm_min, "circuit_max": circuit_max, "circuit5_max": circuit5,
-        "use_away_ath": use_ath, "close_min": close_min,
-    }
+    with st.expander("🔧 Filter Settings", expanded=not _downloading):
+        if _downloading:
+            st.info("⏳ Data download chal raha hai — filters locked hain.")
+            # Read-only display of current values during download
+            _fp = st.session_state.get("_last_filter_params", {})
+            st.markdown(
+                f"Close > 200-DMA: **{_fp.get('use_dma200',True)}** &nbsp;|&nbsp; "
+                f"12M ROC > 5.5%: **{_fp.get('use_roc12',True)}** &nbsp;|&nbsp; "
+                f"Avg Vol: **{_fp.get('volm_cr_min',1.0)} Cr** &nbsp;|&nbsp; "
+                f"Min CMP: **₹{_fp.get('close_min',30.0)}**"
+            )
+            # Use last saved filter params during download
+            filter_params = _fp
+        else:
+            # ── 2-column layout: checkboxes left, sliders right ─
+            f_left, f_right = st.columns([1, 1])
+            with f_left:
+                st.markdown("**✅ Filters**")
+                use_dma200 = st.checkbox("Close > 200-day DMA",    value=True)
+                use_roc12  = st.checkbox("12M ROC > 5.5%",         value=True)
+                use_roc_cap= st.checkbox("12M return < 1000x",     value=True)
+                use_ath    = st.checkbox("Within 25% of ATH",      value=True)
+            with f_right:
+                st.markdown("**📊 Thresholds**")
+                volm_min    = st.slider("Avg Vol (Cr) >",   0.0, 10.0, 1.0, 0.1)
+                close_min   = st.slider("Min CMP ₹",        0.0, 500.0, 30.0, 5.0)
+                circuit_max = st.slider("Circuit hits/yr <", 1, 100, 20, 1)
+                circuit5    = st.slider("5% circuit 3M ≤",  0, 30, 10, 1)
+
+            filter_params = {
+                "use_dma200": use_dma200, "use_roc12": use_roc12, "use_roc_cap": use_roc_cap,
+                "volm_cr_min": volm_min, "circuit_max": circuit_max, "circuit5_max": circuit5,
+                "use_away_ath": use_ath, "close_min": close_min,
+            }
+            # Save for use during locked state
+            st.session_state["_last_filter_params"] = filter_params
 
     U          = st.session_state.universe
     api_source = st.session_state.data_source
@@ -1138,7 +1234,9 @@ elif st.session_state.current_step == 2:
 
     col_run, col_info = st.columns([1, 2])
     with col_run:
-        run_clicked = st.button("▶ Start Data Download", type="primary", use_container_width=True)
+        run_clicked = st.button("▶ Start Data Download", type="primary",
+                                use_container_width=True,
+                                disabled=st.session_state.get("_downloading", False))
     with col_info:
         n_loaded = len(st.session_state.symbols) if st.session_state.symbols else "—"
         st.markdown(f"""
@@ -1153,6 +1251,7 @@ elif st.session_state.current_step == 2:
         </div>""", unsafe_allow_html=True)
 
     if run_clicked:
+        st.session_state["_downloading"] = True
         dates    = build_dates(end_date)
         prog_bar = st.progress(0)
         status_tx = st.empty()
@@ -1268,17 +1367,23 @@ elif st.session_state.current_step == 2:
                 st.error(f"Data fetch error: {e}"); st.stop()
 
             if close is None or close.empty:
+                st.session_state["_downloading"] = False
                 st.error("❌ Data fetch hua nahi. Internet / token check karo."); st.stop()
 
             # ── Failed symbols ────────────────────────────────
+            # 1. API se directly failed (instrument not found / network error)
+            api_failed = [t.replace('.NS','') for t in (failed_symbols or [])]
+            # 2. Volume-based blank detection (data fetched but all NaN)
             volume12M_check = volume.loc[dates['date12M']:].copy() if not volume.empty else pd.DataFrame()
             median_volume   = volume12M_check.median() if not volume12M_check.empty else pd.Series()
-            failed_blank    = median_volume[median_volume.isna()].index.tolist()
-            failed_blank    = [t.replace('.NS','') for t in failed_blank]
+            vol_blank       = median_volume[median_volume.isna()].index.tolist()
+            vol_blank       = [t.replace('.NS','') for t in vol_blank]
+            # Merge both lists (dedup, preserve order)
+            failed_blank = list(dict.fromkeys(api_failed + vol_blank))
             st.session_state.failed_blank = failed_blank
 
             if failed_blank:
-                st.warning(f"⚠ {len(failed_blank)} stocks failed to download (blank volume):")
+                st.warning(f"⚠ {len(failed_blank)} stocks failed to download (blank data):")
                 st.dataframe(pd.DataFrame({'S.No.': range(1, len(failed_blank)+1),
                                            'Failed Stocks': failed_blank}).set_index('S.No.'),
                              use_container_width=False)
@@ -1294,9 +1399,11 @@ elif st.session_state.current_step == 2:
             st.session_state.dfStats    = dfStats
             st.session_state.dfFiltered = dfFiltered
             st.session_state.screener_done = True
+            st.session_state["_downloading"] = False   # unlock filters
             prog_bar.progress(1.0)
             status_tx.markdown("✅ **Screener complete!**")
         except Exception as e:
+            st.session_state["_downloading"] = False
             st.error(f"Calculation error: {e}"); st.stop()
 
     # ── Display results ───────────────────────────────────────
@@ -1564,7 +1671,7 @@ elif st.session_state.current_step == 3:
         <span class="step-tag">1</span> Neeche <b>Top-N Screener list</b> copy karo → Google Sheet ke <b>"Worst Rank Held"</b> column mein paste karo
           <span style="color:#64748b;font-size:12px;">(ye list rebalancer ko batati hai ki kaun good rank mein hai)</span><br>
         <span class="step-tag">2</span> <b>"Open Portfolio Rebalancer"</b> button dabao → Sell stocks select karo → actual sell value note karo<br>
-        <span class="step-tag">3</span> Woh sell value neeche <b>"Sell Value"</b> field mein enter karo → Buy orders auto-calculate honge
+        <span class="step-tag">3</span> <i>(Optional)</i> Neeche <b>"Buy/Sell order calculate karna chahte hain?"</b> checkbox enable karo → Sell Value enter karo → Buy orders auto-calculate honge
         </div>
         """, unsafe_allow_html=True)
 
@@ -1632,86 +1739,95 @@ elif st.session_state.current_step == 3:
 
         st.divider()
 
-        # ── Step B: Order Calculator ───────────────────────────────
-        st.markdown('<div class="section-hdr">⚡ Order Calculator</div>', unsafe_allow_html=True)
+        # ── Order Calculator (optional) ────────────────────────────
+        show_order_calc = st.checkbox(
+            "⚡ Buy/Sell order calculate karna chahte hain?",
+            value=False,
+            key="show_order_calc",
+            help="Sell value enter karke buy order quantities auto-calculate honge"
+        )
 
-        qr1, qr2, qr3, qr4 = st.columns(4)
-        with qr1:
-            capital_add = st.number_input(
-                "💰 Capital Addition ₹", min_value=0, value=0, step=5000, key="qr_cap"
-            )
-        with qr2:
-            brokerage = st.number_input(
-                "🏦 Brokerage/Stock ₹", min_value=0, value=0, step=10, key="qr_brk"
-            )
-        with qr3:
-            sell_val_input = st.number_input(
-                "💸 Sell Value ₹ (Rebalancer se enter karo)",
-                min_value=0, value=0, step=1000, key="qr_sell",
-                help="Portfolio Rebalancer mein jo actual sell value mili, woh yahaan enter karo"
-            )
+        if show_order_calc:
+            # ── Step B: Order Calculator ─────────────────────────
+            st.markdown('<div class="section-hdr">⚡ Order Calculator</div>', unsafe_allow_html=True)
 
-        sell_brk  = len(sell_list_local) * brokerage
-        buy_brk   = len(buy_list_local)  * brokerage
-        net_pool  = sell_val_input + capital_add - sell_brk - buy_brk
-        per_stock = net_pool / len(buy_list_local) if buy_list_local else 0
+            qr1, qr2, qr3, qr4 = st.columns(4)
+            with qr1:
+                capital_add = st.number_input(
+                    "💰 Capital Addition ₹", min_value=0, value=0, step=5000, key="qr_cap"
+                )
+            with qr2:
+                brokerage = st.number_input(
+                    "🏦 Brokerage/Stock ₹", min_value=0, value=0, step=10, key="qr_brk"
+                )
+            with qr3:
+                sell_val_input = st.number_input(
+                    "💸 Sell Value ₹ (Rebalancer se enter karo)",
+                    min_value=0, value=0, step=1000, key="qr_sell",
+                    help="Portfolio Rebalancer mein jo actual sell value mili, woh yahaan enter karo"
+                )
 
-        with qr4:
-            st.markdown(f"""<div class="metric-card green">
-              <div class="metric-label">Net Pool / Stock</div>
-              <div class="metric-value green">{fmt_inr(per_stock)}</div>
+            sell_brk  = len(sell_list_local) * brokerage
+            buy_brk   = len(buy_list_local)  * brokerage
+            net_pool  = sell_val_input + capital_add - sell_brk - buy_brk
+            per_stock = net_pool / len(buy_list_local) if buy_list_local else 0
+
+            with qr4:
+                st.markdown(f"""<div class="metric-card green">
+                  <div class="metric-label">Net Pool / Stock</div>
+                  <div class="metric-value green">{fmt_inr(per_stock)}</div>
+                </div>""", unsafe_allow_html=True)
+
+            # Summary strip
+            st.markdown(f"""<div class="reb-strip">
+              <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
+              <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
+              <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
+              <div class="reb-stat"><div class="label">- Buy Brok</div><div class="val r">₹{buy_brk:,.0f}</div></div>
+              <div class="reb-stat"><div class="label">Net Pool</div><div class="val g">₹{net_pool:,.0f}</div></div>
+              <div class="reb-stat"><div class="label">Per Stock</div><div class="val g">{fmt_inr(per_stock)}</div></div>
             </div>""", unsafe_allow_html=True)
 
-        # Summary strip
-        st.markdown(f"""<div class="reb-strip">
-          <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
-          <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
-          <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
-          <div class="reb-stat"><div class="label">- Buy Brok</div><div class="val r">₹{buy_brk:,.0f}</div></div>
-          <div class="reb-stat"><div class="label">Net Pool</div><div class="val g">₹{net_pool:,.0f}</div></div>
-          <div class="reb-stat"><div class="label">Per Stock</div><div class="val g">{fmt_inr(per_stock)}</div></div>
-        </div>""", unsafe_allow_html=True)
+            if sell_val_input == 0 and not capital_add:
+                st.info("💡 Sell Value enter karo (Portfolio Rebalancer se) → Buy orders auto-calculate honge.")
 
-        if sell_val_input == 0 and not capital_add:
-            st.info("💡 Sell Value enter karo (Portfolio Rebalancer se) → Buy orders auto-calculate honge.")
+            # ── Buy orders table ──────────────────────────────────
+            if buy_list_local and per_stock > 0:
+                st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
+                orders = []
+                total_invested = 0
+                for i, stock in enumerate(buy_list_local, 1):
+                    cmp = cmp_map3.get(stock, 0)
+                    if cmp > 0:
+                        qty = int(per_stock / cmp)
+                        val = qty * cmp
+                        total_invested += val
+                        orders.append({
+                            "#":           i,
+                            "Stock":       stock,
+                            "CMP ₹":       round(cmp, 2),
+                            "Gross Alloc": round(per_stock + brokerage),
+                            "Brok ₹":      brokerage,
+                            "Net Alloc":   round(per_stock),
+                            "Qty":         qty,
+                            "Value ₹":     round(val),
+                        })
 
-        # ── Buy orders table ────────────────────────────────────────
-        if buy_list_local and per_stock > 0:
-            st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
-            orders = []
-            total_invested = 0
-            for i, stock in enumerate(buy_list_local, 1):
-                cmp = cmp_map3.get(stock, 0)
-                if cmp > 0:
-                    qty = int(per_stock / cmp)
-                    val = qty * cmp
-                    total_invested += val
-                    orders.append({
-                        "#":           i,
-                        "Stock":       stock,
-                        "CMP ₹":       round(cmp, 2),
-                        "Gross Alloc": round(per_stock + brokerage),
-                        "Brok ₹":      brokerage,
-                        "Net Alloc":   round(per_stock),
-                        "Qty":         qty,
-                        "Value ₹":     round(val),
-                    })
-
-            if orders:
-                orders_df = pd.DataFrame(orders)
-                st.dataframe(
-                    orders_df.style.format({
-                        "CMP ₹": "{:.2f}",
-                        "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"
-                    }),
-                    use_container_width=True, hide_index=True, height=300
-                )
-                leftover = net_pool - total_invested
-                st.markdown(f"""<div class="reb-strip">
-                  <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
-                  <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{leftover:,.0f}</div></div>
-                  <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
-                </div>""", unsafe_allow_html=True)
+                if orders:
+                    orders_df = pd.DataFrame(orders)
+                    st.dataframe(
+                        orders_df.style.format({
+                            "CMP ₹": "{:.2f}",
+                            "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"
+                        }),
+                        use_container_width=True, hide_index=True, height=300
+                    )
+                    leftover = net_pool - total_invested
+                    st.markdown(f"""<div class="reb-strip">
+                      <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
+                      <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{leftover:,.0f}</div></div>
+                      <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
+                    </div>""", unsafe_allow_html=True)
 
         st.divider()
         if st.button("▶ Next: Apply & Export →", type="primary"):
