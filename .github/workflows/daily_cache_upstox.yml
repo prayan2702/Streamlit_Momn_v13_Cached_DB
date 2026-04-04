@@ -2,10 +2,8 @@ name: Daily Cache Builder — Upstox
 
 on:
   schedule:
-    # Roz 4:00 PM UTC = 9:30 PM IST, Monday–Friday
-    - cron: '0 16 * * 1-5'
-
-  workflow_dispatch:   # Manual trigger
+    - cron: '0 16 * * 1-5'   # 9:30 PM IST weekdays
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -13,7 +11,7 @@ env:
 jobs:
   build-cache-upstox:
     runs-on: ubuntu-latest
-    timeout-minutes: 90   # Sequential fetch ~60-70 min for 2100 symbols × 3 decades
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -24,10 +22,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ── SECURITY: Mask all secret values in logs ──────────────
-      # ::add-mask:: GitHub Actions command — agar koi bhi
-      # secret value accidentally log/print ho to *** se replace ho jaata hai.
-      # Ye sabse important security step hai public repo ke liye.
       - name: Mask secrets in logs
         run: |
           echo "::add-mask::${{ secrets.UPSTOX_CLIENT_ID }}"
@@ -37,10 +31,13 @@ jobs:
           echo "::add-mask::${{ secrets.UPSTOX_PIN }}"
           echo "::add-mask::${{ secrets.UPSTOX_TOTP_SECRET }}"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas pyarrow requests python-dateutil numpy pyotp
+          pip install pandas pyarrow requests python-dateutil numpy pyotp playwright
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
 
       - name: Build Upstox cache
         env:
