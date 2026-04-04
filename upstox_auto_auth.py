@@ -5,15 +5,20 @@ Playwright headless browser — fixed based on actual screenshots.
 
 Page flow confirmed:
   Page 1: Mobile input (#mobileNum) + "Get OTP" button
-  Page 2: "Enter OTP or TOTP" — single plain <input> (no name/placeholder)
+  Page 2: "Enter OTP or TOTP" — single input id="otpNum"
            + "Continue" button
-  Page 3: MPIN input + submit → redirect with auth_code
+  Page 3: MPIN input id="pinCode" + submit → redirect with auth_code
 
-FIX (v2): After PIN submit, Upstox redirects to https://127.0.0.1/?code=...
-  Since no server runs on 127.0.0.1, Chrome crashes to chrome-error://
-  before page.url can be read. Solution: intercept the redirect request
-  via page.route() and page.on("framenavigated") BEFORE PIN submit,
-  capture auth_code from the URL, and abort the failed navigation.
+ROOT CAUSE OF PREVIOUS FAILURE:
+  page.route() intercepts resource requests (XHR/fetch/images) but NOT
+  top-level navigation requests. Upstox redirects the page itself to
+  https://127.0.0.1/?code=... which is a navigation, so route() never fires.
+
+FIX (v3):
+  Use page.expect_navigation(wait_until="commit") BEFORE clicking Continue.
+  "commit" fires the instant the browser commits to the new URL — before
+  any page content loads, and before Chrome tries to connect to 127.0.0.1
+  and errors out. page.url at that moment contains ?code=...
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -81,7 +86,6 @@ def _exchange_code(auth_code, client_id, client_secret, redirect_uri) -> str:
 
 
 def _fill_first_visible_input(page, value: str, label: str) -> bool:
-    """Page pe jo pehla visible input ho, usme value daalo."""
     try:
         inputs = page.query_selector_all("input")
         for inp in inputs:
@@ -100,7 +104,6 @@ def _fill_first_visible_input(page, value: str, label: str) -> bool:
 
 
 def _log_page_state(page, step: str):
-    """Debug: log all inputs and buttons."""
     try:
         inputs = page.eval_on_selector_all(
             "input",
@@ -119,7 +122,6 @@ def _log_page_state(page, step: str):
 
 
 def _click_button(page, texts: list, timeout: int = 5000) -> bool:
-    """Try multiple button texts, click first found."""
     for text in texts:
         try:
             btn = page.wait_for_selector(
@@ -172,54 +174,6 @@ def _auth_with_playwright(
         page = context.new_page()
         auth_code = None
 
-        # ── KEY FIX: Intercept redirect to 127.0.0.1 / localhost ──────────
-        # Upstox sends auth_code as ?code= param in the redirect URL.
-        # Since no server runs on 127.0.0.1, Chrome crashes to chrome-error://
-        # BEFORE page.url can be polled. We intercept & abort the request
-        # here so we capture the URL before Chrome ever tries to load it.
-
-        captured_redirect_url: list = []  # mutable container for closure
-
-        def _intercept_redirect(route):
-            url = route.request.url
-            _safe_log(f"  [route] Intercepted: {url[:80]}")
-            code = _extract_code(url)
-            if code and not captured_redirect_url:
-                captured_redirect_url.append(url)
-                _safe_log("  [route] auth_code captured via route interception ✅")
-            # Abort the request — no server on 127.0.0.1, so this prevents
-            # chrome-error:// and the URL being lost
-            try:
-                route.abort()
-            except Exception:
-                pass
-
-        # Also listen on framenavigated as a belt-and-suspenders backup
-        def _on_frame_navigated(frame):
-            if frame != page.main_frame:
-                return
-            url = frame.url
-            if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
-                code = _extract_code(url)
-                if code and not captured_redirect_url:
-                    captured_redirect_url.append(url)
-                    _safe_log(f"  [framenavigated] auth_code captured ✅")
-
-        # Route patterns cover http and https variants of 127.0.0.1 / localhost
-        for pattern in [
-            "**/127.0.0.1/**",
-            "**/127.0.0.1*",
-            "**/localhost/**",
-            "**/localhost*",
-        ]:
-            try:
-                page.route(pattern, _intercept_redirect)
-            except Exception:
-                pass
-
-        page.on("framenavigated", _on_frame_navigated)
-        # ─────────────────────────────────────────────────────────────────
-
         try:
             # ── Page 1: Mobile number ──────────────────────────
             _safe_log("Page 1: Loading login page...")
@@ -230,7 +184,6 @@ def _auth_with_playwright(
             _log_page_state(page, "Page1")
             page.screenshot(path="/tmp/upstox_page1.png")
 
-            # Fill mobile — confirmed: id="mobileNum"
             _safe_log(f"  Filling mobile {_mask(mobile, 3)}*****...")
             filled = False
             for sel in ["#mobileNum", 'input[id="mobileNum"]',
@@ -248,44 +201,27 @@ def _auth_with_playwright(
 
             if not filled:
                 filled = _fill_first_visible_input(page, mobile, "Mobile")
-
             if not filled:
                 page.screenshot(path="/tmp/upstox_mobile_fail.png")
                 raise RuntimeError("Mobile input nahi mila")
 
             time.sleep(0.5)
-
-            # Click "Get OTP"
-            if not _click_button(page, ["Get OTP", "SEND OTP", "Send OTP",
-                                        "Continue", "Next"]):
-                _safe_log("  No button clicked — trying Enter key...")
+            if not _click_button(page, ["Get OTP", "SEND OTP", "Send OTP", "Continue", "Next"]):
                 page.keyboard.press("Enter")
-            time.sleep(4)  # OTP delivery wait
+            time.sleep(4)
 
             # ── Page 2: OTP / TOTP entry ───────────────────────
             _safe_log("Page 2: OTP/TOTP entry...")
             page.screenshot(path="/tmp/upstox_page2.png")
             _log_page_state(page, "Page2")
 
-            # Generate TOTP
             totp_code = pyotp.TOTP(totp_secret).now()
-            # TOTP value not logged
 
-            # Fill TOTP — confirmed: id="otpNum", type="text"
             totp_filled = False
-            totp_selectors = [
-                '#otpNum',
-                'input[id="otpNum"]',
-                'input[name="totp"]',
-                'input[name="otp"]',
-                'input[placeholder*="OTP" i]',
-                'input[placeholder*="TOTP" i]',
-                'input[maxlength="6"]',
-                'input[type="number"]',
-                'input[type="tel"]',
-                'input[type="text"]',
-            ]
-            for sel in totp_selectors:
+            for sel in ['#otpNum', 'input[id="otpNum"]', 'input[name="totp"]',
+                        'input[name="otp"]', 'input[placeholder*="OTP" i]',
+                        'input[placeholder*="TOTP" i]', 'input[maxlength="6"]',
+                        'input[type="number"]', 'input[type="tel"]', 'input[type="text"]']:
                 try:
                     elem = page.wait_for_selector(sel, timeout=3000, state="visible")
                     if elem:
@@ -298,17 +234,12 @@ def _auth_with_playwright(
                     continue
 
             if not totp_filled:
-                _safe_log("  Trying fill_first_visible_input for TOTP...")
                 totp_filled = _fill_first_visible_input(page, totp_code, "TOTP")
-
             if not totp_filled:
                 _safe_log("  WARNING: TOTP field not filled")
 
             time.sleep(0.5)
-
-            # Click Continue
-            if not _click_button(page, ["Continue", "Verify", "Submit",
-                                        "Next", "Proceed"]):
+            if not _click_button(page, ["Continue", "Verify", "Submit", "Next", "Proceed"]):
                 page.keyboard.press("Enter")
             time.sleep(3)
 
@@ -317,22 +248,12 @@ def _auth_with_playwright(
             page.screenshot(path="/tmp/upstox_page3.png")
             _log_page_state(page, "Page3")
 
-            # Fill PIN — confirmed: id="pinCode", type="password"
-            pin_selectors = [
-                '#pinCode',
-                'input[id="pinCode"]',
-                'input[name="mpin"]',
-                'input[name="pin"]',
-                'input[name="client_secret"]',
-                'input[type="password"]',
-                'input[placeholder*="PIN" i]',
-                'input[placeholder*="MPIN" i]',
-                'input[maxlength="6"]',
-                'input[type="number"]',
-                'input[type="text"]',
-            ]
             pin_filled = False
-            for sel in pin_selectors:
+            for sel in ['#pinCode', 'input[id="pinCode"]', 'input[name="mpin"]',
+                        'input[name="pin"]', 'input[name="client_secret"]',
+                        'input[type="password"]', 'input[placeholder*="PIN" i]',
+                        'input[placeholder*="MPIN" i]', 'input[maxlength="6"]',
+                        'input[type="number"]', 'input[type="text"]']:
                 try:
                     elem = page.wait_for_selector(sel, timeout=3000, state="visible")
                     if elem:
@@ -345,57 +266,76 @@ def _auth_with_playwright(
                     continue
 
             if not pin_filled:
-                _safe_log("  Trying fill_first_visible_input for PIN...")
                 pin_filled = _fill_first_visible_input(page, pin, "PIN")
-
             if not pin_filled:
                 _safe_log("  WARNING: PIN field not filled")
 
             time.sleep(0.5)
 
-            # Submit — route interceptor fires here during/after click
-            _safe_log("  Submitting PIN — watching for redirect...")
-            if not _click_button(page, ["Continue", "Login", "Submit",
-                                        "Proceed", "Verify"]):
-                page.keyboard.press("Enter")
+            # ── KEY FIX v3: expect_navigation(wait_until="commit") ─────────
+            # PROBLEM: page.route() only intercepts sub-resource requests
+            #   (XHR, fetch, images). It does NOT intercept top-level page
+            #   navigations. Upstox does a full page redirect to
+            #   https://127.0.0.1/?code=... so route() never fires.
+            #
+            # SOLUTION: expect_navigation(wait_until="commit") opens a context
+            #   manager that resolves the INSTANT the browser commits to
+            #   navigating to the new URL — before any page content is fetched,
+            #   and before Chrome tries (and fails) to connect to 127.0.0.1.
+            #   Reading page.url at that exact moment gives us ?code=...
+            # ──────────────────────────────────────────────────────────────────
+            _safe_log("  Submitting PIN — waiting for redirect (expect_navigation commit)...")
 
-            # ── Wait for intercepted redirect URL ──────────────
-            # Poll captured_redirect_url (filled by route interceptor)
-            # Max ~15 seconds; interceptor fires almost instantly on redirect
-            _safe_log("Waiting for auth_code from redirect interceptor...")
-            for i in range(15):
-                if captured_redirect_url:
-                    auth_code = _extract_code(captured_redirect_url[0])
-                    if auth_code:
-                        _safe_log(f"  auth_code extracted from intercepted URL ✅")
-                        break
+            redirect_url_captured = None
+            try:
+                with page.expect_navigation(
+                    url=re.compile(r"(127\.0\.0\.1|localhost)"),
+                    wait_until="commit",
+                    timeout=15000,
+                ):
+                    clicked = _click_button(
+                        page, ["Continue", "Login", "Submit", "Proceed", "Verify"]
+                    )
+                    if not clicked:
+                        page.keyboard.press("Enter")
 
-                # Fallback: also check page.url in case browser is slow
-                try:
-                    url = page.url
-                    if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
-                        auth_code = _extract_code(url)
-                        if auth_code:
-                            _safe_log(f"  auth_code from page.url fallback ✅")
-                            break
-                except Exception:
-                    pass
+                # Context manager exited = navigation URL committed
+                redirect_url_captured = page.url
+                _safe_log(f"  expect_navigation fired ✅ — URL captured")
 
-                if i == 8:
+            except PWTimeout:
+                _safe_log("  expect_navigation timed out — trying plain click + fallback poll...")
+                # Button may not have been clicked yet if timeout before click
+                _click_button(page, ["Continue", "Login", "Submit", "Proceed", "Verify"])
+
+            # Extract from committed navigation URL
+            if redirect_url_captured:
+                auth_code = _extract_code(redirect_url_captured)
+                if auth_code:
+                    _safe_log("  auth_code extracted from navigation URL ✅")
+
+            # Fallback poll if expect_navigation missed
+            if not auth_code:
+                _safe_log("  Fallback: polling page.url for 10s...")
+                for i in range(10):
                     try:
-                        page.screenshot(path="/tmp/upstox_midwait.png")
-                        _log_page_state(page, f"MidWait-{i}")
+                        url = page.url
+                        if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
+                            auth_code = _extract_code(url)
+                            if auth_code:
+                                _safe_log(f"  auth_code from fallback poll ✅")
+                                break
+                        _safe_log(f"  fallback ({i+1}/10): {url[:70]}")
                     except Exception:
-                        pass
-
-                time.sleep(1)
-                _safe_log(f"  ({i+1}/15) waiting... captured={bool(captured_redirect_url)}")
+                        _safe_log(f"  fallback ({i+1}/10): page.url error")
+                    time.sleep(1)
 
             try:
+                page.screenshot(path="/tmp/upstox_midwait.png")
                 page.screenshot(path="/tmp/upstox_final_debug.png")
                 _safe_log(f"  Final URL: {page.url[:80]}")
-            except Exception:
-                _safe_log("  Final screenshot failed (page may be closed)")
+            except Exception as e:
+                _safe_log(f"  Final screenshot/url failed: {type(e).__name__}")
 
         finally:
             try:
