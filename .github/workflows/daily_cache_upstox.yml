@@ -48,7 +48,13 @@ jobs:
           UPSTOX_PIN:           ${{ secrets.UPSTOX_PIN }}
           UPSTOX_TOTP_SECRET:   ${{ secrets.UPSTOX_TOTP_SECRET }}
         run: python cache_builder_upstox.py
-
+      - name: Upload debug artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: upstox-debug-screenshots
+          path: /tmp/upstox_*.png
+          retention-days: 7
       - name: Commit and push cache files
         run: |
           git config user.name  "github-actions[bot]"
