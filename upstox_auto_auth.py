@@ -125,6 +125,22 @@ def _auth_with_playwright(
             page.goto(login_url, wait_until="networkidle", timeout=30000)
             _safe_log(f"  Page URL: {page.url[:60]}")
             time.sleep(2)
+            # ── Step 1.5: Debug — log page structure ───────────
+            _safe_log("  Step 1.5: Inspecting page content...")
+            try:
+                # Check if the login form is actually visible
+                form_check = page.query_selector('form, [role="form"], .login-form, input[type="text"], input[type="tel"]')
+                if not form_check:
+                    _safe_log("  WARNING: No form elements found in page!")
+                    page.screenshot(path="/tmp/upstox_form_check.png")
+                    # Get actual HTML to understand structure
+                    html_snippet = page.content()[:1500]
+                    _safe_log(f"  Page HTML (first 1500 chars): {html_snippet[:200]}")
+            except Exception as e:
+                _safe_log(f"  Debug check failed: {e}")
+            
+            # Add longer wait for elements to render
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
 
             # ── Step 2: Fill mobile number ─────────────────────
             _safe_log(f"  Step 2: Filling mobile {_mask(mobile, 3)}*****...")
@@ -138,6 +154,10 @@ def _auth_with_playwright(
                 'input[placeholder*="mobile" i]',
                 'input[placeholder*="phone" i]',
                 'input[placeholder*="Mobile" i]',
+                # New: More aggressive selectors
+                'input[inputmode="tel"]',
+                'input[pattern*="[0-9]"]',
+                'input:not([type="hidden"])[type!="submit"][type!="button"]',  # First visible input
             ]
             mobile_filled = False
             for sel in mobile_selectors:
@@ -150,6 +170,18 @@ def _auth_with_playwright(
                         break
                 except PWTimeout:
                     continue
+
+            # ── XPath Fallback for Hidden/Dynamic Elements ───
+            if not mobile_filled:
+                _safe_log("  Trying XPath fallback...")
+                try:
+                    elem = page.locator('xpath=//input[contains(@placeholder, "mobile") or contains(@placeholder, "phone") or contains(@placeholder, "Mobile") or @type="tel"]').first
+                    if elem.is_visible():
+                        elem.fill(mobile)
+                        mobile_filled = True
+                        _safe_log("  Mobile filled via XPath fallback")
+                except Exception as e:
+                    _safe_log(f"  XPath fallback failed: {e}")
 
             if not mobile_filled:
                 _safe_log("  Could not find mobile input — taking screenshot for debug")
