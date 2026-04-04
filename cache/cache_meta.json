@@ -1,32 +1,54 @@
 {
-  "build_date": "2026-04-03",
-  "build_time_utc": "15:37:06",
-  "build_duration_min": 3.6,
+  "build_date": "2026-04-04",
+  "build_time_utc": "17:37:39",
+  "build_duration_min": 81.9,
   "symbols_total": 2134,
-  "symbols_fetched": 2134,
-  "symbols_failed": 0,
-  "failed_symbols": [],
+  "symbols_fetched": 2130,
+  "symbols_failed": 3,
+  "not_in_master": 1,
+  "failed_symbols": [
+    "ANURAS.NS",
+    "CHOLAFIN.NS",
+    "NIMBSPROJ.NS",
+    "SANGHIIND.NS"
+  ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-03",
-  "data_end": "2026-04-03",
+  "data_start_recent": "2022-12-04",
+  "data_end": "2026-04-04",
   "recent_months": 40,
-  "source": "YFinance",
-  "symbol_source": "NSE EQUITY_L.csv (direct)",
+  "source": "Upstox V3 (daily candles)",
+  "symbol_source": "NSE EQUITY_L.csv (direct download)",
   "extra_symbols": [
     "GOLDBEES.NS",
     "SILVERBEES.NS"
   ],
+  "decades_per_symbol": 3,
+  "decade_ranges": [
+    [
+      "2000-01-01",
+      "2009-12-31"
+    ],
+    [
+      "2010-01-01",
+      "2019-12-31"
+    ],
+    [
+      "2020-01-01",
+      "2026-04-04"
+    ]
+  ],
+  "total_api_calls": 6390,
   "close_shape": [
-    822,
-    2134
+    870,
+    2130
   ],
   "high_shape": [
-    822,
-    2134
+    870,
+    2130
   ],
   "volume_shape": [
-    822,
-    2134
+    870,
+    2130
   ],
-  "ath_count": 2133
+  "ath_count": 2130
 }
