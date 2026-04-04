@@ -125,21 +125,25 @@ def _auth_with_playwright(
             page.goto(login_url, wait_until="networkidle", timeout=30000)
             _safe_log(f"  Page URL: {page.url[:60]}")
             time.sleep(2)
-            # ── Step 1.5: Debug — log page structure ───────────
-            _safe_log("  Step 1.5: Inspecting page content...")
+            # ── Step 1.5: Screenshot + page info ──────────────
+            _safe_log("  Step 1.5: Capturing page state...")
             try:
-                # Check if the login form is actually visible
-                form_check = page.query_selector('form, [role="form"], .login-form, input[type="text"], input[type="tel"]')
-                if not form_check:
-                    _safe_log("  WARNING: No form elements found in page!")
-                    page.screenshot(path="/tmp/upstox_form_check.png")
-                    # Get actual HTML to understand structure
-                    html_snippet = page.content()[:1500]
-                    _safe_log(f"  Page HTML (first 1500 chars): {html_snippet[:200]}")
+                page.screenshot(path="/tmp/upstox_step1_loaded.png")
+                _safe_log(f"  Screenshot saved: /tmp/upstox_step1_loaded.png")
+                # Log all visible inputs to understand page structure
+                inputs = page.eval_on_selector_all(
+                    "input",
+                    "els => els.map(e => ({type: e.type, name: e.name, placeholder: e.placeholder, id: e.id}))"
+                )
+                _safe_log(f"  Inputs found on page: {inputs}")
+                buttons = page.eval_on_selector_all(
+                    "button",
+                    "els => els.map(e => e.textContent.trim()).filter(t => t)"
+                )
+                _safe_log(f"  Buttons found: {buttons[:5]}")
             except Exception as e:
-                _safe_log(f"  Debug check failed: {e}")
-            
-            # Add longer wait for elements to render
+                _safe_log(f"  Debug check: {type(e).__name__}")
+
             page.wait_for_load_state("domcontentloaded", timeout=15000)
 
             # ── Step 2: Fill mobile number ─────────────────────
@@ -157,7 +161,7 @@ def _auth_with_playwright(
                 # New: More aggressive selectors
                 'input[inputmode="tel"]',
                 'input[pattern*="[0-9]"]',
-                'input:not([type="hidden"])[type!="submit"][type!="button"]',  # First visible input
+                'input:not([type=hidden]):not([type=submit]):not([type=button])',  # First visible input
             ]
             mobile_filled = False
             for sel in mobile_selectors:
