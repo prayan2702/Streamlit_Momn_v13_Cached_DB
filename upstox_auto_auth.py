@@ -1,24 +1,20 @@
 """
 upstox_auto_auth.py
 ===================
-CORRECT COMPLETE FLOW (confirmed from browser DevTools):
+Playwright headless browser se Upstox OAuth automation.
 
-Step 1: GET login.upstox.com → session cookies
-Step 2: POST service.upstox.com/login/open/v7/auth/1fa/otp/generate
-        body: {mobileNumber: mobile}
-        → OTP sent to phone (automation mein skip — MPIN+TOTP use karo)
-Step 3: POST service.upstox.com/login/open/v7/auth/2fa/totp
-        body: {mobileNumber, mpin, totp}
-        → auth_identity_token cookie set hoti hai
-Step 4: GET service.upstox.com/gateway-worker/v1/verify-access-token
-        ?client_id=CLIENT_ID&redirect_uri=https://127.0.0.1/&response_type=code
-        → redirects to https://127.0.0.1/?code=AUTH_CODE
-        → requests catches ConnectionError → extract code from URL
-Step 5: POST token endpoint → access_token
+Kyun Playwright:
+  - Upstox login page JS execute karta hai (session tokens, CSRF, fingerprinting)
+  - requests library ye sab miss karta hai → 500/401 errors
+  - Playwright actual Chrome chalata hai → sab automatically handle hota hai
 
-CRITICAL: REDIRECT_URI must be https://127.0.0.1/
-  - Upstox Developer Console mein bhi set karo
-  - GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/
+Flow:
+  1. Browser launch → login.upstox.com load
+  2. Mobile number fill + submit (OTP send)
+  3. TOTP from pyotp fill (SMS OTP nahi — TOTP authenticator)
+  4. MPIN fill + submit
+  5. Redirect se auth_code extract
+  6. code → access_token
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -26,23 +22,10 @@ SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 import os
 import re
 import time
-import uuid
 import urllib.parse
 
 import pyotp
 import requests
-from requests.exceptions import ConnectionError as ReqConnError
-
-_SERVICE   = "https://service.upstox.com"
-_LOGIN_URL = "https://login.upstox.com"
-_TOKEN_URL = "https://api.upstox.com/v2/login/authorization/token"
-_AUTH_DIALOG = "https://api.upstox.com/v2/login/authorization/dialog"
-
-_BROWSER_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/146.0.0.0 Safari/537.36"
-)
 
 
 def _mask(v: str, n: int = 4) -> str:
@@ -51,36 +34,23 @@ def _mask(v: str, n: int = 4) -> str:
 def _safe_log(msg: str):
     print(f"[upstox_auth] {msg}", flush=True)
 
-def _extract_code(text: str):
+def _extract_code(url: str):
     try:
-        # Try as URL first
-        p = urllib.parse.parse_qs(urllib.parse.urlparse(text).query)
+        p = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         c = p.get("code", [None])[0]
         if c:
             return c
     except Exception:
         pass
-    # Fallback: regex
-    m = re.search(r"[?&]code=([^&\"'\s]+)", text)
+    m = re.search(r"[?&]code=([^&\"'\s]+)", str(url))
     return m.group(1) if m else None
 
-def _make_device_details() -> str:
-    dev_uuid = str(uuid.uuid4())
-    return (
-        f"platform=WEB|osName=Windows/10|osVersion=Chrome/146.0.0.0|"
-        f"appVersion=4.0.0|modelName=Chrome|manufacturer=unknown|"
-        f"uuid={dev_uuid}|userAgent=Upstox 3.0 {_BROWSER_UA}"
-    )
 
-def _make_request_id() -> str:
-    return "WPRO-" + uuid.uuid4().hex[:12]
-
-
-def _exchange_code(session, auth_code, client_id, client_secret, redirect_uri) -> str:
-    _safe_log("Step 5: Exchanging code for access_token...")
+def _exchange_code(auth_code, client_id, client_secret, redirect_uri) -> str:
+    _safe_log("Step final: Exchanging code for access_token...")
     try:
-        resp = session.post(
-            _TOKEN_URL,
+        resp = requests.post(
+            "https://api.upstox.com/v2/login/authorization/token",
             data={
                 "code":          auth_code,
                 "client_id":     client_id,
@@ -111,299 +81,250 @@ def _exchange_code(session, auth_code, client_id, client_secret, redirect_uri) -
         raise RuntimeError(f"Token exchange error: {type(e).__name__}") from None
 
 
+def _auth_with_playwright(
+    client_id, client_secret, redirect_uri,
+    mobile, pin, totp_secret
+) -> str:
+    """Playwright headless Chrome se Upstox login."""
+    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+    login_url = (
+        f"https://api.upstox.com/v2/login/authorization/dialog"
+        f"?response_type=code"
+        f"&client_id={client_id}"
+        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
+    )
+
+    _safe_log("Playwright: Launching headless Chrome...")
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+            ]
+        )
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/146.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 720},
+        )
+        page = context.new_page()
+
+        auth_code = None
+
+        try:
+            # ── Step 1: Load login page ────────────────────────
+            _safe_log(f"  Step 1: Loading login page...")
+            page.goto(login_url, wait_until="networkidle", timeout=30000)
+            _safe_log(f"  Page URL: {page.url[:60]}")
+            time.sleep(2)
+
+            # ── Step 2: Fill mobile number ─────────────────────
+            _safe_log(f"  Step 2: Filling mobile {_mask(mobile, 3)}*****...")
+
+            # Mobile input — various selectors Upstox uses
+            mobile_selectors = [
+                'input[name="mobileNum"]',
+                'input[name="mobile_num"]',
+                'input[name="mobileNumber"]',
+                'input[type="tel"]',
+                'input[placeholder*="mobile" i]',
+                'input[placeholder*="phone" i]',
+                'input[placeholder*="Mobile" i]',
+            ]
+            mobile_filled = False
+            for sel in mobile_selectors:
+                try:
+                    elem = page.wait_for_selector(sel, timeout=3000)
+                    if elem:
+                        elem.fill(mobile)
+                        mobile_filled = True
+                        _safe_log(f"  Mobile filled via: {sel}")
+                        break
+                except PWTimeout:
+                    continue
+
+            if not mobile_filled:
+                _safe_log("  Could not find mobile input — taking screenshot for debug")
+                page.screenshot(path="/tmp/upstox_step2_debug.png")
+                raise RuntimeError("Mobile input field not found on page")
+
+            # Submit mobile
+            submit_selectors = [
+                'button[type="submit"]',
+                'button:has-text("Continue")',
+                'button:has-text("Get OTP")',
+                'button:has-text("Send OTP")',
+                'button:has-text("Next")',
+            ]
+            for sel in submit_selectors:
+                try:
+                    btn = page.wait_for_selector(sel, timeout=2000)
+                    if btn:
+                        btn.click()
+                        _safe_log(f"  Clicked: {sel}")
+                        break
+                except PWTimeout:
+                    continue
+
+            time.sleep(3)
+
+            # ── Step 3: TOTP field ─────────────────────────────
+            _safe_log("  Step 3: Checking for TOTP field...")
+            totp_code = pyotp.TOTP(totp_secret).now()
+            # Note: totp_code value not logged
+
+            totp_selectors = [
+                'input[name="totp"]',
+                'input[placeholder*="TOTP" i]',
+                'input[placeholder*="authenticator" i]',
+                'input[placeholder*="Google" i]',
+                'input[name="otp"]',
+                'input[placeholder*="OTP" i]',
+                'input[type="number"]',
+                'input[maxlength="6"]',
+            ]
+            totp_filled = False
+            for sel in totp_selectors:
+                try:
+                    elem = page.wait_for_selector(sel, timeout=3000)
+                    if elem:
+                        elem.fill(totp_code)
+                        totp_filled = True
+                        _safe_log(f"  TOTP filled (value masked)")
+                        break
+                except PWTimeout:
+                    continue
+
+            if not totp_filled:
+                _safe_log("  TOTP field not found yet — may appear after mobile submit")
+
+            time.sleep(2)
+
+            # ── Step 4: PIN field ──────────────────────────────
+            _safe_log("  Step 4: Filling PIN (value masked)...")
+
+            pin_selectors = [
+                'input[name="pin"]',
+                'input[name="mpin"]',
+                'input[name="client_secret"]',
+                'input[type="password"]',
+                'input[placeholder*="PIN" i]',
+                'input[placeholder*="password" i]',
+                'input[placeholder*="MPIN" i]',
+            ]
+            pin_filled = False
+            for sel in pin_selectors:
+                try:
+                    elem = page.wait_for_selector(sel, timeout=3000)
+                    if elem:
+                        elem.fill(pin)
+                        pin_filled = True
+                        _safe_log(f"  PIN filled via: {sel}")
+                        break
+                except PWTimeout:
+                    continue
+
+            if not pin_filled:
+                _safe_log("  PIN field not found — may appear on next page")
+
+            # If TOTP not filled before, try again now
+            if not totp_filled:
+                totp_code = pyotp.TOTP(totp_secret).now()
+                for sel in totp_selectors:
+                    try:
+                        elem = page.wait_for_selector(sel, timeout=2000)
+                        if elem:
+                            elem.fill(totp_code)
+                            totp_filled = True
+                            _safe_log("  TOTP filled (value masked)")
+                            break
+                    except PWTimeout:
+                        continue
+
+            # Submit login
+            time.sleep(1)
+            for sel in submit_selectors + ['button:has-text("Login")', 'button:has-text("Sign in")', 'input[type="submit"]']:
+                try:
+                    btn = page.wait_for_selector(sel, timeout=2000)
+                    if btn and btn.is_visible():
+                        btn.click()
+                        _safe_log(f"  Login submitted via: {sel}")
+                        break
+                except PWTimeout:
+                    continue
+
+            # ── Step 5: Wait for redirect → extract code ───────
+            _safe_log("  Step 5: Waiting for redirect with auth_code...")
+            max_wait = 15
+            for i in range(max_wait):
+                current_url = page.url
+                code = _extract_code(current_url)
+                if code:
+                    _safe_log(f"  auth_code extracted from redirect ✅")
+                    auth_code = code
+                    break
+
+                # Check if we're on 127.0.0.1 error page
+                if "127.0.0.1" in current_url or "localhost" in current_url:
+                    code = _extract_code(current_url)
+                    if code:
+                        auth_code = code
+                        _safe_log(f"  auth_code from 127.0.0.1 redirect ✅")
+                        break
+
+                time.sleep(1)
+                _safe_log(f"  Waiting... ({i+1}/{max_wait}) URL: {current_url[:50]}")
+
+            if not auth_code:
+                # Take screenshot for debugging
+                page.screenshot(path="/tmp/upstox_final_debug.png")
+                _safe_log(f"  Final URL: {page.url}")
+                _safe_log("  Screenshot saved to /tmp/upstox_final_debug.png")
+
+        finally:
+            browser.close()
+
+        return auth_code
+
+
 def get_upstox_token_automated(
     client_id, client_secret, redirect_uri,
     mobile, pin, totp_secret
 ) -> str:
 
-    # REDIRECT_URI validation
     if "127.0.0.1" not in redirect_uri and "localhost" not in redirect_uri:
-        _safe_log(f"  WARNING: REDIRECT_URI = {redirect_uri}")
         _safe_log(
-            "  For automation, REDIRECT_URI = https://127.0.0.1/ zaroori hai!\n"
-            "  1. developer.upstox.com → App → Edit → Redirect URL = https://127.0.0.1/\n"
-            "  2. GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/"
+            "WARNING: REDIRECT_URI should be https://127.0.0.1/ for automation!\n"
+            "  developer.upstox.com → App → Edit → Redirect URI = https://127.0.0.1/\n"
+            "  GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/"
         )
 
-    device_details = _make_device_details()
-    request_id     = _make_request_id()
-
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent":      _BROWSER_UA,
-        "Accept-Language": "en-US,en;q=0.9,hi;q=0.7",
-        "Accept-Encoding": "gzip, deflate, br, zstd",
-    })
-
-    # Common service.upstox.com headers
-    svc_hdrs = {
-        "Accept":           "application/json, */*",
-        "Content-Type":     "application/json",
-        "Origin":           _LOGIN_URL,
-        "Referer":          f"{_LOGIN_URL}/",
-        "x-device-details": device_details,
-        "x-request-id":     request_id,
-        "sec-fetch-dest":   "empty",
-        "sec-fetch-mode":   "cors",
-        "sec-fetch-site":   "same-site",
-    }
-
-    # ── Step 1: Load login page → session cookies ──────────────
-    _safe_log("Step 1: Loading login.upstox.com...")
-    login_page = (
-        f"{_LOGIN_URL}/"
-        f"?client_id={client_id}"
-        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
-        f"&response_type=code"
+    _safe_log("Starting Playwright headless auth...")
+    auth_code = _auth_with_playwright(
+        client_id, client_secret, redirect_uri,
+        mobile, pin, totp_secret
     )
-    try:
-        r1 = session.get(login_page, allow_redirects=True, timeout=20)
-        _safe_log(f"  Status: {r1.status_code} | Cookies: {list(session.cookies.keys())}")
-    except Exception as e:
-        _safe_log(f"  login.upstox.com failed ({type(e).__name__}) — trying dialog...")
-        try:
-            r1 = session.get(
-                _AUTH_DIALOG,
-                params={"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri},
-                allow_redirects=True, timeout=20,
-            )
-            _safe_log(f"  Dialog status: {r1.status_code}")
-        except Exception as e2:
-            raise RuntimeError(f"Step 1 failed: {type(e2).__name__}") from None
-
-    time.sleep(2)
-
-    # ── Step 2: Generate OTP (mobile submit) ──────────────────
-    _safe_log(f"Step 2: OTP generate for {_mask(mobile, 3)}*****...")
-    otp_gen_ep = f"{_SERVICE}/login/open/v7/auth/1fa/otp/generate"
-
-    otp_bodies = [
-        {"mobileNumber": mobile},
-        {"mobileNumber": mobile, "requestId": request_id},
-        {"mobile_num": mobile},
-        {"mobile": mobile},
-    ]
-
-    step2_ok = False
-    for body in otp_bodies:
-        try:
-            r2 = session.post(
-                otp_gen_ep, json=body,
-                headers=svc_hdrs,
-                allow_redirects=False, timeout=20,
-            )
-            _safe_log(f"  {list(body.keys())}: HTTP {r2.status_code}")
-
-            if r2.status_code in (200, 201):
-                step2_ok = True
-                _safe_log("  OTP generated ✅")
-                try:
-                    _safe_log(f"  Response keys: {list(r2.json().keys())}")
-                except Exception:
-                    pass
-                break
-            try:
-                errs = r2.json().get("errors") or []
-                ec   = errs[0].get("errorCode", "") if errs else ""
-                emsg = errs[0].get("message", "")   if errs else ""
-                if ec:
-                    _safe_log(f"  Error: {ec} — {emsg}")
-            except Exception:
-                pass
-        except Exception as e:
-            _safe_log(f"  {type(e).__name__}")
-
-    if not step2_ok:
-        _safe_log("  Step 2 inconclusive — continuing...")
-
-    time.sleep(2)
-
-    # ── Step 3: Login with MPIN + TOTP → auth_identity_token ──
-    _safe_log("Step 3: MPIN+TOTP login (values masked)...")
-
-    # Confirmed endpoints from v7 auth pattern:
-    step3_eps = [
-        f"{_SERVICE}/login/open/v7/auth/2fa/totp",
-        f"{_SERVICE}/login/open/v7/auth/2fa/login",
-        f"{_SERVICE}/login/open/v7/auth/1fa/otp/verify",
-        f"{_SERVICE}/login/open/v7/auth/login",
-    ]
-    pin_keys = ["mpin", "pin", "client_secret"]
-
-    def _do_step3(totp_val: str) -> bool:
-        """Returns True agar auth_identity_token cookie set ho gayi."""
-        for ep in step3_eps:
-            for pkey in pin_keys:
-                pld = {
-                    "mobileNumber": mobile,
-                    pkey:           pin,
-                    "totp":         totp_val,
-                    "requestId":    request_id,
-                }
-                try:
-                    r3 = session.post(
-                        ep, json=pld,
-                        headers=svc_hdrs,
-                        allow_redirects=False, timeout=20,
-                    )
-                    _safe_log(f"  {ep.split('/')[-1]}+{pkey}: HTTP {r3.status_code}")
-
-                    if r3.status_code == 404:
-                        break  # endpoint nahi hai
-
-                    # auth_identity_token cookie check
-                    if "auth_identity_token" in session.cookies:
-                        _safe_log("  auth_identity_token cookie set ✅")
-                        return True
-
-                    try:
-                        body = r3.json()
-                        bkeys = list(body.keys())
-                        _safe_log(f"    Body keys: {bkeys}")
-
-                        if r3.status_code in (200, 201):
-                            # Check token in body
-                            data = body.get("data", {})
-                            if isinstance(data, dict) and data.get("auth_identity_token"):
-                                # Manually set cookie
-                                session.cookies.set(
-                                    "auth_identity_token",
-                                    data["auth_identity_token"]
-                                )
-                                _safe_log("    auth_identity_token from body ✅")
-                                return True
-                            # Maybe already set via Set-Cookie header
-                            if "auth_identity_token" in session.cookies:
-                                return True
-
-                        if r3.status_code >= 400:
-                            errs = body.get("errors") or []
-                            ec   = errs[0].get("errorCode", "") if errs else ""
-                            emsg = errs[0].get("message", "")   if errs else ""
-                            if ec:
-                                _safe_log(f"    Error: {ec} — {emsg}")
-                    except Exception:
-                        pass
-
-                except Exception as e:
-                    _safe_log(f"    {type(e).__name__}")
-                time.sleep(0.3)
-        return "auth_identity_token" in session.cookies
-
-    totp_code = pyotp.TOTP(totp_secret).now()
-    logged_in = _do_step3(totp_code)
-
-    if not logged_in:
-        _safe_log("  Waiting 31s for fresh TOTP window...")
-        time.sleep(31)
-        totp_code = pyotp.TOTP(totp_secret).now()
-        _safe_log("  Retry Step 3 (fresh TOTP)...")
-        logged_in = _do_step3(totp_code)
-
-    if not logged_in:
-        _safe_log("  WARNING: auth_identity_token not confirmed — trying Step 4 anyway...")
-
-    # ── Step 4: verify-access-token → auth_code ───────────────
-    # (Confirmed from browser: gateway-worker/v1/verify-access-token)
-    _safe_log("Step 4: Getting auth_code from verify-access-token...")
-
-    verify_url = (
-        f"{_SERVICE}/gateway-worker/v1/verify-access-token"
-        f"?client_id={client_id}"
-        f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
-        f"&response_type=code"
-    )
-
-    auth_code = None
-    try:
-        # allow_redirects=False to catch the redirect to 127.0.0.1
-        r4 = session.get(
-            verify_url,
-            headers={
-                "Accept":         "*/*",
-                "Origin":         _LOGIN_URL,
-                "Referer":        f"{_LOGIN_URL}/",
-                "sec-fetch-site": "same-site",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-dest": "empty",
-            },
-            allow_redirects=False,
-            timeout=20,
-        )
-        _safe_log(f"  verify-access-token: HTTP {r4.status_code}")
-
-        # Check redirect location
-        loc = r4.headers.get("Location", "")
-        if loc:
-            _safe_log(f"  Redirect to: {loc[:50]}...")
-            auth_code = _extract_code(loc)
-            if auth_code:
-                _safe_log(f"  auth_code from Location ✅")
-
-        # Check response body
-        if not auth_code:
-            try:
-                body = r4.json()
-                _safe_log(f"  Body keys: {list(body.keys())}")
-                for k in ("code", "redirect_url", "redirectUrl"):
-                    val = body.get(k, "")
-                    if val:
-                        auth_code = _extract_code(val) if "redirect" in k else val
-                        if auth_code:
-                            _safe_log(f"  auth_code from body.{k} ✅")
-                            break
-            except Exception:
-                pass
-
-    except ReqConnError as ce:
-        # Connection to 127.0.0.1 refused = SUCCESS! Code is in the URL
-        err_str = str(ce)
-        auth_code = _extract_code(err_str)
-        if auth_code:
-            _safe_log(f"  auth_code from 127.0.0.1 redirect ✅")
-
-    except Exception as e:
-        _safe_log(f"  Step 4 error: {type(e).__name__}")
-
-    # Also try with allow_redirects=True to follow to 127.0.0.1
-    if not auth_code:
-        try:
-            r4b = session.get(
-                verify_url,
-                headers={
-                    "Accept":         "*/*",
-                    "Origin":         _LOGIN_URL,
-                    "Referer":        f"{_LOGIN_URL}/",
-                },
-                allow_redirects=True,
-                timeout=20,
-            )
-            _safe_log(f"  verify (redirected): HTTP {r4b.status_code} | URL: {r4b.url[:60]}")
-            auth_code = _extract_code(r4b.url)
-            if auth_code:
-                _safe_log(f"  auth_code from final URL ✅")
-        except ReqConnError as ce:
-            auth_code = _extract_code(str(ce))
-            if auth_code:
-                _safe_log(f"  auth_code from connection error URL ✅")
-        except Exception as e:
-            _safe_log(f"  {type(e).__name__}")
 
     if not auth_code:
         raise RuntimeError(
-            "Upstox auth failed — auth_code nahi mila.\n\n"
-            "MOST LIKELY CAUSE — REDIRECT_URI galat hai:\n"
-            "  Current REDIRECT_URI: " + redirect_uri + "\n"
-            "  Required REDIRECT_URI: https://127.0.0.1/\n\n"
-            "FIX:\n"
-            "  1. developer.upstox.com → My Apps → Edit App\n"
-            "     Redirect URI = https://127.0.0.1/\n"
-            "  2. GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/\n"
-            "  3. Workflow dobara run karo\n\n"
+            "Upstox auth failed — auth_code nahi mila.\n"
+            "Checks:\n"
+            "  1. REDIRECT_URI = https://127.0.0.1/ (developer console + GitHub Secret)\n"
+            "  2. TOTP verify: python -c \"import pyotp; print(pyotp.TOTP('SECRET').now())\"\n"
+            "  3. UPSTOX_PIN — 6-digit MPIN\n"
+            "  4. UPSTOX_MOBILE — 10-digit bina +91\n"
             "Values logs mein nahi dikhti."
         )
 
-    return _exchange_code(session, auth_code, client_id, client_secret, redirect_uri)
+    return _exchange_code(auth_code, client_id, client_secret, redirect_uri)
 
 
 def get_token_from_env() -> str:
