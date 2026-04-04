@@ -5,20 +5,21 @@ Playwright headless browser — fixed based on actual screenshots.
 
 Page flow confirmed:
   Page 1: Mobile input (#mobileNum) + "Get OTP" button
-  Page 2: "Enter OTP or TOTP" — single input id="otpNum"
-           + "Continue" button
-  Page 3: MPIN input id="pinCode" + submit → redirect with auth_code
+  Page 2: "Enter OTP or TOTP" — id="otpNum" + "Continue" button
+  Page 3: MPIN id="pinCode" + submit → redirect with auth_code
 
-ROOT CAUSE OF PREVIOUS FAILURE:
-  page.route() intercepts resource requests (XHR/fetch/images) but NOT
-  top-level navigation requests. Upstox redirects the page itself to
-  https://127.0.0.1/?code=... which is a navigation, so route() never fires.
+ROOT CAUSE HISTORY:
+  v1: Polled page.url after redirect — URL already lost to chrome-error://
+  v2: page.route() — only intercepts sub-resources, NOT page navigations
+  v3: expect_navigation(wait_until="commit") — fires but raises
+      net::ERR_CONNECTION_REFUSED in __exit__ before page.url is readable
 
-FIX (v3):
-  Use page.expect_navigation(wait_until="commit") BEFORE clicking Continue.
-  "commit" fires the instant the browser commits to the new URL — before
-  any page content loads, and before Chrome tries to connect to 127.0.0.1
-  and errors out. page.url at that moment contains ?code=...
+FIX v4:
+  page.on("request") is a pure event listener — unlike page.route() it fires
+  for ALL requests including top-level navigation requests, at the moment the
+  request is SENT (before any response, before any error). We capture the
+  redirect URL there, then separately catch the ERR_CONNECTION_REFUSED from
+  expect_navigation. Combining both gives reliable auth_code extraction.
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -174,6 +175,26 @@ def _auth_with_playwright(
         page = context.new_page()
         auth_code = None
 
+        # ── FIX v4: page.on("request") captures redirect URL at send time ──
+        # Unlike page.route(), the "request" event fires for ALL requests
+        # including top-level page navigations — at the moment the request
+        # is sent, before any response or network error occurs.
+        # This is the only hook that reliably fires before chrome-error://.
+        captured_redirect: list = []  # [url_string]
+
+        def _on_request(req):
+            try:
+                url = req.url
+                if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
+                    if not captured_redirect:
+                        captured_redirect.append(url)
+                        _safe_log("  [request event] Redirect URL captured ✅")
+            except Exception:
+                pass
+
+        page.on("request", _on_request)
+        # ──────────────────────────────────────────────────────────────────
+
         try:
             # ── Page 1: Mobile number ──────────────────────────
             _safe_log("Page 1: Loading login page...")
@@ -272,70 +293,80 @@ def _auth_with_playwright(
 
             time.sleep(0.5)
 
-            # ── KEY FIX v3: expect_navigation(wait_until="commit") ─────────
-            # PROBLEM: page.route() only intercepts sub-resource requests
-            #   (XHR, fetch, images). It does NOT intercept top-level page
-            #   navigations. Upstox does a full page redirect to
-            #   https://127.0.0.1/?code=... so route() never fires.
-            #
-            # SOLUTION: expect_navigation(wait_until="commit") opens a context
-            #   manager that resolves the INSTANT the browser commits to
-            #   navigating to the new URL — before any page content is fetched,
-            #   and before Chrome tries (and fails) to connect to 127.0.0.1.
-            #   Reading page.url at that exact moment gives us ?code=...
-            # ──────────────────────────────────────────────────────────────────
-            _safe_log("  Submitting PIN — waiting for redirect (expect_navigation commit)...")
+            # ── Submit PIN: request listener captures the redirect URL ─────
+            # The "request" event listener registered above will fire when
+            # the browser sends the navigation request to 127.0.0.1. We also
+            # use expect_navigation to wait for the redirect to start — but
+            # we catch its ERR_CONNECTION_REFUSED (expected, no server on
+            # 127.0.0.1) and fall through. The auth_code will already be in
+            # captured_redirect[] from the "request" event listener.
+            _safe_log("  Submitting PIN — watching for redirect...")
 
-            redirect_url_captured = None
             try:
                 with page.expect_navigation(
                     url=re.compile(r"(127\.0\.0\.1|localhost)"),
                     wait_until="commit",
                     timeout=15000,
                 ):
-                    clicked = _click_button(
-                        page, ["Continue", "Login", "Submit", "Proceed", "Verify"]
-                    )
-                    if not clicked:
+                    if not _click_button(page, ["Continue", "Login", "Submit",
+                                                "Proceed", "Verify"]):
                         page.keyboard.press("Enter")
 
-                # Context manager exited = navigation URL committed
-                redirect_url_captured = page.url
-                _safe_log(f"  expect_navigation fired ✅ — URL captured")
-
-            except PWTimeout:
-                _safe_log("  expect_navigation timed out — trying plain click + fallback poll...")
-                # Button may not have been clicked yet if timeout before click
-                _click_button(page, ["Continue", "Login", "Submit", "Proceed", "Verify"])
-
-            # Extract from committed navigation URL
-            if redirect_url_captured:
-                auth_code = _extract_code(redirect_url_captured)
-                if auth_code:
-                    _safe_log("  auth_code extracted from navigation URL ✅")
-
-            # Fallback poll if expect_navigation missed
-            if not auth_code:
-                _safe_log("  Fallback: polling page.url for 10s...")
-                for i in range(10):
+                # If we reach here without exception, grab page.url directly
+                _safe_log("  expect_navigation completed without error")
+                if not captured_redirect:
                     try:
                         url = page.url
-                        if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
-                            auth_code = _extract_code(url)
-                            if auth_code:
-                                _safe_log(f"  auth_code from fallback poll ✅")
-                                break
-                        _safe_log(f"  fallback ({i+1}/10): {url[:70]}")
+                        if "code=" in url:
+                            captured_redirect.append(url)
                     except Exception:
-                        _safe_log(f"  fallback ({i+1}/10): page.url error")
+                        pass
+
+            except Exception as nav_err:
+                err_str = str(nav_err)
+                if any(e in err_str for e in ["ERR_CONNECTION_REFUSED", "ERR_",
+                                               "net::", "NS_ERROR"]):
+                    # Expected — 127.0.0.1 refused connection (no server).
+                    # The "request" event has already captured the URL.
+                    _safe_log(f"  Navigation error (expected): {err_str[:60]}")
+                    _safe_log("  Checking captured_redirect from request event...")
+                else:
+                    # Timeout or unexpected error
+                    _safe_log(f"  Navigation unexpected error: {err_str[:80]}")
+                    # Try clicking if not already clicked
+                    try:
+                        _click_button(page, ["Continue", "Login", "Submit",
+                                             "Proceed", "Verify"], timeout=2000)
+                    except Exception:
+                        pass
+                    # Wait a moment for the request event to fire
+                    time.sleep(3)
+
+            # Extract auth_code from captured redirect URL
+            if captured_redirect:
+                auth_code = _extract_code(captured_redirect[0])
+                if auth_code:
+                    _safe_log("  auth_code extracted from request event URL ✅")
+                else:
+                    _safe_log(f"  WARNING: captured URL has no code: {captured_redirect[0][:80]}")
+
+            # Last-resort fallback: wait a bit more for request event
+            if not auth_code:
+                _safe_log("  Fallback: waiting 5s more for request event...")
+                for _ in range(5):
                     time.sleep(1)
+                    if captured_redirect:
+                        auth_code = _extract_code(captured_redirect[0])
+                        if auth_code:
+                            _safe_log("  auth_code from delayed request event ✅")
+                            break
 
             try:
-                page.screenshot(path="/tmp/upstox_midwait.png")
+                page.screenshot(path="/tmp/upstox_page3.png")   # overwrite with final state
                 page.screenshot(path="/tmp/upstox_final_debug.png")
                 _safe_log(f"  Final URL: {page.url[:80]}")
-            except Exception as e:
-                _safe_log(f"  Final screenshot/url failed: {type(e).__name__}")
+            except Exception:
+                pass
 
         finally:
             try:
