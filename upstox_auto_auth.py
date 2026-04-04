@@ -9,6 +9,12 @@ Page flow confirmed:
            + "Continue" button
   Page 3: MPIN input + submit → redirect with auth_code
 
+FIX (v2): After PIN submit, Upstox redirects to https://127.0.0.1/?code=...
+  Since no server runs on 127.0.0.1, Chrome crashes to chrome-error://
+  before page.url can be read. Solution: intercept the redirect request
+  via page.route() and page.on("framenavigated") BEFORE PIN submit,
+  capture auth_code from the URL, and abort the failed navigation.
+
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
 
@@ -77,7 +83,6 @@ def _exchange_code(auth_code, client_id, client_secret, redirect_uri) -> str:
 def _fill_first_visible_input(page, value: str, label: str) -> bool:
     """Page pe jo pehla visible input ho, usme value daalo."""
     try:
-        # All visible inputs (not hidden, not submit/button)
         inputs = page.query_selector_all("input")
         for inp in inputs:
             try:
@@ -167,6 +172,54 @@ def _auth_with_playwright(
         page = context.new_page()
         auth_code = None
 
+        # ── KEY FIX: Intercept redirect to 127.0.0.1 / localhost ──────────
+        # Upstox sends auth_code as ?code= param in the redirect URL.
+        # Since no server runs on 127.0.0.1, Chrome crashes to chrome-error://
+        # BEFORE page.url can be polled. We intercept & abort the request
+        # here so we capture the URL before Chrome ever tries to load it.
+
+        captured_redirect_url: list = []  # mutable container for closure
+
+        def _intercept_redirect(route):
+            url = route.request.url
+            _safe_log(f"  [route] Intercepted: {url[:80]}")
+            code = _extract_code(url)
+            if code and not captured_redirect_url:
+                captured_redirect_url.append(url)
+                _safe_log("  [route] auth_code captured via route interception ✅")
+            # Abort the request — no server on 127.0.0.1, so this prevents
+            # chrome-error:// and the URL being lost
+            try:
+                route.abort()
+            except Exception:
+                pass
+
+        # Also listen on framenavigated as a belt-and-suspenders backup
+        def _on_frame_navigated(frame):
+            if frame != page.main_frame:
+                return
+            url = frame.url
+            if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
+                code = _extract_code(url)
+                if code and not captured_redirect_url:
+                    captured_redirect_url.append(url)
+                    _safe_log(f"  [framenavigated] auth_code captured ✅")
+
+        # Route patterns cover http and https variants of 127.0.0.1 / localhost
+        for pattern in [
+            "**/127.0.0.1/**",
+            "**/127.0.0.1*",
+            "**/localhost/**",
+            "**/localhost*",
+        ]:
+            try:
+                page.route(pattern, _intercept_redirect)
+            except Exception:
+                pass
+
+        page.on("framenavigated", _on_frame_navigated)
+        # ─────────────────────────────────────────────────────────────────
+
         try:
             # ── Page 1: Mobile number ──────────────────────────
             _safe_log("Page 1: Loading login page...")
@@ -218,9 +271,11 @@ def _auth_with_playwright(
             totp_code = pyotp.TOTP(totp_secret).now()
             # TOTP value not logged
 
-            # Fill TOTP — confirmed: plain <input> no name/placeholder
+            # Fill TOTP — confirmed: id="otpNum", type="text"
             totp_filled = False
             totp_selectors = [
+                '#otpNum',
+                'input[id="otpNum"]',
                 'input[name="totp"]',
                 'input[name="otp"]',
                 'input[placeholder*="OTP" i]',
@@ -262,8 +317,10 @@ def _auth_with_playwright(
             page.screenshot(path="/tmp/upstox_page3.png")
             _log_page_state(page, "Page3")
 
-            # Fill PIN — value not logged
+            # Fill PIN — confirmed: id="pinCode", type="password"
             pin_selectors = [
+                '#pinCode',
+                'input[id="pinCode"]',
                 'input[name="mpin"]',
                 'input[name="pin"]',
                 'input[name="client_secret"]',
@@ -296,42 +353,55 @@ def _auth_with_playwright(
 
             time.sleep(0.5)
 
-            # Submit
+            # Submit — route interceptor fires here during/after click
+            _safe_log("  Submitting PIN — watching for redirect...")
             if not _click_button(page, ["Continue", "Login", "Submit",
                                         "Proceed", "Verify"]):
                 page.keyboard.press("Enter")
-            time.sleep(3)
 
-            # ── Wait for redirect with auth_code ───────────────
-            _safe_log("Waiting for redirect with auth_code...")
-            for i in range(20):
-                url = page.url
-                code = _extract_code(url)
-                if code:
-                    _safe_log(f"  auth_code extracted ✅")
-                    auth_code = code
-                    break
-
-                if "127.0.0.1" in url or "localhost" in url:
-                    code = _extract_code(url)
-                    if code:
-                        auth_code = code
-                        _safe_log("  auth_code from 127.0.0.1 ✅")
+            # ── Wait for intercepted redirect URL ──────────────
+            # Poll captured_redirect_url (filled by route interceptor)
+            # Max ~15 seconds; interceptor fires almost instantly on redirect
+            _safe_log("Waiting for auth_code from redirect interceptor...")
+            for i in range(15):
+                if captured_redirect_url:
+                    auth_code = _extract_code(captured_redirect_url[0])
+                    if auth_code:
+                        _safe_log(f"  auth_code extracted from intercepted URL ✅")
                         break
 
-                if i == 10:
-                    # Mid-way screenshot
-                    page.screenshot(path="/tmp/upstox_midwait.png")
-                    _log_page_state(page, f"MidWait-{i}")
+                # Fallback: also check page.url in case browser is slow
+                try:
+                    url = page.url
+                    if ("127.0.0.1" in url or "localhost" in url) and "code=" in url:
+                        auth_code = _extract_code(url)
+                        if auth_code:
+                            _safe_log(f"  auth_code from page.url fallback ✅")
+                            break
+                except Exception:
+                    pass
+
+                if i == 8:
+                    try:
+                        page.screenshot(path="/tmp/upstox_midwait.png")
+                        _log_page_state(page, f"MidWait-{i}")
+                    except Exception:
+                        pass
 
                 time.sleep(1)
-                _safe_log(f"  ({i+1}/20) URL: {url[:60]}")
+                _safe_log(f"  ({i+1}/15) waiting... captured={bool(captured_redirect_url)}")
 
-            page.screenshot(path="/tmp/upstox_final_debug.png")
-            _safe_log(f"  Final URL: {page.url[:60]}")
+            try:
+                page.screenshot(path="/tmp/upstox_final_debug.png")
+                _safe_log(f"  Final URL: {page.url[:80]}")
+            except Exception:
+                _safe_log("  Final screenshot failed (page may be closed)")
 
         finally:
-            browser.close()
+            try:
+                browser.close()
+            except Exception:
+                pass
 
     return auth_code
 
