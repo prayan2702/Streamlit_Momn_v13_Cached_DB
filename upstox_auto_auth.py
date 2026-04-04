@@ -1,20 +1,13 @@
 """
 upstox_auto_auth.py
 ===================
-Playwright headless browser se Upstox OAuth automation.
+Playwright headless browser — fixed based on actual screenshots.
 
-Kyun Playwright:
-  - Upstox login page JS execute karta hai (session tokens, CSRF, fingerprinting)
-  - requests library ye sab miss karta hai → 500/401 errors
-  - Playwright actual Chrome chalata hai → sab automatically handle hota hai
-
-Flow:
-  1. Browser launch → login.upstox.com load
-  2. Mobile number fill + submit (OTP send)
-  3. TOTP from pyotp fill (SMS OTP nahi — TOTP authenticator)
-  4. MPIN fill + submit
-  5. Redirect se auth_code extract
-  6. code → access_token
+Page flow confirmed:
+  Page 1: Mobile input (#mobileNum) + "Get OTP" button
+  Page 2: "Enter OTP or TOTP" — single plain <input> (no name/placeholder)
+           + "Continue" button
+  Page 3: MPIN input + submit → redirect with auth_code
 
 SECURITY: PIN, TOTP, token kabhi logs mein nahi dikhte.
 """
@@ -47,7 +40,7 @@ def _extract_code(url: str):
 
 
 def _exchange_code(auth_code, client_id, client_secret, redirect_uri) -> str:
-    _safe_log("Step final: Exchanging code for access_token...")
+    _safe_log("Final step: Exchanging code for access_token...")
     try:
         resp = requests.post(
             "https://api.upstox.com/v2/login/authorization/token",
@@ -81,15 +74,71 @@ def _exchange_code(auth_code, client_id, client_secret, redirect_uri) -> str:
         raise RuntimeError(f"Token exchange error: {type(e).__name__}") from None
 
 
+def _fill_first_visible_input(page, value: str, label: str) -> bool:
+    """Page pe jo pehla visible input ho, usme value daalo."""
+    try:
+        # All visible inputs (not hidden, not submit/button)
+        inputs = page.query_selector_all("input")
+        for inp in inputs:
+            try:
+                if inp.is_visible() and inp.is_enabled():
+                    itype = inp.get_attribute("type") or "text"
+                    if itype.lower() not in ("hidden", "submit", "button", "checkbox", "radio"):
+                        inp.fill(value)
+                        _safe_log(f"  {label} filled in first visible input ✅")
+                        return True
+            except Exception:
+                continue
+    except Exception as e:
+        _safe_log(f"  fill_first_visible_input error: {type(e).__name__}")
+    return False
+
+
+def _log_page_state(page, step: str):
+    """Debug: log all inputs and buttons."""
+    try:
+        inputs = page.eval_on_selector_all(
+            "input",
+            "els => els.filter(e => e.offsetParent !== null).map(e => "
+            "({type: e.type, id: e.id, name: e.name, placeholder: e.placeholder}))"
+        )
+        buttons = page.eval_on_selector_all(
+            "button",
+            "els => els.filter(e => e.offsetParent !== null)"
+            ".map(e => e.textContent.trim()).filter(t => t)"
+        )
+        _safe_log(f"  [{step}] Inputs: {inputs}")
+        _safe_log(f"  [{step}] Buttons: {buttons[:5]}")
+    except Exception as e:
+        _safe_log(f"  [{step}] Debug failed: {type(e).__name__}")
+
+
+def _click_button(page, texts: list, timeout: int = 5000) -> bool:
+    """Try multiple button texts, click first found."""
+    for text in texts:
+        try:
+            btn = page.wait_for_selector(
+                f'button:has-text("{text}")',
+                timeout=timeout, state="visible"
+            )
+            if btn:
+                btn.click()
+                _safe_log(f"  Clicked: '{text}' ✅")
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def _auth_with_playwright(
     client_id, client_secret, redirect_uri,
     mobile, pin, totp_secret
 ) -> str:
-    """Playwright headless Chrome se Upstox login."""
+
     from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
     login_url = (
-        f"https://api.upstox.com/v2/login/authorization/dialog"
+        "https://api.upstox.com/v2/login/authorization/dialog"
         f"?response_type=code"
         f"&client_id={client_id}"
         f"&redirect_uri={urllib.parse.quote(redirect_uri, safe='')}"
@@ -116,234 +165,188 @@ def _auth_with_playwright(
             viewport={"width": 1280, "height": 720},
         )
         page = context.new_page()
-
         auth_code = None
 
         try:
-            # ── Step 1: Load login page ────────────────────────
-            _safe_log(f"  Step 1: Loading login page...")
+            # ── Page 1: Mobile number ──────────────────────────
+            _safe_log("Page 1: Loading login page...")
             page.goto(login_url, wait_until="networkidle", timeout=30000)
-            _safe_log(f"  Page URL: {page.url[:60]}")
+            page.wait_for_load_state("domcontentloaded")
             time.sleep(2)
-            # ── Step 1.5: Screenshot + page info ──────────────
-            _safe_log("  Step 1.5: Capturing page state...")
-            try:
-                page.screenshot(path="/tmp/upstox_step1_loaded.png")
-                _safe_log(f"  Screenshot saved: /tmp/upstox_step1_loaded.png")
-                # Log all visible inputs to understand page structure
-                inputs = page.eval_on_selector_all(
-                    "input",
-                    "els => els.map(e => ({type: e.type, name: e.name, placeholder: e.placeholder, id: e.id}))"
-                )
-                _safe_log(f"  Inputs found on page: {inputs}")
-                buttons = page.eval_on_selector_all(
-                    "button",
-                    "els => els.map(e => e.textContent.trim()).filter(t => t)"
-                )
-                _safe_log(f"  Buttons found: {buttons[:5]}")
-            except Exception as e:
-                _safe_log(f"  Debug check: {type(e).__name__}")
+            _safe_log(f"  URL: {page.url[:60]}")
+            _log_page_state(page, "Page1")
+            page.screenshot(path="/tmp/upstox_page1.png")
 
-            page.wait_for_load_state("domcontentloaded", timeout=15000)
-
-            # ── Step 2: Fill mobile number ─────────────────────
-            _safe_log(f"  Step 2: Filling mobile {_mask(mobile, 3)}*****...")
-
-            # Mobile input — various selectors Upstox uses
-            mobile_selectors = [
-                'input[name="mobileNum"]',
-                'input[name="mobile_num"]',
-                'input[name="mobileNumber"]',
-                'input[type="tel"]',
-                'input[placeholder*="mobile" i]',
-                'input[placeholder*="phone" i]',
-                'input[placeholder*="Mobile" i]',
-                # New: More aggressive selectors
-                'input[inputmode="tel"]',
-                'input[pattern*="[0-9]"]',
-                'input:not([type=hidden]):not([type=submit]):not([type=button])',  # First visible input
-            ]
-            mobile_filled = False
-            for sel in mobile_selectors:
+            # Fill mobile — confirmed: id="mobileNum"
+            _safe_log(f"  Filling mobile {_mask(mobile, 3)}*****...")
+            filled = False
+            for sel in ["#mobileNum", 'input[id="mobileNum"]',
+                        'input[type="text"]', 'input[type="tel"]']:
                 try:
-                    elem = page.wait_for_selector(sel, timeout=3000)
+                    elem = page.wait_for_selector(sel, timeout=4000, state="visible")
                     if elem:
+                        elem.click()
                         elem.fill(mobile)
-                        mobile_filled = True
-                        _safe_log(f"  Mobile filled via: {sel}")
+                        _safe_log(f"  Mobile via: {sel} ✅")
+                        filled = True
                         break
                 except PWTimeout:
                     continue
 
-            # ── XPath Fallback for Hidden/Dynamic Elements ───
-            if not mobile_filled:
-                _safe_log("  Trying XPath fallback...")
-                try:
-                    elem = page.locator('xpath=//input[contains(@placeholder, "mobile") or contains(@placeholder, "phone") or contains(@placeholder, "Mobile") or @type="tel"]').first
-                    if elem.is_visible():
-                        elem.fill(mobile)
-                        mobile_filled = True
-                        _safe_log("  Mobile filled via XPath fallback")
-                except Exception as e:
-                    _safe_log(f"  XPath fallback failed: {e}")
+            if not filled:
+                filled = _fill_first_visible_input(page, mobile, "Mobile")
 
-            if not mobile_filled:
-                _safe_log("  Could not find mobile input — taking screenshot for debug")
-                page.screenshot(path="/tmp/upstox_step2_debug.png")
-                raise RuntimeError("Mobile input field not found on page")
+            if not filled:
+                page.screenshot(path="/tmp/upstox_mobile_fail.png")
+                raise RuntimeError("Mobile input nahi mila")
 
-            # Submit mobile
-            submit_selectors = [
-                'button[type="submit"]',
-                'button:has-text("Continue")',
-                'button:has-text("Get OTP")',
-                'button:has-text("Send OTP")',
-                'button:has-text("Next")',
-            ]
-            for sel in submit_selectors:
-                try:
-                    btn = page.wait_for_selector(sel, timeout=2000)
-                    if btn:
-                        btn.click()
-                        _safe_log(f"  Clicked: {sel}")
-                        break
-                except PWTimeout:
-                    continue
+            time.sleep(0.5)
 
-            time.sleep(3)
+            # Click "Get OTP"
+            if not _click_button(page, ["Get OTP", "SEND OTP", "Send OTP",
+                                        "Continue", "Next"]):
+                _safe_log("  No button clicked — trying Enter key...")
+                page.keyboard.press("Enter")
+            time.sleep(4)  # OTP delivery wait
 
-            # ── Step 3: TOTP field ─────────────────────────────
-            _safe_log("  Step 3: Checking for TOTP field...")
+            # ── Page 2: OTP / TOTP entry ───────────────────────
+            _safe_log("Page 2: OTP/TOTP entry...")
+            page.screenshot(path="/tmp/upstox_page2.png")
+            _log_page_state(page, "Page2")
+
+            # Generate TOTP
             totp_code = pyotp.TOTP(totp_secret).now()
-            # Note: totp_code value not logged
+            # TOTP value not logged
 
+            # Fill TOTP — confirmed: plain <input> no name/placeholder
+            totp_filled = False
             totp_selectors = [
                 'input[name="totp"]',
-                'input[placeholder*="TOTP" i]',
-                'input[placeholder*="authenticator" i]',
-                'input[placeholder*="Google" i]',
                 'input[name="otp"]',
                 'input[placeholder*="OTP" i]',
-                'input[type="number"]',
+                'input[placeholder*="TOTP" i]',
                 'input[maxlength="6"]',
+                'input[type="number"]',
+                'input[type="tel"]',
+                'input[type="text"]',
             ]
-            totp_filled = False
             for sel in totp_selectors:
                 try:
-                    elem = page.wait_for_selector(sel, timeout=3000)
+                    elem = page.wait_for_selector(sel, timeout=3000, state="visible")
                     if elem:
+                        elem.click()
                         elem.fill(totp_code)
+                        _safe_log(f"  TOTP via: {sel} (value masked) ✅")
                         totp_filled = True
-                        _safe_log(f"  TOTP filled (value masked)")
                         break
                 except PWTimeout:
                     continue
 
             if not totp_filled:
-                _safe_log("  TOTP field not found yet — may appear after mobile submit")
+                _safe_log("  Trying fill_first_visible_input for TOTP...")
+                totp_filled = _fill_first_visible_input(page, totp_code, "TOTP")
 
-            time.sleep(2)
+            if not totp_filled:
+                _safe_log("  WARNING: TOTP field not filled")
 
-            # ── Step 4: PIN field ──────────────────────────────
-            _safe_log("  Step 4: Filling PIN (value masked)...")
+            time.sleep(0.5)
 
+            # Click Continue
+            if not _click_button(page, ["Continue", "Verify", "Submit",
+                                        "Next", "Proceed"]):
+                page.keyboard.press("Enter")
+            time.sleep(3)
+
+            # ── Page 3: MPIN entry ─────────────────────────────
+            _safe_log("Page 3: MPIN/PIN entry...")
+            page.screenshot(path="/tmp/upstox_page3.png")
+            _log_page_state(page, "Page3")
+
+            # Fill PIN — value not logged
             pin_selectors = [
-                'input[name="pin"]',
                 'input[name="mpin"]',
+                'input[name="pin"]',
                 'input[name="client_secret"]',
                 'input[type="password"]',
                 'input[placeholder*="PIN" i]',
-                'input[placeholder*="password" i]',
                 'input[placeholder*="MPIN" i]',
+                'input[maxlength="6"]',
+                'input[type="number"]',
+                'input[type="text"]',
             ]
             pin_filled = False
             for sel in pin_selectors:
                 try:
-                    elem = page.wait_for_selector(sel, timeout=3000)
+                    elem = page.wait_for_selector(sel, timeout=3000, state="visible")
                     if elem:
+                        elem.click()
                         elem.fill(pin)
+                        _safe_log(f"  PIN via: {sel} (value masked) ✅")
                         pin_filled = True
-                        _safe_log(f"  PIN filled via: {sel}")
                         break
                 except PWTimeout:
                     continue
 
             if not pin_filled:
-                _safe_log("  PIN field not found — may appear on next page")
+                _safe_log("  Trying fill_first_visible_input for PIN...")
+                pin_filled = _fill_first_visible_input(page, pin, "PIN")
 
-            # If TOTP not filled before, try again now
-            if not totp_filled:
-                totp_code = pyotp.TOTP(totp_secret).now()
-                for sel in totp_selectors:
-                    try:
-                        elem = page.wait_for_selector(sel, timeout=2000)
-                        if elem:
-                            elem.fill(totp_code)
-                            totp_filled = True
-                            _safe_log("  TOTP filled (value masked)")
-                            break
-                    except PWTimeout:
-                        continue
+            if not pin_filled:
+                _safe_log("  WARNING: PIN field not filled")
 
-            # Submit login
-            time.sleep(1)
-            for sel in submit_selectors + ['button:has-text("Login")', 'button:has-text("Sign in")', 'input[type="submit"]']:
-                try:
-                    btn = page.wait_for_selector(sel, timeout=2000)
-                    if btn and btn.is_visible():
-                        btn.click()
-                        _safe_log(f"  Login submitted via: {sel}")
-                        break
-                except PWTimeout:
-                    continue
+            time.sleep(0.5)
 
-            # ── Step 5: Wait for redirect → extract code ───────
-            _safe_log("  Step 5: Waiting for redirect with auth_code...")
-            max_wait = 15
-            for i in range(max_wait):
-                current_url = page.url
-                code = _extract_code(current_url)
+            # Submit
+            if not _click_button(page, ["Continue", "Login", "Submit",
+                                        "Proceed", "Verify"]):
+                page.keyboard.press("Enter")
+            time.sleep(3)
+
+            # ── Wait for redirect with auth_code ───────────────
+            _safe_log("Waiting for redirect with auth_code...")
+            for i in range(20):
+                url = page.url
+                code = _extract_code(url)
                 if code:
-                    _safe_log(f"  auth_code extracted from redirect ✅")
+                    _safe_log(f"  auth_code extracted ✅")
                     auth_code = code
                     break
 
-                # Check if we're on 127.0.0.1 error page
-                if "127.0.0.1" in current_url or "localhost" in current_url:
-                    code = _extract_code(current_url)
+                if "127.0.0.1" in url or "localhost" in url:
+                    code = _extract_code(url)
                     if code:
                         auth_code = code
-                        _safe_log(f"  auth_code from 127.0.0.1 redirect ✅")
+                        _safe_log("  auth_code from 127.0.0.1 ✅")
                         break
 
-                time.sleep(1)
-                _safe_log(f"  Waiting... ({i+1}/{max_wait}) URL: {current_url[:50]}")
+                if i == 10:
+                    # Mid-way screenshot
+                    page.screenshot(path="/tmp/upstox_midwait.png")
+                    _log_page_state(page, f"MidWait-{i}")
 
-            if not auth_code:
-                # Take screenshot for debugging
-                page.screenshot(path="/tmp/upstox_final_debug.png")
-                _safe_log(f"  Final URL: {page.url}")
-                _safe_log("  Screenshot saved to /tmp/upstox_final_debug.png")
+                time.sleep(1)
+                _safe_log(f"  ({i+1}/20) URL: {url[:60]}")
+
+            page.screenshot(path="/tmp/upstox_final_debug.png")
+            _safe_log(f"  Final URL: {page.url[:60]}")
 
         finally:
             browser.close()
 
-        return auth_code
+    return auth_code
 
 
 def get_upstox_token_automated(
     client_id, client_secret, redirect_uri,
     mobile, pin, totp_secret
 ) -> str:
-
     if "127.0.0.1" not in redirect_uri and "localhost" not in redirect_uri:
         _safe_log(
-            "WARNING: REDIRECT_URI should be https://127.0.0.1/ for automation!\n"
+            f"WARNING: REDIRECT_URI={redirect_uri} — should be https://127.0.0.1/\n"
             "  developer.upstox.com → App → Edit → Redirect URI = https://127.0.0.1/\n"
             "  GitHub Secret UPSTOX_REDIRECT_URI = https://127.0.0.1/"
         )
 
-    _safe_log("Starting Playwright headless auth...")
     auth_code = _auth_with_playwright(
         client_id, client_secret, redirect_uri,
         mobile, pin, totp_secret
@@ -353,11 +356,11 @@ def get_upstox_token_automated(
         raise RuntimeError(
             "Upstox auth failed — auth_code nahi mila.\n"
             "Checks:\n"
-            "  1. REDIRECT_URI = https://127.0.0.1/ (developer console + GitHub Secret)\n"
-            "  2. TOTP verify: python -c \"import pyotp; print(pyotp.TOTP('SECRET').now())\"\n"
+            "  1. REDIRECT_URI = https://127.0.0.1/ (dev console + GitHub Secret)\n"
+            "  2. TOTP: python -c \"import pyotp; print(pyotp.TOTP('SECRET').now())\"\n"
+            "     Upstox app ke OTP se match karna chahiye\n"
             "  3. UPSTOX_PIN — 6-digit MPIN\n"
-            "  4. UPSTOX_MOBILE — 10-digit bina +91\n"
-            "Values logs mein nahi dikhti."
+            "  4. UPSTOX_MOBILE — 10-digit bina +91"
         )
 
     return _exchange_code(auth_code, client_id, client_secret, redirect_uri)
