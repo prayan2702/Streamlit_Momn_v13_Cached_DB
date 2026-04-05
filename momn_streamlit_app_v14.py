@@ -199,6 +199,124 @@ st.markdown("""
 }
 
 /* ══════════════════════════════════════
+   DARK MODE TOKEN OVERRIDES
+   Triggers on system dark preference
+   ══════════════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        /* Surface */
+        --bg:           #0f1117;
+        --bg-white:     #1a1d27;
+        --bg-raised:    #22263a;
+        --border:       #2e3347;
+        --border-light: #252836;
+
+        /* Text */
+        --text-main:    #f1f5f9;
+        --text-sub:     #94a3b8;
+        --text-muted:   #64748b;
+        --muted:        #64748b;
+        --subtle:       #475569;
+        --slate:        #94a3b8;
+
+        /* Semantic — brighter so they pop on dark bg */
+        --teal:         #2dd4bf;
+        --teal-light:   rgba(45,212,191,.12);
+        --indigo:       #818cf8;
+        --indigo-light: rgba(129,140,248,.12);
+
+        --green:        #34d399;
+        --green-bg:     rgba(52,211,153,.10);
+        --green-bdr:    rgba(52,211,153,.25);
+
+        --red:          #f87171;
+        --red-bg:       rgba(248,113,113,.10);
+        --red-bdr:      rgba(248,113,113,.25);
+
+        --blue:         #60a5fa;
+        --blue-bg:      rgba(96,165,250,.10);
+        --blue-bdr:     rgba(96,165,250,.25);
+
+        --violet:       #a78bfa;
+        --violet-bg:    rgba(167,139,250,.10);
+
+        --amber:        #fbbf24;
+        --amber-bg:     rgba(251,191,36,.10);
+        --amber-bdr:    rgba(251,191,36,.25);
+
+        /* Shadows — stronger for dark surfaces */
+        --shadow-xs:    0 1px 3px rgba(0,0,0,.4);
+        --shadow-sm:    0 2px 6px rgba(0,0,0,.4), 0 1px 3px rgba(0,0,0,.3);
+        --shadow-md:    0 4px 16px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+        --shadow-lg:    0 12px 40px rgba(0,0,0,.6), 0 4px 12px rgba(0,0,0,.4);
+    }
+
+    /* ── Streamlit's own dark surface patches ── */
+    [data-testid="stAppViewContainer"],
+    .main {
+        background-color: var(--bg) !important;
+    }
+    [data-testid="stSidebar"] {
+        background-color: var(--bg-white) !important;
+    }
+
+    /* ── Force Streamlit text to light in dark mode ── */
+    html, body, [class*="css"], p, span, label,
+    div[data-testid], [data-testid="stMarkdownContainer"] {
+        color: var(--text-main);
+    }
+
+    /* ── Login card dark ── */
+    .login-card {
+        background: var(--bg-white);
+        border-color: var(--border);
+    }
+
+    /* ── Step bar dark ── */
+    .step-bar {
+        background: var(--bg-white);
+        border-color: var(--border);
+    }
+
+    /* ── Metric cards dark ── */
+    .metric-card {
+        background: var(--bg-white);
+        border-color: var(--border);
+    }
+
+    /* ── Rebalance strip dark ── */
+    .reb-strip {
+        background: var(--bg-white);
+        border-color: var(--border);
+    }
+    .reb-stat { border-right-color: var(--border-light); }
+    .reb-stat:hover { background: var(--bg-raised); }
+
+    /* ── Section headers dark ── */
+    .section-hdr { border-bottom-color: var(--border-light); color: var(--text-main); }
+
+    /* ── NSE link box dark ── */
+    .nse-link-box { background: var(--bg-raised); border-color: var(--blue-bdr); }
+
+    /* ── Workflow box dark ── */
+    .workflow-box { background: var(--bg-raised); border-color: var(--border); }
+
+    /* ── App header dark ── */
+    .app-header { background: var(--bg-white); border-bottom-color: var(--border); }
+
+    /* ── User tag dark ── */
+    .user-tag { background: var(--bg-raised); border-color: var(--border); color: var(--text-sub); }
+
+    /* ── Chips dark ── */
+    .chip-hold { background: var(--bg-raised); border-color: var(--border); color: var(--text-sub); }
+
+    /* ── Sidebar dark ── */
+    section[data-testid="stSidebar"] { background: var(--bg-white); border-right-color: var(--border); }
+
+
+}
+
+/* ══════════════════════════════════════
    GLOBAL RESET
    ══════════════════════════════════════ */
 html, body, [class*="css"] {
@@ -1217,11 +1335,11 @@ if st.session_state.current_step == 1:
                 st.info("💡 Symbol list load nahi hua — GitHub fallback (NSE_EQ_ALL.csv) screener run pe use hoga.")
                 st.markdown("""
                 <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
-                            padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
+                            padding:10px 16px;font-size:12.5px;color:var(--amber);margin-top:6px;">
                 ➕ <b>Auto-included:</b> &nbsp;
-                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
+                <span style="background:var(--bg-white);border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
                 &nbsp;
-                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
+                <span style="background:var(--bg-white);border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
                 &nbsp; — har universe ke saath automatically add honge
                 </div>
                 """, unsafe_allow_html=True)
@@ -1231,11 +1349,11 @@ if st.session_state.current_step == 1:
         st.info(f"📡 **{chosen_u}** ki symbol list screener run pe GitHub se auto-load hogi. CSV upload ki zaroorat nahi hai.")
         st.markdown("""
         <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
-                    padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
+                    padding:10px 16px;font-size:12.5px;color:var(--amber);margin-top:6px;">
         ➕ <b>Auto-included:</b> &nbsp;
-        <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
+        <span style="background:var(--bg-white);border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
         &nbsp;
-        <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
+        <span style="background:var(--bg-white);border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
         &nbsp; — har universe ke saath automatically add honge
         </div>
         """, unsafe_allow_html=True)
@@ -1533,7 +1651,7 @@ elif st.session_state.current_step == 2:
                                border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
                     📡 Source: {_api_source}
                   </span>
-                  <span style="background:var(--amber-bg);color:#92400e;border:1px solid #fcd34d;
+                  <span style="background:var(--amber-bg);color:var(--amber);border:1px solid #fcd34d;
                                border-radius:20px;padding:3px 12px;font-size:12px;font-weight:700;">
                     🥇 GOLDBEES &amp; 🥈 SILVERBEES included
                   </span>
@@ -2130,12 +2248,12 @@ elif st.session_state.current_step == 4:
         st.success(f"✅ Excel ready: `{excel_file}`")
         st.markdown(f"""
         <div style="background:var(--green-bg);border:1px solid var(--green-bdr);border-radius:var(--radius-md);
-                    padding:11px 16px;font-size:12px;color:#065f46;margin:6px 0 14px 0;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
+                    padding:11px 16px;font-size:12px;color:var(--green);margin:6px 0 14px 0;display:flex;align-items:center;flex-wrap:wrap;gap:6px;">
         <span style="font-weight:700;margin-right:4px;">📄 4 Sheets:</span>
-        <span style="background:white;padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Unfiltered Stocks</span>
-        <span style="background:white;padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Filtered Stocks</span>
-        <span style="background:white;padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Failed Downloads</span>
-        <span style="background:white;padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Portfolio Rebalancing</span>
+        <span style="background:var(--bg-white);padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Unfiltered Stocks</span>
+        <span style="background:var(--bg-white);padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Filtered Stocks</span>
+        <span style="background:var(--bg-white);padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Failed Downloads</span>
+        <span style="background:var(--bg-white);padding:3px 10px;border-radius:20px;border:1px solid var(--green-bdr);font-weight:600;font-size:11px;">Portfolio Rebalancing</span>
         </div>
         """, unsafe_allow_html=True)
 
