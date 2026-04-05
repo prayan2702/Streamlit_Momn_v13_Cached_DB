@@ -169,19 +169,12 @@ def _fetch_one_decade(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
             )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
-            # Timezone strip: tz_convert("Asia/Kolkata") → tz_localize(None)
-            # Upstox returns ISO timestamps like "2026-04-04T09:15:00+05:30"
+            # Timezone strip: tz_localize(None) removes tz without conversion
+            # Upstox daily candles: "2026-04-04T00:00:00+05:30" → "2026-04-04 00:00:00"
             if df["timestamp"].dt.tz is not None:
-                df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+                df["timestamp"] = df["timestamp"].dt.tz_localize(None)
             df.set_index("timestamp", inplace=True)
-            # ── CRITICAL FIX (Issue 1): Normalize to date-only (00:00:00) ──
-            # Upstox candle timestamps have time component (e.g. 09:15:00).
-            # bdate_range uses 00:00:00 → reindex() fails to match → all NaN.
-            # normalize() strips time → 2026-04-04T09:15 → 2026-04-04T00:00
-            df.index = df.index.normalize()
             df.sort_index(inplace=True)
-            # Keep last candle per day (in case of duplicates after normalize)
-            df = df[~df.index.duplicated(keep="last")]
             return df[["open", "high", "low", "close", "volume"]]
 
         except ValueError:
@@ -341,13 +334,22 @@ def build_cache():
     # 6. Assemble DataFrames
     log("Assembling DataFrames...")
     start_recent = end_date - relativedelta(months=RECENT_MONTHS)
-    all_idx      = pd.bdate_range(start=start_recent, end=end_date)
 
+    # ── BUILDER FIX: bdate_range ka use mat karo ──────────────
+    # `pd.bdate_range` sirf weekends exclude karta hai, Indian market
+    # holidays (Good Friday, Diwali etc.) include karta hai.
+    # Agar last date holiday hai → Upstox data nahi → reindex → NaN last row
+    # → `Close = data12M.iloc[-1]` = NaN → AWAY_ATH blank.
+    #
+    # Fix: pd.DataFrame(data_map) directly — pandas automatically
+    # union of actual trading dates use karta hai. Koi artificial
+    # holiday dates nahi aate. Phir dropna(how='all') safety ke liye.
     def _make_df(data_map):
-        df = pd.DataFrame(
-            {s: v.reindex(all_idx) for s, v in data_map.items()},
-            index=all_idx
-        )
+        if not data_map:
+            return pd.DataFrame()
+        df = pd.DataFrame(data_map)   # index = union of actual trading dates
+        df = df.sort_index()
+        df = df.dropna(how='all')     # remove any rows where ALL symbols = NaN
         return df.loc[:, ~df.columns.duplicated()]
 
     close  = _make_df(close_map)

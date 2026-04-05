@@ -148,6 +148,21 @@ def load_cache():
         if hasattr(df.index, 'tz') and df.index.tz is not None:
             df.index = df.index.tz_localize(None)
 
+    # ── ROOT CAUSE FIX: Holiday / weekend last-row NaN ────────
+    # `cache_builder_upstox.py` mein `pd.bdate_range` weekdays include
+    # karta hai — lekin Indian market holidays (Good Friday, Diwali etc.)
+    # ko nahi jaanta. Agar last bdate entry ek market holiday hai, to
+    # Upstox ka us date pe koi data nahi hoga → reindex() → last row = NaN.
+    # `calculations.py`: `Close = data12M.iloc[-1]` → all NaN (AWAY_ATH bhi)
+    # roc12M NaN nahi aata kyunki getAbsReturns() andar ffill/bfill karta hai.
+    #
+    # Fix: trailing all-NaN rows drop karo, phir forward-fill karo.
+    # Isse existing cache bhi sahi kaam karta hai — bina rebuild ke!
+    close  = close.sort_index().dropna(how='all').ffill()
+    volume = volume.sort_index().dropna(how='all').ffill()
+    # high: sort only (ATH row inject baad mein hogi; dropna mat karo)
+    high   = high.sort_index()
+
     # ── ATH row inject into high DataFrame ────────────────────
     # calculations.py mein `ATH = high.max()` use hota hai.
     # Hum 2000-01-01 timestamp pe ek synthetic row add karte hain
