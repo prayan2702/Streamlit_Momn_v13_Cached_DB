@@ -70,11 +70,24 @@ try:
 except Exception:
     pass
 
-# ── cache_loader (pre-built Parquet cache) ────────────────────
+# ── cache_loader (pre-built Parquet cache — YFinance) ────────
 _CACHE_AVAILABLE = False
 try:
     from cache_loader import load_cache, get_cache_meta, get_cache_age_days, get_cache_status_html
     _CACHE_AVAILABLE = True
+except ImportError:
+    pass
+
+# ── cache_loader_upstox (pre-built Parquet cache — Upstox) ───
+_CACHE_UPSTOX_AVAILABLE = False
+try:
+    from cache_loader_upstox import (
+        load_cache          as load_cache_upstox,
+        get_cache_meta      as get_cache_meta_upstox,
+        get_cache_age_days  as get_cache_age_days_upstox,
+        get_cache_status_html as get_cache_status_html_upstox,
+    )
+    _CACHE_UPSTOX_AVAILABLE = True
 except ImportError:
     pass
 
@@ -544,7 +557,7 @@ section[data-testid="stSidebar"] .block-container {
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════
 UNIVERSES    = ['Nifty50','Nifty100','Nifty200','Nifty250','Nifty500','N750','AllNSE']
-API_OPTIONS  = ["📦 Pre-cached (Instant)", "YFinance", "Upstox", "Angel One"]
+API_OPTIONS  = ["📦 Pre-cached YFinance", "📦 Pre-cached Upstox", "YFinance", "Upstox", "Angel One"]
 RANKING_MAP  = {
     "AvgZScore 12M/6M/3M":    "avgZScore12_6_3",
     "AvgZScore 12M/9M/6M/3M": "avgZScore12_9_6_3",
@@ -1161,9 +1174,11 @@ if st.session_state.current_step == 1:
 
     st.divider()
 
-    # ── Cache status (Pre-cached option ke liye info) ─────────
+    # ── Cache status (Pre-cached options ke liye info) ────────
     if _CACHE_AVAILABLE:
         st.markdown(get_cache_status_html(), unsafe_allow_html=True)
+    if _CACHE_UPSTOX_AVAILABLE:
+        st.markdown(get_cache_status_html_upstox(), unsafe_allow_html=True)
 
     # ── Next step button ──────────────────────────────────────
     if st.session_state.symbols or chosen_u != "AllNSE":
@@ -1289,51 +1304,75 @@ elif st.session_state.current_step == 2:
 
             # ══════════════════════════════════════════════════════
             # BRANCH A — Pre-cached (Instant load from GitHub)
+            # Supports both YFinance cache and Upstox cache
             # ══════════════════════════════════════════════════════
-            if _api_source == "📦 Pre-cached (Instant)":
-                if not _CACHE_AVAILABLE:
-                    st.error("❌ cache_loader.py nahi mila. cache_loader.py repo mein add karo.")
-                    st.stop()
+            if _api_source in ("📦 Pre-cached YFinance", "📦 Pre-cached Upstox"):
+                _is_upstox_cache = (_api_source == "📦 Pre-cached Upstox")
 
-                status_tx.markdown("⚡ **Pre-cached data GitHub se load ho raha hai...**")
+                # ── Select correct loader ─────────────────────────
+                if _is_upstox_cache:
+                    if not _CACHE_UPSTOX_AVAILABLE:
+                        st.error("❌ cache_loader_upstox.py nahi mila. Repo mein add karo.")
+                        st.stop()
+                    _loader    = load_cache_upstox
+                    _meta_fn   = get_cache_meta_upstox
+                    _age_fn    = get_cache_age_days_upstox
+                    _cache_lbl = "Upstox"
+                else:
+                    if not _CACHE_AVAILABLE:
+                        st.error("❌ cache_loader.py nahi mila. cache_loader.py repo mein add karo.")
+                        st.stop()
+                    _loader    = load_cache
+                    _meta_fn   = get_cache_meta
+                    _age_fn    = get_cache_age_days
+                    _cache_lbl = "YFinance"
+
+                status_tx.markdown(f"⚡ **{_cache_lbl} pre-cached data GitHub se load ho raha hai...**")
                 prog_bar.progress(0.1)
                 try:
-                    close, high, volume = load_cache()
+                    close, high, volume = _loader()
                     prog_bar.progress(0.85)
                     status_tx.markdown("✅ **Cache loaded!** Calculations shuru ho rahi hain...")
 
-                    # Cache ke symbols hi symbols hain — failed_blank check karo
-                    meta           = get_cache_meta()
-                    failed_symbols = meta.get("failed_symbols", [])
+                    # ── Meta & failed symbols (Issues 3 & 4) ─────
+                    meta = _meta_fn()
 
-                    # Volume check for failed_blank
+                    # Issue 3: meta se ALL failed symbols lo (not just volume blank)
+                    failed_from_meta = meta.get("failed_symbols", [])
+                    failed_from_meta = [s.replace(".NS", "") for s in failed_from_meta]
+
+                    # Volume-based blank detection (symbols fetched but all NaN data)
                     volume12M_check = volume.loc[dates['date12M']:].copy() if not volume.empty else pd.DataFrame()
                     median_volume   = volume12M_check.median() if not volume12M_check.empty else pd.Series()
-                    failed_blank    = median_volume[median_volume.isna()].index.tolist()
-                    failed_blank    = [t.replace('.NS','') for t in failed_blank]
+                    vol_blank       = median_volume[median_volume.isna()].index.tolist()
+                    vol_blank       = [t.replace('.NS', '') for t in vol_blank]
+
+                    # Merge both lists (dedup, preserve order)
+                    failed_blank = list(dict.fromkeys(failed_from_meta + vol_blank))
                     st.session_state.failed_blank = failed_blank
 
-                    age = get_cache_age_days()
+                    age = _age_fn()
                     if age > 3:
                         st.warning(
-                            f"⚠️ Cache {int(age)} din purana hai (build: {meta.get('build_date','?')}). "
+                            f"⚠️ {_cache_lbl} Cache {int(age)} din purana hai "
+                            f"(build: {meta.get('build_date','?')}). "
                             "Data slightly stale ho sakta hai. "
-                            "YFinance se fresh fetch ke liye 'YFinance' select karo."
+                            "Live fetch ke liye YFinance/Upstox select karo."
                         )
                     else:
                         st.success(
-                            f"✅ Cache loaded! "
+                            f"✅ {_cache_lbl} Cache loaded! "
                             f"{meta.get('symbols_fetched','?'):,} symbols | "
                             f"Build: {meta.get('build_date','?')} | "
                             f"Age: {int(age)} din"
                         )
 
-                    # ── Missing stocks detection + optional top-up ─────
+                    # ── Issue 4: Missing stocks detection + YFinance top-up ──
                     _universe_syms = st.session_state.symbols or []
-                    _cache_syms    = set(close.columns.str.replace('.NS','',regex=False).str.upper())
+                    _cache_syms    = set(close.columns.str.replace('.NS', '', regex=False).str.upper())
                     _missing = [
                         s for s in _universe_syms
-                        if s.replace('.NS','').upper() not in _cache_syms
+                        if s.replace('.NS', '').upper() not in _cache_syms
                     ]
                     if _missing:
                         st.info(
@@ -1352,8 +1391,7 @@ elif st.session_state.current_step == 2:
                                         _missing, dates['startDate'], dates['endDate'],
                                         prog_bar, status_tx, chunk_size=15
                                     )
-                                    if not _m_close.empty:
-                                        # Merge: close ke index align karo
+                                    if _m_close is not None and not _m_close.empty:
                                         _all_idx = close.index.union(_m_close.index)
                                         close  = close.reindex(_all_idx).combine_first(_m_close.reindex(_all_idx))
                                         high   = high.reindex(_all_idx).combine_first(_m_high.reindex(_all_idx))
@@ -1362,6 +1400,10 @@ elif st.session_state.current_step == 2:
                                             f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
                                             f"Total: {close.shape[1]:,} symbols"
                                         )
+                                    if _m_failed:
+                                        _fb_extra = [t.replace('.NS', '') for t in _m_failed]
+                                        failed_blank = list(dict.fromkeys(failed_blank + _fb_extra))
+                                        st.session_state.failed_blank = failed_blank
                                 except Exception as _me:
                                     st.warning(f"Missing stocks fetch failed: {_me}")
 

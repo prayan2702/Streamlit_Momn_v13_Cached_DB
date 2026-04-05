@@ -40,7 +40,7 @@ from upstox_auto_auth import get_token_from_env, _mask, _safe_log
 
 # ── Config ────────────────────────────────────────────────────
 GITHUB_BASE    = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
-CACHE_DIR      = Path("cache")
+CACHE_DIR      = Path("cache_upstox")   # ← Separate folder — YFinance cache/ se alag
 RECENT_MONTHS  = 40
 EXTRA_SYMBOLS  = ["GOLDBEES.NS", "SILVERBEES.NS"]
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -169,10 +169,19 @@ def _fetch_one_decade(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
             )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
+            # Timezone strip: tz_convert("Asia/Kolkata") → tz_localize(None)
+            # Upstox returns ISO timestamps like "2026-04-04T09:15:00+05:30"
             if df["timestamp"].dt.tz is not None:
-                df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+                df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
             df.set_index("timestamp", inplace=True)
+            # ── CRITICAL FIX (Issue 1): Normalize to date-only (00:00:00) ──
+            # Upstox candle timestamps have time component (e.g. 09:15:00).
+            # bdate_range uses 00:00:00 → reindex() fails to match → all NaN.
+            # normalize() strips time → 2026-04-04T09:15 → 2026-04-04T00:00
+            df.index = df.index.normalize()
             df.sort_index(inplace=True)
+            # Keep last candle per day (in case of duplicates after normalize)
+            df = df[~df.index.duplicated(keep="last")]
             return df[["open", "high", "low", "close", "volume"]]
 
         except ValueError:
@@ -375,7 +384,7 @@ def build_cache():
                                     [s for s in symbols if not _get_key(s, instrument_map)]]),
         "not_in_master"      : len(symbols) - len([s for s in symbols
                                                    if _get_key(s, instrument_map)]),
-        "failed_symbols"     : sorted(failed)[:50],
+        "failed_symbols"     : sorted(failed),          # ← ALL failed (no [:50] cap — Issue 3 fix)
         "data_start_full"    : "2000-01-01",
         "data_start_recent"  : start_recent.strftime("%Y-%m-%d"),
         "data_end"           : today_str,
