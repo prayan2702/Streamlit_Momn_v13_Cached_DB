@@ -609,13 +609,6 @@ _defaults = {
     "top_n_rank":     100,
     "screener_done":  False,
     "rebalance_done": False,
-    # ── Pending merge flow (pre-cached + missing stocks fix) ──
-    "_pending_merge":   False,   # True = waiting for user decision
-    "_pending_close":   None,
-    "_pending_high":    None,
-    "_pending_volume":  None,
-    "_pending_fp":      None,
-    "_pending_dates":   None,
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -1382,25 +1375,37 @@ elif st.session_state.current_step == 2:
                         if s.replace('.NS', '').upper() not in _cache_syms
                     ]
                     if _missing:
-                        # ── BUG FIX: Don't show a button inside the download
-                        # flow — it gets skipped because code falls through to
-                        # build_dfStats and st.rerun() fires before the user
-                        # can click it.
-                        # Instead: save the loaded cache data + params into
-                        # session state, set a pending flag, and st.stop().
-                        # The merge decision UI is rendered on the NEXT pass
-                        # (below, in the "_pending_merge" block) where Streamlit
-                        # can actually wait for a button click.
+                        st.info(
+                            f"ℹ️ Cache mein **{len(_missing)} stocks missing** hain "
+                            f"(universe: {len(_universe_syms)}, cache: {len(_cache_syms)}). "
+                            f"YFinance se fetch karke merge kar sakte hain."
+                        )
                         st.session_state["_cache_missing_syms"] = _missing
-                        st.session_state["_pending_close"]      = close
-                        st.session_state["_pending_high"]       = high
-                        st.session_state["_pending_volume"]     = volume
-                        st.session_state["_pending_fp"]         = _filter_params
-                        st.session_state["_pending_dates"]      = dates
-                        st.session_state["_pending_merge"]      = True
-                        # Stop here — finally block will clear _run_download.
-                        # Calculations will run after user makes a decision.
-                        st.stop()
+                        if st.button(
+                            f"📡 Fetch {len(_missing)} missing stocks from YFinance & merge",
+                            key="fetch_missing_btn", type="secondary"
+                        ):
+                            with st.spinner(f"YFinance se {len(_missing)} missing stocks fetch ho rahi hain..."):
+                                try:
+                                    _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
+                                        _missing, dates['startDate'], dates['endDate'],
+                                        prog_bar, status_tx, chunk_size=15
+                                    )
+                                    if _m_close is not None and not _m_close.empty:
+                                        _all_idx = close.index.union(_m_close.index)
+                                        close  = close.reindex(_all_idx).combine_first(_m_close.reindex(_all_idx))
+                                        high   = high.reindex(_all_idx).combine_first(_m_high.reindex(_all_idx))
+                                        volume = volume.reindex(_all_idx).combine_first(_m_vol.reindex(_all_idx))
+                                        st.success(
+                                            f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
+                                            f"Total: {close.shape[1]:,} symbols"
+                                        )
+                                    if _m_failed:
+                                        _fb_extra = [t.replace('.NS', '') for t in _m_failed]
+                                        failed_blank = list(dict.fromkeys(failed_blank + _fb_extra))
+                                        st.session_state.failed_blank = failed_blank
+                                except Exception as _me:
+                                    st.warning(f"Missing stocks fetch failed: {_me}")
 
                 except Exception as e:
                     st.error(f"❌ Cache load failed: {e}. YFinance select karke retry karo.")
@@ -1520,108 +1525,6 @@ elif st.session_state.current_step == 2:
             st.rerun()  # fresh render → shows results cleanly
 
 
-
-    # ══════════════════════════════════════════════════════════
-    # PENDING MERGE DECISION
-    # Shown after pre-cached load when universe has stocks that
-    # are missing from the cache. Rendered on a clean pass so
-    # Streamlit can actually wait for a button click.
-    # ══════════════════════════════════════════════════════════
-    if st.session_state.get("_pending_merge", False):
-        _missing_list  = st.session_state.get("_cache_missing_syms", [])
-        _p_close       = st.session_state["_pending_close"]
-        _p_high        = st.session_state["_pending_high"]
-        _p_volume      = st.session_state["_pending_volume"]
-        _p_fp          = st.session_state["_pending_fp"]
-        _p_dates       = st.session_state["_pending_dates"]
-        _p_failed      = list(st.session_state.failed_blank or [])
-
-        _n_uni   = len(st.session_state.symbols or [])
-        _n_cache = _p_close.shape[1]
-
-        st.info(
-            f"ℹ️ Cache mein **{len(_missing_list)} stocks missing** hain "
-            f"(Universe: {_n_uni:,} symbols, Cache: {_n_cache:,} symbols). "
-            f"YFinance se fetch karke merge kar sakte hain — ya seedha calculate karo."
-        )
-
-        _prog_pm  = st.progress(0)
-        _stat_pm  = st.empty()
-
-        col_fetch, col_skip = st.columns(2)
-
-        with col_fetch:
-            if st.button(
-                f"📡 Fetch {len(_missing_list)} missing stocks (YFinance) & merge",
-                key="fetch_missing_btn", type="secondary", use_container_width=True
-            ):
-                with st.spinner(f"YFinance se {len(_missing_list)} missing stocks fetch ho rahi hain..."):
-                    try:
-                        _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
-                            _missing_list, _p_dates['startDate'], _p_dates['endDate'],
-                            _prog_pm, _stat_pm, chunk_size=15
-                        )
-                        if _m_close is not None and not _m_close.empty:
-                            _all_idx = _p_close.index.union(_m_close.index)
-                            _p_close  = _p_close.reindex(_all_idx).combine_first(_m_close.reindex(_all_idx))
-                            _p_high   = _p_high.reindex(_all_idx).combine_first(_m_high.reindex(_all_idx))
-                            _p_volume = _p_volume.reindex(_all_idx).combine_first(_m_vol.reindex(_all_idx))
-                            st.success(
-                                f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
-                                f"Total: {_p_close.shape[1]:,} symbols"
-                            )
-                        if _m_failed:
-                            _p_failed = list(dict.fromkeys(
-                                _p_failed + [t.replace('.NS', '') for t in _m_failed]
-                            ))
-                    except Exception as _me:
-                        st.warning(f"Missing stocks fetch failed: {_me}")
-
-                # Calculate after merge
-                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
-                _prog_pm.progress(0.92)
-                try:
-                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
-                                          st.session_state.ranking_method)
-                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
-                    st.session_state.dfStats         = _dfS
-                    st.session_state.dfFiltered      = _dfF
-                    st.session_state.failed_blank    = _p_failed
-                    st.session_state.screener_done   = True
-                    st.session_state["_pending_merge"] = False
-                    _prog_pm.progress(1.0)
-                    _stat_pm.markdown("✅ **Screener complete!**")
-                except Exception as _ce:
-                    st.error(f"Calculation error: {_ce}")
-                    st.stop()
-                st.rerun()
-
-        with col_skip:
-            if st.button(
-                "⏭ Skip — Calculate without missing stocks",
-                key="skip_missing_btn", type="primary", use_container_width=True
-            ):
-                # Calculate directly with what cache gave us
-                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
-                _prog_pm.progress(0.92)
-                try:
-                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
-                                          st.session_state.ranking_method)
-                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
-                    st.session_state.dfStats         = _dfS
-                    st.session_state.dfFiltered      = _dfF
-                    st.session_state.failed_blank    = _p_failed
-                    st.session_state.screener_done   = True
-                    st.session_state["_pending_merge"] = False
-                    _prog_pm.progress(1.0)
-                    _stat_pm.markdown("✅ **Screener complete!**")
-                except Exception as _ce:
-                    st.error(f"Calculation error: {_ce}")
-                    st.stop()
-                st.rerun()
-
-        # Block results display until user makes a decision
-        st.stop()
 
     # ── Display results ───────────────────────────────────────
     if st.session_state.screener_done and st.session_state.dfFiltered is not None:
