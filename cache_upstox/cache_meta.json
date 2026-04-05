@@ -1,0 +1,54 @@
+{
+  "build_date": "2026-04-05",
+  "build_time_utc": "08:58:12",
+  "build_duration_min": 61.5,
+  "symbols_total": 2134,
+  "symbols_fetched": 2130,
+  "symbols_failed": 3,
+  "not_in_master": 1,
+  "failed_symbols": [
+    "ANURAS.NS",
+    "CHOLAFIN.NS",
+    "NIMBSPROJ.NS",
+    "SANGHIIND.NS"
+  ],
+  "data_start_full": "2000-01-01",
+  "data_start_recent": "2022-12-05",
+  "data_end": "2026-04-05",
+  "recent_months": 40,
+  "source": "Upstox V3 (daily candles)",
+  "symbol_source": "NSE EQUITY_L.csv (direct download)",
+  "extra_symbols": [
+    "GOLDBEES.NS",
+    "SILVERBEES.NS"
+  ],
+  "decades_per_symbol": 3,
+  "decade_ranges": [
+    [
+      "2000-01-01",
+      "2009-12-31"
+    ],
+    [
+      "2010-01-01",
+      "2019-12-31"
+    ],
+    [
+      "2020-01-01",
+      "2026-04-05"
+    ]
+  ],
+  "total_api_calls": 6390,
+  "close_shape": [
+    870,
+    2130
+  ],
+  "high_shape": [
+    870,
+    2130
+  ],
+  "volume_shape": [
+    870,
+    2130
+  ],
+  "ath_count": 2130
+}
