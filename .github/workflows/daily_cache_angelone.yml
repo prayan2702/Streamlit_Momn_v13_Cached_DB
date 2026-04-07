@@ -57,7 +57,8 @@ jobs:
             pyarrow \
             numpy \
             requests \
-            python-dateutil
+            python-dateutil \
+            websocket-client
 
       # ── 3a. Verify SmartApi import ─────────────────────────
       - name: Verify SmartApi import
