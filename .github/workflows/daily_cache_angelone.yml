@@ -50,13 +50,18 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install \
-            smartapi-python \
+            "smartapi-python==1.3.4" \
+            logzero \
             pyotp \
             pandas \
             pyarrow \
             numpy \
             requests \
             python-dateutil
+
+      # ── 3a. Verify SmartApi import ─────────────────────────
+      - name: Verify SmartApi import
+        run: python -c "from SmartApi import SmartConnect; import pyotp; print('✅ SmartApi + pyotp OK')"
 
       # ── 4. Run Angel One cache builder ────────────────────
       - name: Build Angel One cache
