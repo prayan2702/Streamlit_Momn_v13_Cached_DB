@@ -1,0 +1,92 @@
+name: Daily Cache Build — Angel One
+
+# ════════════════════════════════════════════════════════════
+# GitHub Actions Angel One cache builder
+# Runs daily at 9:30 PM IST (4:00 PM UTC)
+#
+# Static IP Problem — FREE SOLUTION:
+#   GitHub Actions ka IP dynamic hota hai (static nahi).
+#   Angel One SmartAPI app mein "127.0.0.1" as Primary Static IP enter karo.
+#   Historical data endpoint (getCandleData) IP-check enforce nahi karta.
+#   Sirf order placement APIs ke liye strict IP whitelisting hoti hai.
+#   Data-only apps ke liye 127.0.0.1 placeholder perfectly kaam karta hai.
+#
+# Required GitHub Secrets (Repo → Settings → Secrets → Actions):
+#   ANGELONE_CLIENT_ID    — R/T number (e.g., R1234567)
+#   ANGELONE_API_KEY      — SmartAPI app ka API key
+#   ANGELONE_PASSWORD     — Angel One login password
+#   ANGELONE_TOTP_SECRET  — TOTP secret (smartapi.angelone.in → Enable TOTP)
+#   PAT_TOKEN             — GitHub Personal Access Token (write access)
+#
+# ════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: "0 16 * * 1-5"   # Mon-Fri 4:00 PM UTC = 9:30 PM IST (market close + 2hr)
+  workflow_dispatch:           # Manual trigger bhi possible
+
+jobs:
+  build-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180       # 3 hours — ~10,000 API calls @ 3/sec = ~55 min + buffer
+
+    steps:
+      # ── 1. Checkout repo ──────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      # ── 2. Python setup ────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Install dependencies ────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            smartapi-python \
+            pyotp \
+            pandas \
+            pyarrow \
+            numpy \
+            requests \
+            python-dateutil
+
+      # ── 4. Run Angel One cache builder ────────────────────
+      - name: Build Angel One cache
+        env:
+          ANGELONE_CLIENT_ID:   ${{ secrets.ANGELONE_CLIENT_ID }}
+          ANGELONE_API_KEY:     ${{ secrets.ANGELONE_API_KEY }}
+          ANGELONE_PASSWORD:    ${{ secrets.ANGELONE_PASSWORD }}
+          ANGELONE_TOTP_SECRET: ${{ secrets.ANGELONE_TOTP_SECRET }}
+        run: |
+          echo "=== Starting Angel One Cache Build ==="
+          echo "Date: $(date)"
+          python cache_builder_angelone.py
+          echo "=== Build complete ==="
+          ls -lh cache_angelone/ || echo "cache_angelone/ not found"
+
+      # ── 5. Verify output files ─────────────────────────────
+      - name: Verify cache files
+        run: |
+          echo "=== Cache file sizes ==="
+          du -sh cache_angelone/*.parquet cache_angelone/cache_meta.json 2>/dev/null || true
+          echo "=== Cache meta ==="
+          cat cache_angelone/cache_meta.json 2>/dev/null | python -m json.tool | head -30 || true
+
+      # ── 6. Commit & push to repo ───────────────────────────
+      - name: Commit cache to repository
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache_angelone/
+          git diff --staged --quiet && echo "No changes to commit" || (
+            git commit -m "🤖 Auto: Angel One cache update $(date '+%Y-%m-%d %H:%M IST')"
+            git push
+          )
