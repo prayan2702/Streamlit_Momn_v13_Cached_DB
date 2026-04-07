@@ -1569,10 +1569,29 @@ elif st.session_state.current_step == 2:
                             _prog_pm, _stat_pm, chunk_size=15
                         )
                         if _m_close is not None and not _m_close.empty:
-                            _all_idx = _p_close.index.union(_m_close.index)
-                            _p_close  = _p_close.reindex(_all_idx).combine_first(_m_close.reindex(_all_idx))
-                            _p_high   = _p_high.reindex(_all_idx).combine_first(_m_high.reindex(_all_idx))
-                            _p_volume = _p_volume.reindex(_all_idx).combine_first(_m_vol.reindex(_all_idx))
+                            # ── MERGE FIX ─────────────────────────────────────
+                            # _m_close sirf 3 NEW columns hai (existing symbols nahi).
+                            # reindex+combine_first galat tha — YFinance 2000→today
+                            # fetch karta hai, to _m_close.index mein pre-40M dates
+                            # aate hain. union() → _p_close.reindex() pe Upstox
+                            # ke 2131 columns ke liye 2000-2022 ke rows = NaN.
+                            # Result: Close = NaN (wohi pehle wala bug wapas aa jaata).
+                            #
+                            # Sahi approach: sirf nayi columns add karo,
+                            # existing DataFrame ka index TOUCH MAT KARO.
+                            # _m_close ko _p_close ke index pe align karo (ffill safety)
+                            # aur concat(axis=1) se jodo.
+                            _cache_idx = _p_close.index
+                            _new_close  = _m_close.reindex(_cache_idx).ffill().bfill()
+                            _new_high   = _m_high.reindex(_cache_idx).ffill().bfill()
+                            _new_vol    = _m_vol.reindex(_cache_idx).ffill().bfill()
+                            _p_close  = pd.concat([_p_close,  _new_close],  axis=1)
+                            _p_high   = pd.concat([_p_high,   _new_high],   axis=1)
+                            _p_volume = pd.concat([_p_volume, _new_vol],    axis=1)
+                            # Duplicate columns remove (safety)
+                            _p_close  = _p_close.loc[:,  ~_p_close.columns.duplicated()]
+                            _p_high   = _p_high.loc[:,   ~_p_high.columns.duplicated()]
+                            _p_volume = _p_volume.loc[:, ~_p_volume.columns.duplicated()]
                             st.success(
                                 f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
                                 f"Total: {_p_close.shape[1]:,} symbols"
