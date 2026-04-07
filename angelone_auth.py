@@ -1,137 +1,173 @@
 """
 angelone_auth.py
-==============
-Angel One Authentication Manager for Streamlit apps using TOTP.
-Includes Linux case-sensitivity fix for Streamlit Cloud.
+================
+Angel One SmartAPI authentication for Streamlit app (live data).
+Credentials Streamlit Secrets se aate hain — kabhi hardcode mat karo.
 
-Behavior:
-  - If credentials exist in st.secrets["angelone"] → auto-login silently (no form shown)
-  - If secrets are missing → show a blank manual login form (no prefilled values)
+Streamlit Secrets mein add karo:
+  [angelone]
+  client_id   = "R1234567"
+  api_key     = "xxxxxxxxxxxxxxxxxxxxxxxx"
+  password    = "your_password"
+  totp_secret = "JBSWY3DPEHPK3PXP"
+
+Usage:
+  from angelone_auth import get_angelone_client
+  smart_api = get_angelone_client()  # returns authenticated SmartConnect object
+
+  # Sidebar status show karne ke liye:
+  get_angelone_client(sidebar=True)
+
+Angel One API Key Invalid fix:
+  1. smartapi.angelone.in/new/apps → "Add App"
+  2. App Name: "MomnScreener" (kuch bhi)
+  3. Redirect URL: https://localhost (kuch bhi)
+  4. Primary Static IP: 127.0.0.1
+     (Historical data ke liye IP strict nahi hai — sirf placeholder chahiye)
+  5. "Add" → API Key copy karo
+  6. Streamlit Cloud → App Settings → Secrets → angelone.api_key update karo
+  7. App restart karo
 """
 
-import pyotp
+import time
 import streamlit as st
 
-# --- FIX FOR STREAMLIT CLOUD (LINUX) CASE SENSITIVITY BUG ---
-import sys
-import types
-import importlib.util
-
-spec = importlib.util.find_spec("SmartApi")
-if spec and "smartapi" not in sys.modules:
-    mod = types.ModuleType("smartapi")
-    mod.__path__ = spec.submodule_search_locations
-    sys.modules["smartapi"] = mod
-# -------------------------------------------------------------
-
-from SmartApi import SmartConnect
+try:
+    from SmartApi import SmartConnect
+    import pyotp
+    _SMARTAPI_OK = True
+except ImportError:
+    _SMARTAPI_OK = False
 
 
-def _do_login(api_key, client_code, password, totp_secret):
+def _get_secrets() -> dict:
+    """Streamlit Secrets se Angel One credentials lo."""
+    ao = st.secrets.get("angelone", {})
+    return {
+        "client_id":   ao.get("client_id", "").strip(),
+        "api_key":     ao.get("api_key",   "").strip(),
+        "password":    ao.get("password",  "").strip(),
+        "totp_secret": ao.get("totp_secret", "").strip(),
+    }
+
+
+def _validate_secrets(creds: dict) -> list[str]:
+    """Missing fields return karo."""
+    required = ["client_id", "api_key", "password", "totp_secret"]
+    return [k for k in required if not creds.get(k)]
+
+
+@st.cache_resource(show_spinner=False)
+def _create_session(api_key: str, client_id: str, password: str, totp_secret: str):
     """
-    Core login logic. Returns (SmartConnect obj, None) on success,
-    or (None, error_message) on failure.
+    Angel One SmartAPI session banao.
+    @st.cache_resource = session objects cache karta hai (not serializable)
+    TTL nahi hai — session ~24hr valid hota hai.
+    Naya session = app restart ya st.cache_resource.clear()
     """
+    obj  = SmartConnect(api_key=api_key)
+    totp = pyotp.TOTP(totp_secret).now()
+    data = obj.generateSession(client_id, password, totp)
+    if data.get("status") is False:
+        raise ValueError(data.get("message", "Session generation failed"))
+    return obj
+
+
+def get_angelone_client(sidebar: bool = False) -> "SmartConnect | None":
+    """
+    Authenticated SmartConnect object return karo.
+    sidebar=True → Streamlit sidebar mein status/error show karo.
+
+    Returns:
+      SmartConnect object on success
+      None on failure (sidebar mein error show hoga)
+    """
+    if not _SMARTAPI_OK:
+        if sidebar:
+            st.sidebar.warning(
+                "⚠️ `smartapi-python` + `pyotp` install nahi hain.\n"
+                "`requirements.txt` mein add karo:\n"
+                "```\nsmartapi-python\npyotp\n```"
+            )
+        return None
+
+    creds   = _get_secrets()
+    missing = _validate_secrets(creds)
+
+    if missing:
+        _missing_keys = ", ".join(f"`angelone.{k}`" for k in missing)
+        if sidebar:
+            st.sidebar.markdown(f"""
+            <div style="background:#fee2e2;border:1px solid #fca5a5;border-left:4px solid #dc2626;
+                        border-radius:10px;padding:12px 16px;font-size:12px;color:#7f1d1d;margin:6px 0;">
+              🔴 <b>Angel One Secrets Missing</b><br>
+              <span>Streamlit Secrets mein add karo: {_missing_keys}</span>
+            </div>""", unsafe_allow_html=True)
+        return None
+
+    # ── Try cached session or create new ──────────────────────
     try:
-        obj = SmartConnect(api_key=api_key)
-        totp_code = pyotp.TOTP(totp_secret).now()
-        data = obj.generateSession(client_code, password, totp_code)
+        smart_api = _create_session(
+            creds["api_key"], creds["client_id"],
+            creds["password"], creds["totp_secret"]
+        )
+        if sidebar:
+            masked_id = creds["client_id"][:3] + "***"
+            st.sidebar.markdown(f"""
+            <div style="background:#dcfce7;border:1px solid #86efac;border-left:4px solid #16a34a;
+                        border-radius:10px;padding:10px 14px;font-size:12px;color:#15803d;margin:6px 0;">
+              🟢 <b>Angel One Connected</b><br>
+              <span style="font-size:11px;">Client: {masked_id} &nbsp;·&nbsp; Session active</span>
+            </div>""", unsafe_allow_html=True)
+        return smart_api
 
-        if data and data.get("status"):
-            return obj, None
-        else:
-            error_msg = data.get("message") if data else "Unknown Error"
-            return None, f"Login Failed: {error_msg}"
+    except ValueError as e:
+        # API key invalid / session failed
+        err_msg = str(e)
+        if sidebar:
+            _show_api_key_error(sidebar_mode=True, detail=err_msg)
+        return None
 
     except Exception as e:
-        return None, f"Authentication error: {e}"
+        if sidebar:
+            st.sidebar.error(f"❌ Angel One connection error: {e}")
+        return None
 
 
-def get_angelone_client(sidebar=True):
-    """
-    Returns authenticated SmartConnect client or None.
+def _show_api_key_error(sidebar_mode: bool = True, detail: str = ""):
+    """API Key Invalid ka detailed fix guide."""
+    html = f"""
+    <div style="background:#fee2e2;border:1px solid #fca5a5;border-left:4px solid #dc2626;
+                border-radius:10px;padding:12px 16px;font-size:12px;color:#7f1d1d;margin:6px 0;">
+      🔴 <b>Angel One API Key Invalid</b><br>
+      <span style="font-size:11px;color:#991b1b;">
+        Streamlit Secrets mein jo <code>api_key</code> hai woh expired ya galat hai.
+        {f'<br>Error: {detail[:80]}' if detail else ''}
+      </span>
+      <br><br>
+      <b>Fix karein:</b>
+      <ol style="margin:4px 0 0 0;padding-left:16px;line-height:1.9;">
+        <li><a href="https://smartapi.angelone.in/new/apps" target="_blank"
+               style="color:#1d4ed8;">Angel One SmartAPI Console</a> open karein</li>
+        <li>Apna existing app check karein (ya naya banayein)</li>
+        <li>Naya <b>API Key</b> copy karein</li>
+        <li>Streamlit Cloud → Secrets mein
+            <code>angelone.api_key</code> update karein</li>
+        <li>App restart karein</li>
+      </ol>
+      <div style="font-size:10.5px;margin-top:6px;color:#b91c1c;">
+        💡 Tip: "Primary Static IP" mein <code>127.0.0.1</code> enter karo
+        (historical data ke liye IP check enforce nahi hota)
+      </div>
+    </div>"""
 
-    Strategy:
-      1. Already logged in this session → return cached client.
-      2. Secrets available → auto-login silently (no UI form shown at all).
-      3. No secrets → show a blank manual login form.
-    """
-
-    # ── 1. Already authenticated ──────────────────────────────────────────────
-    if "angelone_client" in st.session_state:
-        return st.session_state["angelone_client"]
-
-    # ── 2. Auto-login from secrets (silent, no form) ──────────────────────────
-    secrets = st.secrets.get("angelone", {})
-    api_key     = secrets.get("api_key", "")
-    client_code = secrets.get("client_code", "")
-    password    = secrets.get("password", "")
-    totp_secret = secrets.get("totp_secret", "")
-
-    if api_key and client_code and password and totp_secret:
-        # Secrets are present → auto-login without showing any form
-        if "angelone_auto_login_attempted" not in st.session_state:
-            st.session_state["angelone_auto_login_attempted"] = True
-            with st.spinner("🔐 Connecting to Angel One..."):
-                obj, err = _do_login(api_key, client_code, password, totp_secret)
-            if obj:
-                st.session_state["angelone_client"] = obj
-                st.rerun()
-            else:
-                # Auto-login failed — show actionable error, no credentials in UI
-                container = st.sidebar if sidebar else st
-                # "Invalid API Key" = SmartAPI app expired/deleted ya galat key
-                err_lower = (err or "").lower()
-                if "invalid api key" in err_lower or "app not found" in err_lower:
-                    container.error(
-                        f"🔴 **Angel One API Key Invalid**\n\n"
-                        f"Streamlit Secrets mein jo `api_key` hai woh expired ya galat hai.\n\n"
-                        f"**Fix karein:**\n"
-                        f"1. [Angel One SmartAPI Console](https://smartapi.angelbroking.com/) open karein\n"
-                        f"2. Apna existing app check karein (ya naya banayein)\n"
-                        f"3. Naya **API Key** copy karein\n"
-                        f"4. Streamlit Cloud → Secrets mein `angelone.api_key` update karein\n"
-                        f"5. App restart karein"
-                    )
-                else:
-                    container.error(f"Angel One auto-login failed: {err}")
-        return st.session_state.get("angelone_client", None)
-
-    # ── 3. No secrets → blank manual form (nothing prefilled) ─────────────────
-    container = st.sidebar if sidebar else st
-    container.warning("🔐 **Angel One login required.**")
-
-    with container.form(key="angelone_login_form"):
-        st.markdown("**Angel One SmartAPI Login**")
-
-        # IMPORTANT: No `value=` param — fields are always blank
-        f_api_key     = st.text_input("API Key", type="password")
-        f_client_code = st.text_input("Client ID")
-        f_password    = st.text_input("PIN / Password", type="password")
-        f_totp_secret = st.text_input("TOTP Secret (Base32)", type="password")
-
-        submit_btn = st.form_submit_button("🔓 Log In")
-
-    if submit_btn:
-        if not (f_api_key and f_client_code and f_password and f_totp_secret):
-            container.error("All credentials are required.")
-            return None
-
-        with st.spinner("Authenticating with Angel One..."):
-            obj, err = _do_login(f_api_key, f_client_code, f_password, f_totp_secret)
-
-        if obj:
-            st.session_state["angelone_client"] = obj
-            container.success("✅ Angel One authenticated successfully!")
-            st.rerun()
-        else:
-            container.error(err)
-
-    return None
+    if sidebar_mode:
+        st.sidebar.markdown(html, unsafe_allow_html=True)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
 
 
-def logout_angelone():
-    """Clear session to force re-login."""
-    st.session_state.pop("angelone_client", None)
-    st.session_state.pop("angelone_auto_login_attempted", None)
+def refresh_session():
+    """Force new Angel One session (24hr expiry ke baad call karo)."""
+    st.cache_resource.clear()
     st.rerun()

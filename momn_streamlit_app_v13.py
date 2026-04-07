@@ -91,6 +91,19 @@ try:
 except ImportError:
     pass
 
+# ── cache_loader_angelone (pre-built Parquet cache — Angel One) ──
+_CACHE_ANGEL_AVAILABLE = False
+try:
+    from cache_loader_angelone import (
+        load_cache            as load_cache_angel,
+        get_cache_meta        as get_cache_meta_angel,
+        get_cache_age_days    as get_cache_age_days_angel,
+        get_cache_status_html as get_cache_status_html_angel,
+    )
+    _CACHE_ANGEL_AVAILABLE = True
+except ImportError:
+    pass
+
 # ── Inline YFinance fetcher (fallback when data_service fails) ─
 def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
                             progress_bar, status_text, chunk_size=15):
@@ -557,7 +570,14 @@ section[data-testid="stSidebar"] .block-container {
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════
 UNIVERSES    = ['Nifty50','Nifty100','Nifty200','Nifty250','Nifty500','N750','AllNSE']
-API_OPTIONS  = ["📦 Pre-cached YFinance", "📦 Pre-cached Upstox", "YFinance", "Upstox", "Angel One"]
+API_OPTIONS  = [
+    "📦 Pre-cached YFinance",
+    "📦 Pre-cached Upstox",
+    "📦 Pre-cached Angel One",
+    "YFinance",
+    "Upstox",
+    "Angel One",
+]
 RANKING_MAP  = {
     "AvgZScore 12M/6M/3M":    "avgZScore12_6_3",
     "AvgZScore 12M/9M/6M/3M": "avgZScore12_9_6_3",
@@ -1189,6 +1209,8 @@ if st.session_state.current_step == 1:
         st.markdown(get_cache_status_html(), unsafe_allow_html=True)
     if _CACHE_UPSTOX_AVAILABLE:
         st.markdown(get_cache_status_html_upstox(), unsafe_allow_html=True)
+    if _CACHE_ANGEL_AVAILABLE:
+        st.markdown(get_cache_status_html_angel(), unsafe_allow_html=True)
 
     # ── Next step button ──────────────────────────────────────
     if st.session_state.symbols or chosen_u != "AllNSE":
@@ -1316,11 +1338,27 @@ elif st.session_state.current_step == 2:
             # BRANCH A — Pre-cached (Instant load from GitHub)
             # Supports both YFinance cache and Upstox cache
             # ══════════════════════════════════════════════════════
-            if _api_source in ("📦 Pre-cached YFinance", "📦 Pre-cached Upstox"):
+            if _api_source in (
+                "📦 Pre-cached YFinance",
+                "📦 Pre-cached Upstox",
+                "📦 Pre-cached Angel One",
+            ):
                 _is_upstox_cache = (_api_source == "📦 Pre-cached Upstox")
+                _is_angel_cache  = (_api_source == "📦 Pre-cached Angel One")
 
                 # ── Select correct loader ─────────────────────────
-                if _is_upstox_cache:
+                if _is_angel_cache:
+                    if not _CACHE_ANGEL_AVAILABLE:
+                        st.error(
+                            "❌ cache_loader_angelone.py nahi mila. "
+                            "Repo mein add karo + daily_cache_angelone.yml workflow run karo."
+                        )
+                        st.stop()
+                    _loader    = load_cache_angel
+                    _meta_fn   = get_cache_meta_angel
+                    _age_fn    = get_cache_age_days_angel
+                    _cache_lbl = "Angel One"
+                elif _is_upstox_cache:
                     if not _CACHE_UPSTOX_AVAILABLE:
                         st.error("❌ cache_loader_upstox.py nahi mila. Repo mein add karo.")
                         st.stop()
