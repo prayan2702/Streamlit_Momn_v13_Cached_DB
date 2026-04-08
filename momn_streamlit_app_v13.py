@@ -2390,7 +2390,6 @@ elif st.session_state.current_step == 5:
             # Full QuantStats HTML report
             qs.reports.html(
                 returns, nifty50,
-                benchmark_title="Nifty50",
                 title="Momn Portfolio — Strategy Tearsheet",
                 output="tearsheet_report.html"
             )
