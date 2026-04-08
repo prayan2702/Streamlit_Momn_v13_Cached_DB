@@ -2,7 +2,7 @@ name: Daily Cache Builder — Upstox
 
 on:
   schedule:
-    - cron: '0 16 * * 1-5'   # 9:30 PM IST weekdays
+    - cron: '0 15 * * 1-5'   # 9:30 PM IST weekdays
   workflow_dispatch:
 
 env:
