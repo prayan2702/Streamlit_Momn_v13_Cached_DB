@@ -37,6 +37,11 @@ from openpyxl.styles.borders import Border, Side
 warnings.filterwarnings("ignore")
 
 # ── QuantStats (Strategy Tearsheet) ───────────────────────────
+# NumPy 2.0 removed np.product — patch it back for QuantStats 0.0.25 compatibility
+import numpy as _np
+if not hasattr(_np, "product"):
+    _np.product = _np.prod
+
 _QS_AVAILABLE = False
 try:
     import quantstats as qs
