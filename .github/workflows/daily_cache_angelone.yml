@@ -33,7 +33,7 @@ env:
 jobs:
   build-cache:
     runs-on: ubuntu-latest
-    timeout-minutes: 240       # 4 hours — actual run ~215 min (2134 syms × 5.6s) + 25 min buffer
+    timeout-minutes: 300       # 5 hours — 2134 syms × 5.6s ~215 min + 85 min buffer
 
     steps:
       # ── 1. Checkout repo ──────────────────────────────────
