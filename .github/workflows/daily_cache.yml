@@ -3,7 +3,7 @@ name: Daily Cache Builder
 on:
   schedule:
     # Roz 3:00 PM UTC = 8:30 PM IST, Monday-Friday (weekdays only)
-    - cron: '0 15 * * 1-5'
+    - cron: '0 14 * * 1-5'
 
   # Manual trigger bhi possible hai (GitHub Actions tab se)
   workflow_dispatch:
