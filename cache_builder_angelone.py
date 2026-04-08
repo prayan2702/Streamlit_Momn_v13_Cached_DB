@@ -11,6 +11,9 @@ Key design:
   • ATH = concat(all chunks).high.max() → correct 2000-to-today ATH
   • Recent 40M = slice from merged data → close/high/volume parquet
   • Cache dir: cache_angelone/ (alag folder — Upstox/YFinance se alag!)
+  • Session refresh: har SESSION_REFRESH_EVERY symbols pe auto-refresh
+    (Angel One sessions ~45-60 min baad expire hoti hain)
+  • Consecutive failure guard: 10+ symbols fail → immediate session refresh
 
 SECURITY: API key, password, TOTP secret kabhi log nahi hote.
 
@@ -62,6 +65,13 @@ GITHUB_BASE    = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v1
 MAX_DAYS_PER_CALL = 2000
 RATE_LIMIT_SLEEP  = 0.34   # 1/3 sec = 3 req/sec (Angel One limit)
 
+# Session management
+# Angel One sessions expire ~45-60 min baad. 200 symbols @ ~5 chunks x 0.34s = ~5.6 min/200
+# Proactive refresh har 200 symbols pe (well within 45 min window)
+SESSION_REFRESH_EVERY  = 200
+# Agar 10 consecutive symbols fail ho jaayein -> session likely dead -> turant refresh
+CONSECUTIVE_FAIL_LIMIT = 10
+
 # Scripmaster URL (Angel One instrument master)
 SCRIPMASTER_URL = (
     "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
@@ -107,6 +117,13 @@ def get_angelone_client():
 
     log(f"  Client ID: {_mask(client_id)} | API Key: {_mask(api_key)}")
 
+    creds = {
+        "api_key":     api_key,
+        "client_id":   client_id,
+        "password":    password,
+        "totp_secret": totp_secret,
+    }
+
     try:
         smart_api = SmartConnect(api_key=api_key)
         totp_val  = pyotp.TOTP(totp_secret).now()
@@ -115,7 +132,7 @@ def get_angelone_client():
             msg = data.get("message", "Unknown error")
             raise ValueError(f"SmartAPI session failed: {msg}")
         log("  Angel One session created ✅")
-        return smart_api
+        return smart_api, creds   # creds returned for mid-run session refresh
     except Exception as e:
         raise RuntimeError(f"Angel One auth failed: {e}") from None
 
@@ -258,8 +275,12 @@ def _fetch_one_chunk(
 
             if not resp or resp.get("status") is False:
                 err = resp.get("message", "No data") if resp else "No response"
-                # Token expired?
-                if "token" in err.lower() or "session" in err.lower() or "unauthorized" in err.lower():
+                # Session/auth error keywords — Angel One returns various messages
+                _err_lower = err.lower()
+                if any(kw in _err_lower for kw in (
+                    "token", "session", "unauthorized", "invalid user",
+                    "access denied", "jwt", "auth", "login",
+                )):
                     raise ValueError(f"Session expired: {err}")
                 # No data for this period = normal for newly listed stocks
                 return None
@@ -297,12 +318,36 @@ def _fetch_one_chunk(
 # ══════════════════════════════════════════════════════════════
 # BULK SEQUENTIAL FETCH
 # ══════════════════════════════════════════════════════════════
+def _refresh_session(creds: dict) -> SmartConnect:
+    """
+    Fresh Angel One session banao.
+    creds = {"api_key", "client_id", "password", "totp_secret"}
+    Session expire hone pe fetch_all_sequential call karta hai.
+    """
+    log("  ♻️  Refreshing Angel One session (proactive / post-failure)...")
+    for attempt in range(3):
+        try:
+            obj      = SmartConnect(api_key=creds["api_key"])
+            totp_val = pyotp.TOTP(creds["totp_secret"]).now()
+            data     = obj.generateSession(creds["client_id"], creds["password"], totp_val)
+            if data.get("status") is False:
+                raise ValueError(data.get("message", "Session failed"))
+            log("  ✅ Session refreshed successfully")
+            return obj
+        except Exception as e:
+            log(f"  ⚠️  Session refresh attempt {attempt+1}/3 failed: {e}")
+            if attempt < 2:
+                time.sleep(5)
+    raise RuntimeError("Angel One session refresh failed 3 times — aborting.")
+
+
 def fetch_all_sequential(
     symbols        : list,
     instrument_map : dict,
     smart_api      : SmartConnect,
     date_ranges    : list[tuple[str, str]],
     end_date       : datetime,
+    creds          : dict = None,
 ) -> tuple[dict, dict, dict, dict, list]:
     """
     Sequential fetch — same pattern as cache_builder_upstox.py.
@@ -312,75 +357,122 @@ def fetch_all_sequential(
             _fetch_one_chunk()
             time.sleep(0.34)   ← 3 req/sec = Angel One limit
 
+    Session refresh strategy (Angel One sessions expire ~45-60 min):
+      • Proactive: har SESSION_REFRESH_EVERY (200) symbols pe refresh
+      • Reactive:  CONSECUTIVE_FAIL_LIMIT (10) consecutive failures pe refresh
+      • Reactive:  ValueError (explicit session error) pe turant refresh
+
     Total calls: ~2000 symbols × 5 chunks = ~10,000 calls
     ETA @ 3 req/sec: ~55-60 minutes (within GitHub Actions 6hr limit)
 
     Returns: ath_dict, close_map, high_map, vol_map, failed
     """
-    start_recent = end_date - relativedelta(months=RECENT_MONTHS)
-    total        = len(symbols)
-    not_found    = 0
-    ath_dict     = {}
-    close_map    = {}
-    high_map     = {}
-    vol_map      = {}
-    failed       = []
-    t0           = time.monotonic()
+    start_recent    = end_date - relativedelta(months=RECENT_MONTHS)
+    total           = len(symbols)
+    not_found       = 0
+    ath_dict        = {}
+    close_map       = {}
+    high_map        = {}
+    vol_map         = {}
+    failed          = []
+    t0              = time.monotonic()
+    consecutive_fail = 0   # consecutive symbol-level failures counter
 
     log(f"Starting fetch: {total:,} symbols × {len(date_ranges)} chunks = ~{total * len(date_ranges):,} API calls")
     log(f"Rate: 3 req/sec → ETA: ~{(total * len(date_ranges) / 3) / 60:.0f} minutes")
+    log(f"Session refresh: every {SESSION_REFRESH_EVERY} symbols | consecutive-fail limit: {CONSECUTIVE_FAIL_LIMIT}")
 
     for i, sym in enumerate(symbols):
+
+        # ── Proactive session refresh every SESSION_REFRESH_EVERY symbols ──
+        if i > 0 and i % SESSION_REFRESH_EVERY == 0 and creds:
+            log(f"  [{i}/{total}] Proactive session refresh...")
+            try:
+                smart_api = _refresh_session(creds)
+                consecutive_fail = 0   # reset after successful refresh
+            except RuntimeError as e:
+                log(f"  ❌ {e}")
+                break   # Can't continue without a session
+
         token = _get_token(sym, instrument_map)
 
         if not token:
             not_found += 1
             failed.append(sym)
-        else:
-            chunk_dfs     = []
-            session_error = False
+            continue
 
-            # ── Fetch each 2000-day chunk ─────────────────────
-            for from_d, to_d in date_ranges:
-                try:
-                    df = _fetch_one_chunk(smart_api, token, from_d, to_d)
-                    if df is not None and not df.empty:
-                        chunk_dfs.append(df)
-                except ValueError:
-                    # Session expired mid-run
-                    log("Angel One session expired — stopping.")
-                    session_error = True
-                    break
-                except Exception:
-                    pass  # Is chunk ka data nahi mila — skip
+        chunk_dfs    = []
+        session_expired = False
 
-                time.sleep(RATE_LIMIT_SLEEP)   # 3 req/sec
+        # ── Fetch each 2000-day chunk ─────────────────────────
+        for from_d, to_d in date_ranges:
+            try:
+                df = _fetch_one_chunk(smart_api, token, from_d, to_d)
+                if df is not None and not df.empty:
+                    chunk_dfs.append(df)
+            except ValueError as e:
+                # Explicit session-expired signal from _fetch_one_chunk
+                log(f"  ⚠️  Session error detected mid-chunk ({e}) — refreshing...")
+                session_expired = True
+                break
+            except Exception:
+                pass  # Is chunk ka data nahi mila — skip
 
-            if session_error:
-                raise RuntimeError(
-                    "Angel One session expired mid-download. "
-                    "Re-run the GitHub Actions workflow to create fresh session."
+            time.sleep(RATE_LIMIT_SLEEP)   # 3 req/sec
+
+        # ── Reactive refresh on explicit session error ─────────
+        if session_expired and creds:
+            try:
+                smart_api = _refresh_session(creds)
+                consecutive_fail = 0
+                # Retry current symbol with fresh session
+                chunk_dfs = []
+                for from_d, to_d in date_ranges:
+                    try:
+                        df = _fetch_one_chunk(smart_api, token, from_d, to_d)
+                        if df is not None and not df.empty:
+                            chunk_dfs.append(df)
+                    except Exception:
+                        pass
+                    time.sleep(RATE_LIMIT_SLEEP)
+            except RuntimeError as e:
+                log(f"  ❌ {e}")
+                break
+
+        if chunk_dfs:
+            # Merge all chunks
+            merged = pd.concat(chunk_dfs).sort_index()
+            merged = merged[~merged.index.duplicated(keep="last")]
+
+            # ATH — full 2000-today max
+            ath_dict[sym] = float(merged["high"].max())
+
+            # Recent slice — last RECENT_MONTHS only
+            df_r = merged[merged.index >= start_recent]
+            if not df_r.empty:
+                idx = pd.to_datetime(df_r.index)
+                close_map[sym] = pd.Series(df_r["close"].values, index=idx)
+                high_map[sym]  = pd.Series(df_r["high"].values,  index=idx)
+                vol_map[sym]   = pd.Series(
+                    (df_r["close"] * df_r["volume"]).values, index=idx
                 )
+            consecutive_fail = 0   # success → reset counter
+        else:
+            failed.append(sym)
+            consecutive_fail += 1
 
-            if chunk_dfs:
-                # Merge all chunks
-                merged = pd.concat(chunk_dfs).sort_index()
-                merged = merged[~merged.index.duplicated(keep="last")]
-
-                # ATH — full 2000-today max
-                ath_dict[sym] = float(merged["high"].max())
-
-                # Recent slice — last RECENT_MONTHS only
-                df_r = merged[merged.index >= start_recent]
-                if not df_r.empty:
-                    idx = pd.to_datetime(df_r.index)
-                    close_map[sym] = pd.Series(df_r["close"].values, index=idx)
-                    high_map[sym]  = pd.Series(df_r["high"].values,  index=idx)
-                    vol_map[sym]   = pd.Series(
-                        (df_r["close"] * df_r["volume"]).values, index=idx
-                    )
-            else:
-                failed.append(sym)
+            # ── Reactive refresh on consecutive failures ───────
+            if consecutive_fail >= CONSECUTIVE_FAIL_LIMIT and creds:
+                log(
+                    f"  ⚠️  {consecutive_fail} consecutive failures at [{i+1}/{total}] "
+                    f"— session likely expired. Refreshing..."
+                )
+                try:
+                    smart_api = _refresh_session(creds)
+                    consecutive_fail = 0
+                except RuntimeError as e:
+                    log(f"  ❌ {e}")
+                    break
 
         # ── Progress log every 50 symbols ─────────────────────
         if i % 50 == 0 or i == total - 1:
@@ -415,7 +507,7 @@ def build_cache():
 
     # 1. Auth
     log("Authenticating with Angel One SmartAPI...")
-    smart_api = get_angelone_client()
+    smart_api, creds = get_angelone_client()
 
     # 2. Symbols
     symbols = load_symbols()
@@ -434,7 +526,8 @@ def build_cache():
 
     # 5. Sequential fetch
     ath_dict, close_map, high_map, vol_map, failed = fetch_all_sequential(
-        symbols, instrument_map, smart_api, date_ranges, end_date
+        symbols, instrument_map, smart_api, date_ranges, end_date,
+        creds=creds,   # session refresh ke liye
     )
 
     # 6. Assemble DataFrames (same pattern as Upstox builder)
