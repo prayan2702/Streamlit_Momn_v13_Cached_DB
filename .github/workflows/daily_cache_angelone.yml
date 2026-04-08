@@ -27,22 +27,25 @@ on:
                                # Avoids git push conflict on same repo
   workflow_dispatch:           # Manual trigger bhi possible
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build-cache:
     runs-on: ubuntu-latest
-    timeout-minutes: 200       # 3h 20min — ~10,670 API calls @ 3/sec = ~60 min + buffer
+    timeout-minutes: 240       # 4 hours — actual run ~215 min (2134 syms × 5.6s) + 25 min buffer
 
     steps:
       # ── 1. Checkout repo ──────────────────────────────────
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
       # ── 2. Python setup ────────────────────────────────────
       - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: "3.11"
           cache: "pip"
