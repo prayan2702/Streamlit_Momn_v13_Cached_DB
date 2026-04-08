@@ -22,7 +22,7 @@ name: Daily Cache Build — Angel One
 
 on:
   schedule:
-    - cron: "0 18 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
+    - cron: "0 17 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
                                # INTENTIONALLY 2hr AFTER Upstox (16:00 UTC, ~82 min run)
                                # Avoids git push conflict on same repo
   workflow_dispatch:           # Manual trigger bhi possible
