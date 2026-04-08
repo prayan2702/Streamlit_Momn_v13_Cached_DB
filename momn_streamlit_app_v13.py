@@ -1,7 +1,7 @@
 """
-momn_streamlit_app_v14.py
+momn_streamlit_app_v13.py
 =========================
-Momentum Screener + Portfolio Rebalancer — v14
+Momentum Screener + Portfolio Rebalancer — v13
 
 Changes vs v12:
   • UI v13 redesign — logic/calculations untouched
@@ -35,19 +35,6 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.styles.borders import Border, Side
 
 warnings.filterwarnings("ignore")
-
-# ── QuantStats (Strategy Tearsheet) ───────────────────────────
-# NumPy 2.0 removed np.product — patch it back for QuantStats 0.0.25 compatibility
-import numpy as _np
-if not hasattr(_np, "product"):
-    _np.product = _np.prod
-
-_QS_AVAILABLE = False
-try:
-    import quantstats as qs
-    _QS_AVAILABLE = True
-except ImportError:
-    pass
 
 # ── Local modules ──────────────────────────────────────────────
 try:
@@ -157,7 +144,7 @@ def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
 # PAGE CONFIG
 # ═══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Momn Screener v14",
+    page_title="Momn Screener v13",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -665,9 +652,6 @@ def fmt_inr(v):
     return f"₹{v:,}"
 
 def step_html(current):
-    if current == 5:
-        # Tearsheet tab — show its own header, not the 4-step bar
-        return '<div class="section-hdr">📈 Strategy Tearsheet</div>'
     steps = [(1,"Universe Setup"),(2,"Run Screener"),(3,"Plan Rebalance"),(4,"Apply & Export")]
     html = '<div class="step-bar">'
     for i,(n,label) in enumerate(steps):
@@ -948,8 +932,8 @@ st.markdown(f"""
 with st.sidebar:
     st.markdown("### ⚙️ Workflow Steps")
     step_labels = {1:"Universe Setup", 2:"Run Screener",
-                   3:"Plan Rebalance", 4:"Apply & Export", 5:"Strategy Tearsheet"}
-    step_icons  = {1:"🌐", 2:"📊", 3:"⚖️", 4:"💾", 5:"📈"}
+                   3:"Plan Rebalance", 4:"Apply & Export"}
+    step_icons  = {1:"🌐", 2:"📊", 3:"⚖️", 4:"💾"}
     for s, lbl in step_labels.items():
         is_active = (st.session_state.current_step == s)
         is_done   = (s == 1 and st.session_state.symbols is not None) or \
@@ -1016,7 +1000,7 @@ with st.sidebar:
     <div style="margin-top:12px;padding:10px;background:var(--bg);border:1px solid var(--border);
                 border-radius:var(--radius-md);text-align:center;font-size:10.5px;color:var(--muted);">
     📅 {datetime.date.today().strftime('%d %b %Y')}<br>
-    <span style="color:var(--teal);font-weight:700;">Momn Screener v14</span>
+    <span style="color:var(--teal);font-weight:700;">Momn Screener v13</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1079,65 +1063,19 @@ if st.session_state.current_step == 1:
         }
 
         def _fetch_nse_equity_csv():
-            """NSE EQUITY_L.csv fetch karo — multiple fallback URLs + hardened headers."""
+            """NSE EQUITY_L.csv fetch karo (same logic as cache_builder.py)."""
             import io as _io
-            _FALLBACK_URLS = [
-                "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
-                "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
-                "https://www1.nseindia.com/content/equities/EQUITY_L.csv",
-            ]
-            _HDR = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Referer": "https://www.nseindia.com/",
-                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "same-site",
-                "sec-fetch-user": "?1",
-                "Upgrade-Insecure-Requests": "1",
-            }
-            _WARMUP_URLS = [
-                "https://www.nseindia.com",
-                "https://www.nseindia.com/market-data/securities-available-for-trading",
-            ]
             session = requests.Session()
-            # Warmup: get cookies from NSE main pages
-            for wu in _WARMUP_URLS:
-                try:
-                    session.get(wu, headers=_HDR, timeout=15)
-                    time.sleep(0.8)
-                except Exception:
-                    pass
-            # Try each fallback URL
-            last_err = None
-            for url in _FALLBACK_URLS:
-                try:
-                    resp = session.get(url, headers=_HDR, timeout=30)
-                    resp.raise_for_status()
-                    df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
-                    df.columns = [c.strip() for c in df.columns]
-                    if 'SERIES' in df.columns:
-                        df = df[df['SERIES'].str.strip() == 'EQ'].copy()
-                    df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
-                    return df.reset_index(drop=True)
-                except Exception as e:
-                    last_err = e
-                    time.sleep(1)
-            raise RuntimeError(
-                f"Sabhi NSE URLs pe 403/fail: {last_err}\n\n"
-                "💡 Cloud environment mein NSE direct block karta hai. "
-                "Manually EQUITY_L.csv download karein."
-            )
+            session.get("https://www.nseindia.com", headers=_NSE_HEADERS, timeout=15)
+            time.sleep(1)
+            resp = session.get(_NSE_EQUITY_URL, headers=_NSE_HEADERS, timeout=30)
+            resp.raise_for_status()
+            df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
+            df.columns = [c.strip() for c in df.columns]
+            if 'SERIES' in df.columns:
+                df = df[df['SERIES'].str.strip() == 'EQ'].copy()
+            df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
+            return df.reset_index(drop=True)
 
         # ── Status display if already loaded ─────────────────
         if st.session_state.symbols and st.session_state.universe == "AllNSE":
@@ -2310,103 +2248,3 @@ elif st.session_state.current_step == 4:
     with col_r2:
         if st.button("← Step 3 — Edit Rebalance"):
             st.session_state.current_step = 3; st.rerun()
-
-# ═══════════════════════════════════════════════════════════════
-# STEP 5 — STRATEGY TEARSHEET (QuantStats Report)
-# ═══════════════════════════════════════════════════════════════
-elif st.session_state.current_step == 5:
-
-    _TS_CSV_URL = (
-        "https://docs.google.com/spreadsheets/d/e/"
-        "2PACX-1vTuyGRVZuafIk2s7moScIn5PAUcPYEyYIOOYJj54RXYUeugWmOP0iIToljSEMhHrg_Zp8Vab6YvBJDV"
-        "/pub?output=csv"
-    )
-
-    if not _QS_AVAILABLE:
-        st.error(
-            "⚠️ `quantstats` package install nahi hai. "
-            "`requirements.txt` mein `quantstats` add karo aur redeploy karo."
-        )
-        st.stop()
-
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _ts_load_raw(url):
-        return pd.read_csv(url)
-
-    @st.cache_data(ttl=300, show_spinner=False)
-    def _ts_process(url):
-        data = _ts_load_raw(url)
-        # Drop summary rows
-        drop_vals = ['Portfolio Value', 'Absolute Gain', 'Nifty50', 'Day Change']
-        data = data[~data['Date'].isin(drop_vals)].copy()
-        data = data.dropna(subset=['NAV'])
-        data['Date'] = pd.to_datetime(data['Date'], format='%d-%b-%y')
-        data = data.sort_values('Date')
-        data['Date'] = data['Date'].dt.tz_localize(None)
-        data.set_index('Date', inplace=True)
-        data['NAV'] = pd.to_numeric(data['NAV'], errors='coerce')
-        data['Nifty50 Change %'] = (
-            data['Nifty50 Change %'].astype(str)
-            .str.rstrip('%').replace('nan', np.nan)
-        ).astype(float) / 100
-        data = data.dropna(subset=['NAV'])
-        returns  = data['NAV'].pct_change().dropna()
-        nifty50  = data['Nifty50 Change %'].dropna()
-        # Align date range
-        s = max(returns.index[0], nifty50.index[0])
-        e = min(returns.index[-1], nifty50.index[-1])
-        returns  = returns[s:e].replace([np.inf, -np.inf], 0).fillna(0)
-        nifty50  = nifty50[s:e].replace([np.inf, -np.inf], 0).fillna(0)
-        return returns, nifty50
-
-    st.markdown("""
-    <style>
-        .ts-info { background:var(--bg); border:1px solid var(--border);
-                   border-left:4px solid var(--teal); border-radius:var(--radius-md);
-                   padding:12px 16px; font-size:13px; color:var(--text-sub); margin-bottom:16px; }
-    </style>
-    <div class="ts-info">
-        📊 <b>NAV data</b> Google Sheet se load hoga · Benchmark: <b>Nifty50</b> daily % change ·
-        Powered by <b>QuantStats</b>
-    </div>
-    """, unsafe_allow_html=True)
-
-    if st.button("🔄 Refresh Report", type="secondary"):
-        st.cache_data.clear()
-
-    with st.spinner("📈 NAV data load ho raha hai aur report generate ho raha hai..."):
-        try:
-            returns, nifty50 = _ts_process(_TS_CSV_URL)
-
-            # Quick KPI strip
-            total_ret = (1 + returns).prod() - 1
-            ann_vol   = returns.std() * (252 ** 0.5)
-            sharpe    = (returns.mean() * 252) / (ann_vol if ann_vol > 0 else np.nan)
-            max_dd    = qs.stats.max_drawdown(returns)
-
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Total Return",  f"{total_ret*100:.1f}%")
-            c2.metric("Ann. Vol",      f"{ann_vol*100:.1f}%")
-            c3.metric("Sharpe",        f"{sharpe:.2f}" if not np.isnan(sharpe) else "—")
-            c4.metric("Max Drawdown",  f"{max_dd*100:.1f}%")
-
-            st.divider()
-
-            # Full QuantStats HTML report
-            qs.reports.html(
-                returns, nifty50,
-                title="Momn Portfolio — Strategy Tearsheet",
-                output="tearsheet_report.html"
-            )
-            with open("tearsheet_report.html", "r", encoding="utf-8") as f:
-                html_content = f.read()
-
-            st.components.v1.html(html_content, height=900, scrolling=True)
-
-        except Exception as err:
-            st.error(f"❌ Report generate nahi hua: `{err}`")
-            st.info("Google Sheet CSV publicly published hai? NAV aur Nifty50 Change % columns hain?")
-
-    st.divider()
-    if st.button("← Step 4 — Apply & Export"):
-        st.session_state.current_step = 4; st.rerun()
