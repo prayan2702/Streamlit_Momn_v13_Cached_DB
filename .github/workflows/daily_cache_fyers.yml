@@ -1,0 +1,107 @@
+name: Daily Cache Build — Fyers
+
+# ════════════════════════════════════════════════════════════
+# GitHub Actions Fyers API v3 cache builder
+# Runs daily at 11:30 PM IST (6:00 PM UTC)
+#
+# NO STATIC IP REQUIRED — Fyers uses OAuth (not IP whitelisting).
+# Auth: automated TOTP → no browser needed in GitHub Actions.
+#
+# Required GitHub Secrets (Repo → Settings → Secrets → Actions):
+#   FYERS_APP_ID        — "XY12345-100" (from myapi.fyers.in)
+#   FYERS_SECRET_ID     — secret key from your Fyers app
+#   FYERS_USERNAME      — Fyers login ID (e.g., XY12345)
+#   FYERS_PIN           — 4-digit trading PIN
+#   FYERS_TOTP_SECRET   — TOTP secret (Fyers → Enable TOTP)
+#   FYERS_REDIRECT_URI  — registered redirect URI (e.g., https://127.0.0.1)
+#   PAT_TOKEN           — GitHub Personal Access Token (repo write)
+#
+# Schedule offset from other workflows (same repo):
+#   Upstox:    16:00 UTC (9:30 PM IST)   → ~82 min run
+#   Angel One: 17:00 UTC (10:30 PM IST)  → ~215 min run
+#   Fyers:     18:00 UTC (11:30 PM IST)  → ~67 min run
+#   → Staggered to avoid simultaneous git push conflicts
+#
+# ════════════════════════════════════════════════════════════
+
+on:
+  schedule:
+    - cron: "0 18 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
+  workflow_dispatch:           # Manual trigger
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build-cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180       # 3 hours — 2134 syms × ~10 chunks / 5 per sec ≈ 71 min + buffer
+
+    steps:
+      # ── 1. Checkout ─────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.PAT_TOKEN }}
+          fetch-depth: 0
+
+      # ── 2. Python setup ──────────────────────────────────────
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ── 3. Install dependencies ──────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            fyers-apiv3 \
+            pyotp \
+            pandas \
+            pyarrow \
+            numpy \
+            requests \
+            python-dateutil
+
+      # ── 3a. Verify imports ────────────────────────────────────
+      - name: Verify imports
+        run: |
+          python -c "from fyers_apiv3 import fyersModel; import pyotp; print('✅ fyers-apiv3 + pyotp OK')"
+
+      # ── 4. Run Fyers cache builder ────────────────────────────
+      - name: Build Fyers cache
+        env:
+          FYERS_APP_ID:       ${{ secrets.FYERS_APP_ID }}
+          FYERS_SECRET_ID:    ${{ secrets.FYERS_SECRET_ID }}
+          FYERS_USERNAME:     ${{ secrets.FYERS_USERNAME }}
+          FYERS_PIN:          ${{ secrets.FYERS_PIN }}
+          FYERS_TOTP_SECRET:  ${{ secrets.FYERS_TOTP_SECRET }}
+          FYERS_REDIRECT_URI: ${{ secrets.FYERS_REDIRECT_URI }}
+        run: |
+          echo "=== Starting Fyers Cache Build ==="
+          echo "Date: $(date)"
+          python cache_builder_fyers.py
+          echo "=== Build complete ==="
+          ls -lh cache_fyers/ || echo "cache_fyers/ not found"
+
+      # ── 5. Verify output ─────────────────────────────────────
+      - name: Verify cache files
+        run: |
+          echo "=== Cache file sizes ==="
+          du -sh cache_fyers/*.parquet cache_fyers/cache_meta.json 2>/dev/null || true
+          echo "=== Cache meta ==="
+          cat cache_fyers/cache_meta.json 2>/dev/null | python -m json.tool | head -30 || true
+
+      # ── 6. Commit & push ─────────────────────────────────────
+      - name: Commit cache to repository
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache_fyers/
+          git diff --staged --quiet && echo "No changes to commit" || (
+            git commit -m "🤖 Auto: Fyers cache update $(date '+%Y-%m-%d %H:%M IST')"
+            git pull --rebase origin main
+            git push
+          )
