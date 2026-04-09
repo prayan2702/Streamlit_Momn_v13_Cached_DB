@@ -97,6 +97,8 @@ def load_symbols() -> list:
         # CSV bhi save karo cache/ mein (reference ke liye)
         df.to_csv(CACHE_DIR / "EQUITY_L.csv", index=False)
         log(f"  Saved: cache/EQUITY_L.csv")
+        df.to_csv(Path("EQUITY_L.csv"), index=False)   # repo root — Streamlit app GitHub fetch ke liye
+        log(f"  Saved: EQUITY_L.csv (repo root)")
 
     except Exception as e:
         log(f"  ⚠️  NSE direct download failed: {e}")
