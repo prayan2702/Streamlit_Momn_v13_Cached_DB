@@ -56,14 +56,13 @@ jobs:
           #   Nifty50  → ind_nifty50list.csv
           #   Nifty100 → ind_nifty100list.csv
           #   Nifty200 → ind_nifty200list.csv
-          #   Nifty250 → ind_nifty250list.csv
+          #   Nifty250 → ind_nifty250list.csv  (derived: Nifty500 minus Nifty200 = ranks 201-500)
           #   Nifty500 → ind_nifty500list.csv
           #   N750     → ind_niftytotalmarket_list.csv
           INDEX_FILES = {
               "ind_nifty50list.csv":           f"{BASE}/indices/ind_nifty50list.csv",
               "ind_nifty100list.csv":          f"{BASE}/indices/ind_nifty100list.csv",
               "ind_nifty200list.csv":          f"{BASE}/indices/ind_nifty200list.csv",
-              "ind_nifty250list.csv":          f"{BASE}/indices/ind_nifty250list.csv",
               "ind_nifty500list.csv":          f"{BASE}/indices/ind_nifty500list.csv",
               "ind_niftytotalmarket_list.csv": f"{BASE}/indices/ind_niftytotalmarket_list.csv",
               "ind_niftysmallcap250list.csv":  f"{BASE}/indices/ind_niftysmallcap250list.csv",
@@ -86,6 +85,7 @@ jobs:
                   print(f"  Warmup warn: {e}")
 
           results = {}
+          fetched = {}
 
           # Fetch index CSVs
           for fname, url in INDEX_FILES.items():
@@ -96,12 +96,31 @@ jobs:
                   if 'Symbol' not in df.columns:
                       raise ValueError(f"'Symbol' column missing — got: {list(df.columns)}")
                   df.to_csv(fname, index=False)
+                  fetched[fname] = df
                   results[fname] = f"OK {len(df):,} rows"
                   print(f"  OK {len(df):,} rows -> {fname}")
                   time.sleep(0.3)
               except Exception as e:
                   results[fname] = f"FAILED: {e}"
                   print(f"  FAILED: {e} -> {fname}")
+
+          # Build ind_nifty250list.csv from Nifty500 minus Nifty200
+          # NSE removed ind_nifty250list.csv; we derive it as stocks ranked 201-500
+          nifty250_fname = "ind_nifty250list.csv"
+          try:
+              df500 = fetched.get("ind_nifty500list.csv")
+              df200 = fetched.get("ind_nifty200list.csv")
+              if df500 is not None and df200 is not None:
+                  symbols200 = set(df200['Symbol'].str.strip().str.upper())
+                  df250 = df500[~df500['Symbol'].str.strip().str.upper().isin(symbols200)].copy()
+                  df250.reset_index(drop=True).to_csv(nifty250_fname, index=False)
+                  results[nifty250_fname] = f"OK {len(df250):,} rows (derived: Nifty500 - Nifty200)"
+                  print(f"  OK {len(df250):,} rows -> {nifty250_fname} (derived)")
+              else:
+                  raise ValueError("Nifty500 or Nifty200 not fetched, cannot derive Nifty250")
+          except Exception as e:
+              results[nifty250_fname] = f"FAILED: {e}"
+              print(f"  FAILED: {e} -> {nifty250_fname}")
 
           # Fetch EQUITY_L.csv (AllNSE)
           eq_ok = False
@@ -139,13 +158,18 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add EQUITY_L.csv \
-                  ind_nifty50list.csv \
-                  ind_nifty100list.csv \
-                  ind_nifty200list.csv \
-                  ind_nifty250list.csv \
-                  ind_nifty500list.csv \
-                  ind_niftytotalmarket_list.csv \
-                  ind_niftysmallcap250list.csv
+
+          # Only add files that were actually created (skips any that failed)
+          for f in EQUITY_L.csv \
+                    ind_nifty50list.csv \
+                    ind_nifty100list.csv \
+                    ind_nifty200list.csv \
+                    ind_nifty250list.csv \
+                    ind_nifty500list.csv \
+                    ind_niftytotalmarket_list.csv \
+                    ind_niftysmallcap250list.csv; do
+            [ -f "$f" ] && git add "$f"
+          done
+
           git diff --staged --quiet || git commit -m "📋 Morning index lists: $(date +'%Y-%m-%d %H:%M UTC')"
           git push
