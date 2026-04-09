@@ -1101,6 +1101,7 @@ if st.session_state.current_step == 1:
         _NSE_FALLBACK_URLS = [
             "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
             "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+            "https://www1.nseindia.com/content/equities/EQUITY_L.csv",
         ]
         _NSE_HDR = {
             "User-Agent": (
