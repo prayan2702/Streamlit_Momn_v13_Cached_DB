@@ -27,7 +27,7 @@ matplotlib==3.9.3
 mdurl==0.1.2
 multitasking==0.0.11
 narwhals==1.15.2
-numpy==2.0.2
+numpy==1.26.4
 openpyxl==3.1.5
 packaging==24.2
 pandas==2.2.3
@@ -64,7 +64,6 @@ webencodings==0.5.1
 yfinance==0.2.61
 smartapi-python==1.5.5
 pyotp==2.9.0
-websocket-client==1.8.0
+websocket-client==1.6.1
 logzero==1.7.0
-pyarrow>=14.0.0
 fyers-apiv3
