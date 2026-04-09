@@ -104,6 +104,27 @@ try:
 except ImportError:
     pass
 
+# ── cache_loader_fyers (pre-built Parquet cache — Fyers) ──────
+_CACHE_FYERS_AVAILABLE = False
+try:
+    from cache_loader_fyers import (
+        load_cache            as load_cache_fyers,
+        get_cache_meta        as get_cache_meta_fyers,
+        get_cache_age_days    as get_cache_age_days_fyers,
+        get_cache_status_html as get_cache_status_html_fyers,
+    )
+    _CACHE_FYERS_AVAILABLE = True
+except ImportError:
+    pass
+
+# ── fyers_auth (live Fyers fetch) ─────────────────────────────
+_FYERS_AVAILABLE = False
+try:
+    from fyers_auth import get_fyers_client
+    _FYERS_AVAILABLE = True
+except Exception:
+    pass
+
 # ── Inline YFinance fetcher (fallback when data_service fails) ─
 def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
                             progress_bar, status_text, chunk_size=15):
@@ -574,9 +595,11 @@ API_OPTIONS  = [
     "📦 Pre-cached YFinance",
     "📦 Pre-cached Upstox",
     "📦 Pre-cached Angel One",
+    "📦 Pre-cached Fyers",
     "YFinance",
     "Upstox",
     "Angel One",
+    "Fyers",
 ]
 RANKING_MAP  = {
     "AvgZScore 12M/6M/3M":    "avgZScore12_6_3",
@@ -972,11 +995,30 @@ with st.sidebar:
         if _ANGEL_AVAILABLE:
             get_angelone_client(sidebar=True)
         else:
-            st.warning(
-                "⚠️ Angel One ke liye `smartapi-python` + `pyotp` "
-                "`requirements.txt` mein add karo. "
-                "Abhi **YFinance** fallback use hoga."
-            )
+            st.sidebar.markdown("""
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #d97706;
+                        border-radius:10px;padding:10px 14px;font-size:12px;color:#92400e;margin:6px 0;">
+              ⚠️ <b>Angel One unavailable</b><br>
+              <span style="font-size:11px;">
+              <code>requirements.txt</code> mein add karo: <code>smartapi-python</code> + <code>pyotp</code><br>
+              Abhi <b>YFinance</b> fallback use hoga.
+              </span>
+            </div>""", unsafe_allow_html=True)
+
+    elif st.session_state.data_source == "Fyers":
+        st.divider()
+        if _FYERS_AVAILABLE:
+            get_fyers_client(sidebar=True)
+        else:
+            st.sidebar.markdown("""
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #d97706;
+                        border-radius:10px;padding:10px 14px;font-size:12px;color:#92400e;margin:6px 0;">
+              ⚠️ <b>Fyers unavailable</b><br>
+              <span style="font-size:11px;">
+              <code>requirements.txt</code> mein add karo: <code>fyers-apiv3</code> + <code>pyotp</code><br>
+              Abhi <b>YFinance</b> fallback use hoga.
+              </span>
+            </div>""", unsafe_allow_html=True)
 
     st.divider()
     st.markdown("### 🔗 Quick Links")
@@ -1273,6 +1315,8 @@ if st.session_state.current_step == 1:
         st.markdown(get_cache_status_html_upstox(), unsafe_allow_html=True)
     if _CACHE_ANGEL_AVAILABLE:
         st.markdown(get_cache_status_html_angel(), unsafe_allow_html=True)
+    if _CACHE_FYERS_AVAILABLE:
+        st.markdown(get_cache_status_html_fyers(), unsafe_allow_html=True)
 
     # ── Next step button ──────────────────────────────────────
     if st.session_state.symbols or chosen_u != "AllNSE":
@@ -1404,12 +1448,25 @@ elif st.session_state.current_step == 2:
                 "📦 Pre-cached YFinance",
                 "📦 Pre-cached Upstox",
                 "📦 Pre-cached Angel One",
+                "📦 Pre-cached Fyers",
             ):
                 _is_upstox_cache = (_api_source == "📦 Pre-cached Upstox")
                 _is_angel_cache  = (_api_source == "📦 Pre-cached Angel One")
+                _is_fyers_cache  = (_api_source == "📦 Pre-cached Fyers")
 
                 # ── Select correct loader ─────────────────────────
-                if _is_angel_cache:
+                if _is_fyers_cache:
+                    if not _CACHE_FYERS_AVAILABLE:
+                        st.error(
+                            "❌ cache_loader_fyers.py nahi mila. "
+                            "Repo mein add karo + daily_cache_fyers.yml workflow run karo."
+                        )
+                        st.stop()
+                    _loader    = load_cache_fyers
+                    _meta_fn   = get_cache_meta_fyers
+                    _age_fn    = get_cache_age_days_fyers
+                    _cache_lbl = "Fyers"
+                elif _is_angel_cache:
                     if not _CACHE_ANGEL_AVAILABLE:
                         st.error(
                             "❌ cache_loader_angelone.py nahi mila. "
@@ -1557,7 +1614,7 @@ elif st.session_state.current_step == 2:
                 """, unsafe_allow_html=True)
 
                 # Use data_service if available AND source is not YFinance
-                _use_ds = _DS_AVAILABLE and _api_source in ("Upstox", "Angel One")
+                _use_ds = _DS_AVAILABLE and _api_source in ("Upstox", "Angel One", "Fyers")
                 try:
                     if _use_ds:
                         close, high, volume, failed_symbols = fetch_data(
