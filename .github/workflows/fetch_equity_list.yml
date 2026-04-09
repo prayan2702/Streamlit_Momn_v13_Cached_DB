@@ -2,10 +2,9 @@ name: Morning Equity List Fetch
 
 on:
   schedule:
-    # Roz 3:30 AM UTC = 9:00 AM IST
+    # Roz 3:30 AM UTC = 9:00 AM IST, Monday-Friday
     - cron: '30 3 * * 1-5'
 
-  # Manual trigger bhi possible
   workflow_dispatch:
 
 env:
@@ -14,7 +13,7 @@ env:
 jobs:
   fetch-equity-list:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -28,16 +27,12 @@ jobs:
       - name: Install dependencies
         run: pip install requests pandas
 
-      - name: Fetch EQUITY_L.csv from NSE
+      - name: Fetch all index CSVs from NSE
         run: |
           python - <<'EOF'
           import requests, pandas as pd, sys, time
           from io import StringIO
 
-          FALLBACK_URLS = [
-              "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
-              "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
-          ]
           HDR = {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -55,17 +50,62 @@ jobs:
               "Upgrade-Insecure-Requests": "1",
           }
 
+          BASE = "https://nsearchives.nseindia.com/content"
+
+          # App universe → filename (matches load_symbols_from_github logic):
+          #   Nifty50  → ind_nifty50list.csv
+          #   Nifty100 → ind_nifty100list.csv
+          #   Nifty200 → ind_nifty200list.csv
+          #   Nifty250 → ind_nifty250list.csv
+          #   Nifty500 → ind_nifty500list.csv
+          #   N750     → ind_niftytotalmarket_list.csv
+          INDEX_FILES = {
+              "ind_nifty50list.csv":           f"{BASE}/indices/ind_nifty50list.csv",
+              "ind_nifty100list.csv":          f"{BASE}/indices/ind_nifty100list.csv",
+              "ind_nifty200list.csv":          f"{BASE}/indices/ind_nifty200list.csv",
+              "ind_nifty250list.csv":          f"{BASE}/indices/ind_nifty250list.csv",
+              "ind_nifty500list.csv":          f"{BASE}/indices/ind_nifty500list.csv",
+              "ind_niftytotalmarket_list.csv": f"{BASE}/indices/ind_niftytotalmarket_list.csv",
+              "ind_niftysmallcap250list.csv":  f"{BASE}/indices/ind_niftysmallcap250list.csv",
+          }
+
+          EQUITY_URLS = [
+              "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
+              "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+          ]
+
+          # Session warmup for cookies
           session = requests.Session()
           for wu in ["https://www.nseindia.com",
                      "https://www.nseindia.com/market-data/securities-available-for-trading"]:
               try:
                   session.get(wu, headers=HDR, timeout=15)
                   time.sleep(0.8)
+                  print(f"  Warmup OK: {wu}")
               except Exception as e:
-                  print(f"Warmup warn: {e}")
+                  print(f"  Warmup warn: {e}")
 
-          last_err = None
-          for url in FALLBACK_URLS:
+          results = {}
+
+          # Fetch index CSVs
+          for fname, url in INDEX_FILES.items():
+              try:
+                  resp = session.get(url, headers=HDR, timeout=30)
+                  resp.raise_for_status()
+                  df = pd.read_csv(StringIO(resp.text))
+                  if 'Symbol' not in df.columns:
+                      raise ValueError(f"'Symbol' column missing — got: {list(df.columns)}")
+                  df.to_csv(fname, index=False)
+                  results[fname] = f"OK {len(df):,} rows"
+                  print(f"  OK {len(df):,} rows -> {fname}")
+                  time.sleep(0.3)
+              except Exception as e:
+                  results[fname] = f"FAILED: {e}"
+                  print(f"  FAILED: {e} -> {fname}")
+
+          # Fetch EQUITY_L.csv (AllNSE)
+          eq_ok = False
+          for url in EQUITY_URLS:
               try:
                   resp = session.get(url, headers=HDR, timeout=30)
                   resp.raise_for_status()
@@ -74,23 +114,38 @@ jobs:
                   if 'SERIES' in df.columns:
                       df = df[df['SERIES'].str.strip() == 'EQ'].copy()
                   df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
-                  df = df.reset_index(drop=True)
-                  df.to_csv("EQUITY_L.csv", index=False)
-                  print(f"✅ Saved EQUITY_L.csv — {len(df):,} EQ stocks from {url}")
-                  sys.exit(0)
+                  df.reset_index(drop=True).to_csv("EQUITY_L.csv", index=False)
+                  print(f"  OK {len(df):,} EQ stocks -> EQUITY_L.csv (from {url})")
+                  eq_ok = True
+                  break
               except Exception as e:
-                  last_err = e
-                  print(f"Failed {url}: {e}")
+                  print(f"  WARN {url} failed: {e}")
                   time.sleep(1)
 
-          print(f"❌ All URLs failed: {last_err}")
-          sys.exit(1)
+          if not eq_ok:
+              print("  FAIL: EQUITY_L.csv fetch failed from all URLs")
+
+          print("\n=== Summary ===")
+          for f, r in results.items():
+              print(f"  {f}: {r}")
+          failures = [f for f, r in results.items() if "FAILED" in r]
+          if failures:
+              print(f"\nWARN: {len(failures)} index file(s) failed")
+          else:
+              print("\nAll index CSVs fetched OK")
           EOF
 
-      - name: Commit and push EQUITY_L.csv
+      - name: Commit and push all CSVs
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add EQUITY_L.csv
-          git diff --staged --quiet || git commit -m "📋 Morning equity list: $(date +'%Y-%m-%d %H:%M UTC')"
+          git add EQUITY_L.csv \
+                  ind_nifty50list.csv \
+                  ind_nifty100list.csv \
+                  ind_nifty200list.csv \
+                  ind_nifty250list.csv \
+                  ind_nifty500list.csv \
+                  ind_niftytotalmarket_list.csv \
+                  ind_niftysmallcap250list.csv
+          git diff --staged --quiet || git commit -m "📋 Morning index lists: $(date +'%Y-%m-%d %H:%M UTC')"
           git push
