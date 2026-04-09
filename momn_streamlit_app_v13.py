@@ -1063,19 +1063,63 @@ if st.session_state.current_step == 1:
         }
 
         def _fetch_nse_equity_csv():
-            """NSE EQUITY_L.csv fetch karo (same logic as cache_builder.py)."""
+            """NSE EQUITY_L.csv fetch karo — multiple fallback URLs + hardened headers."""
             import io as _io
+            _FALLBACK_URLS = [
+                "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
+                "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+                "https://www1.nseindia.com/content/equities/EQUITY_L.csv",
+            ]
+            _HDR = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Referer": "https://www.nseindia.com/",
+                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "same-site",
+                "sec-fetch-user": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
+            _WARMUP_URLS = [
+                "https://www.nseindia.com",
+                "https://www.nseindia.com/market-data/securities-available-for-trading",
+            ]
             session = requests.Session()
-            session.get("https://www.nseindia.com", headers=_NSE_HEADERS, timeout=15)
-            time.sleep(1)
-            resp = session.get(_NSE_EQUITY_URL, headers=_NSE_HEADERS, timeout=30)
-            resp.raise_for_status()
-            df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
-            df.columns = [c.strip() for c in df.columns]
-            if 'SERIES' in df.columns:
-                df = df[df['SERIES'].str.strip() == 'EQ'].copy()
-            df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
-            return df.reset_index(drop=True)
+            for wu in _WARMUP_URLS:
+                try:
+                    session.get(wu, headers=_HDR, timeout=15)
+                    time.sleep(0.8)
+                except Exception:
+                    pass
+            last_err = None
+            for url in _FALLBACK_URLS:
+                try:
+                    resp = session.get(url, headers=_HDR, timeout=30)
+                    resp.raise_for_status()
+                    df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
+                    df.columns = [c.strip() for c in df.columns]
+                    if 'SERIES' in df.columns:
+                        df = df[df['SERIES'].str.strip() == 'EQ'].copy()
+                    df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
+                    return df.reset_index(drop=True)
+                except Exception as e:
+                    last_err = e
+                    time.sleep(1)
+            raise RuntimeError(
+                f"Sabhi NSE URLs pe fail: {last_err}\n\n"
+                "💡 Cloud environment mein NSE IP-block karta hai. "
+                "Manually EQUITY_L.csv download karein."
+            )
 
         # ── Status display if already loaded ─────────────────
         if st.session_state.symbols and st.session_state.universe == "AllNSE":
