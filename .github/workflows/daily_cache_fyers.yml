@@ -26,7 +26,7 @@ name: Daily Cache Build — Fyers
 
 on:
   schedule:
-    - cron: "0 18 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
+    - cron: "0 12 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
   workflow_dispatch:           # Manual trigger
 
 env:
