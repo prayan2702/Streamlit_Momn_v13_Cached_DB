@@ -1,26 +1,17 @@
 {
-  "build_date": "2026-04-08",
-  "build_time_utc": "21:43:36",
-  "build_duration_min": 194.7,
+  "build_date": "2026-04-09",
+  "build_time_utc": "13:28:51",
+  "build_duration_min": 202.0,
   "symbols_total": 2134,
-  "symbols_fetched": 2124,
-  "symbols_failed": 10,
-  "not_in_master": 0,
+  "symbols_fetched": 2133,
+  "symbols_failed": 0,
+  "not_in_master": 1,
   "failed_symbols": [
-    "AAREYDRUGS.NS",
-    "AARNAV.NS",
-    "AARON.NS",
-    "AARTECH.NS",
-    "AARTIDRUGS.NS",
-    "AARTIIND.NS",
-    "AARTIPHARM.NS",
-    "AARTISURF.NS",
-    "AARVI.NS",
-    "AAVAS.NS"
+    "SAHLIBHFI.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-08",
-  "data_end": "2026-04-08",
+  "data_start_recent": "2022-12-09",
+  "data_end": "2026-04-09",
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct download)",
@@ -49,22 +40,22 @@
     ],
     [
       "2021-11-26",
-      "2026-04-08"
+      "2026-04-09"
     ]
   ],
-  "total_api_calls": 10620,
+  "total_api_calls": 10665,
   "rate_limit": "3 req/sec",
   "close_shape": [
     826,
-    2124
+    2133
   ],
   "high_shape": [
     826,
-    2124
+    2133
   ],
   "volume_shape": [
     826,
-    2124
+    2133
   ],
-  "ath_count": 2124
+  "ath_count": 2133
 }
