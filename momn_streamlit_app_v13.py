@@ -1047,159 +1047,177 @@ if st.session_state.current_step == 1:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── AllNSE: Load Symbol List button + NSE auto-fetch ─────
+    # ── AllNSE: Load Symbol List ───────────────────────────────
     if chosen_u == "AllNSE":
-        # NSE headers (same as cache_builder.py)
-        _NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-        _NSE_HEADERS = {
+
+        # GitHub-cached EQUITY_L.csv (committed by cache_builder GitHub Action)
+        _GITHUB_EQ_URL = (
+            "https://raw.githubusercontent.com/prayan2702/"
+            "Streamlit_Momn_v13_Cached_DB/main/EQUITY_L.csv"
+        )
+        # NSE direct URLs — blocked on cloud, may work locally
+        _NSE_FALLBACK_URLS = [
+            "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
+            "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
+        ]
+        _NSE_HDR = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/124.0.0.0 Safari/537.36"
             ),
-            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
             "Referer": "https://www.nseindia.com/",
+            "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "document",
+            "sec-fetch-mode": "navigate",
+            "sec-fetch-site": "same-site",
+            "sec-fetch-user": "?1",
+            "Upgrade-Insecure-Requests": "1",
         }
 
-        def _fetch_nse_equity_csv():
-            """NSE EQUITY_L.csv fetch karo — multiple fallback URLs + hardened headers."""
+        def _parse_eq_bytes(text: str) -> pd.DataFrame:
             import io as _io
-            _FALLBACK_URLS = [
-                "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
-                "https://archives.nseindia.com/content/equities/EQUITY_L.csv",
-                "https://www1.nseindia.com/content/equities/EQUITY_L.csv",
-            ]
-            _HDR = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Referer": "https://www.nseindia.com/",
-                "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "document",
-                "sec-fetch-mode": "navigate",
-                "sec-fetch-site": "same-site",
-                "sec-fetch-user": "?1",
-                "Upgrade-Insecure-Requests": "1",
-            }
-            _WARMUP_URLS = [
-                "https://www.nseindia.com",
-                "https://www.nseindia.com/market-data/securities-available-for-trading",
-            ]
+            df = pd.read_csv(_io.StringIO(text), skipinitialspace=True)
+            df.columns = [c.strip() for c in df.columns]
+            if 'SERIES' in df.columns:
+                df = df[df['SERIES'].str.strip() == 'EQ'].copy()
+            df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
+            return df.reset_index(drop=True)
+
+        def _fetch_from_github() -> pd.DataFrame:
+            """GitHub repo se cached EQUITY_L.csv fetch karo."""
+            resp = requests.get(_GITHUB_EQ_URL, timeout=20)
+            resp.raise_for_status()
+            return _parse_eq_bytes(resp.text)
+
+        def _fetch_from_nse() -> pd.DataFrame:
+            """NSE direct fetch — cloud pe block hota hai, locally kaam karta hai."""
             session = requests.Session()
-            for wu in _WARMUP_URLS:
+            for wu in ["https://www.nseindia.com",
+                       "https://www.nseindia.com/market-data/securities-available-for-trading"]:
                 try:
-                    session.get(wu, headers=_HDR, timeout=15)
+                    session.get(wu, headers=_NSE_HDR, timeout=15)
                     time.sleep(0.8)
                 except Exception:
                     pass
             last_err = None
-            for url in _FALLBACK_URLS:
+            for url in _NSE_FALLBACK_URLS:
                 try:
-                    resp = session.get(url, headers=_HDR, timeout=30)
+                    resp = session.get(url, headers=_NSE_HDR, timeout=30)
                     resp.raise_for_status()
-                    df = pd.read_csv(_io.StringIO(resp.text), skipinitialspace=True)
-                    df.columns = [c.strip() for c in df.columns]
-                    if 'SERIES' in df.columns:
-                        df = df[df['SERIES'].str.strip() == 'EQ'].copy()
-                    df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
-                    return df.reset_index(drop=True)
+                    return _parse_eq_bytes(resp.text)
                 except Exception as e:
                     last_err = e
                     time.sleep(1)
-            raise RuntimeError(
-                f"Sabhi NSE URLs pe fail: {last_err}\n\n"
-                "💡 Cloud environment mein NSE IP-block karta hai. "
-                "Manually EQUITY_L.csv download karein."
-            )
+            raise RuntimeError(str(last_err))
 
-        # ── Status display if already loaded ─────────────────
+        # ── Status display if already loaded ──────────────────
         if st.session_state.symbols and st.session_state.universe == "AllNSE":
             n = len(st.session_state.symbols)
             st.markdown(f"""<div class="metric-row">
                 {metric_card("Loaded Symbols", f"{n:,}", "green")}
-                {metric_card("Source", st.session_state.get("allnse_source","NSE"), "blue")}
+                {metric_card("Source", st.session_state.get("allnse_source","—"), "blue")}
             </div>""", unsafe_allow_html=True)
             if st.button("🔄 Reload Symbol List", type="secondary"):
                 st.session_state.symbols = None
                 st.session_state.eq_df   = None
                 st.rerun()
         else:
-            # ── Load button ───────────────────────────────────
+            # ── Info box ──────────────────────────────────────
             st.markdown("""
             <div class="nse-link-box">
               <div>📥</div>
               <div>
                 <b>NSE — Securities Available for Trading</b>
-                <div class="hint">Button dabao → NSE website se auto-fetch hoga | Ya manually CSV browse karo</div>
+                <div class="hint">
+                  GitHub cache se auto-load hoga &nbsp;|&nbsp;
+                  NSE direct (local only) &nbsp;|&nbsp; Ya manually CSV upload karo
+                </div>
               </div>
             </div>
             """, unsafe_allow_html=True)
 
-            btn_col, _ = st.columns([1, 2])
-            with btn_col:
-                load_btn = st.button("📡 Load Symbol List (NSE Auto-Fetch)", type="primary",
-                                     use_container_width=True)
+            # ── Button row: GitHub cache + NSE direct ─────────
+            btn_col1, btn_col2, _ = st.columns([1, 1, 1])
+            with btn_col1:
+                github_btn = st.button("☁️ Load from GitHub Cache", type="primary",
+                                       use_container_width=True,
+                                       help="Repo mein committed EQUITY_L.csv se load karo (cloud pe kaam karta hai)")
+            with btn_col2:
+                nse_btn = st.button("📡 NSE Direct Fetch", type="secondary",
+                                    use_container_width=True,
+                                    help="NSE se live fetch — cloud pe block hota hai, locally try karo")
 
-            if load_btn:
-                with st.spinner("🌐 NSE website se EQUITY_L.csv fetch ho raha hai..."):
+            # ── GitHub cache fetch ────────────────────────────
+            if github_btn:
+                with st.spinner("☁️ GitHub se EQUITY_L.csv fetch ho raha hai..."):
                     try:
-                        eq_df = _fetch_nse_equity_csv()
+                        eq_df = _fetch_from_github()
                         syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
                         syms_ns = add_extra_symbols(syms_ns)
-                        st.session_state.eq_df  = eq_df
-                        st.session_state.symbols = syms_ns
-                        st.session_state.universe_label = f"AllNSE (NSE — {len(syms_ns):,} stocks)"
-                        st.session_state["allnse_source"] = "NSE Live"
-                        st.success(
-                            f"✅ NSE se {len(syms_ns):,} EQ stocks loaded "
-                            f"(incl. GOLDBEES & SILVERBEES)"
-                        )
+                        st.session_state.eq_df           = eq_df
+                        st.session_state.symbols          = syms_ns
+                        st.session_state.universe_label   = f"AllNSE (GitHub — {len(syms_ns):,} stocks)"
+                        st.session_state["allnse_source"] = "GitHub Cache"
+                        st.success(f"✅ GitHub cache se {len(syms_ns):,} EQ stocks loaded!")
                         st.rerun()
                     except Exception as e:
                         st.warning(
-                            f"⚠️ NSE auto-fetch failed: `{e}`\n\n"
-                            "Manually EQUITY_L.csv download karein aur neeche browse karein."
+                            f"⚠️ GitHub fetch failed: `{e}`\n\n"
+                            "💡 `EQUITY_L.csv` repo mein commit karo ya manually upload karo."
                         )
-                        st.session_state["_nse_fetch_failed"] = True
 
-            # ── Fallback file uploader ────────────────────────
-            # Always shown (primary path if auto-fetch fails, secondary otherwise)
-            show_uploader = st.session_state.get("_nse_fetch_failed", False)
-            if not load_btn:  # show uploader hint before first attempt too
-                show_uploader = True
-
-            if show_uploader:
-                st.markdown(
-                    f'<a href="https://www.nseindia.com/static/market-data/securities-available-for-trading" '
-                    f'target="_blank" style="font-size:12px;">📥 NSE se manually EQUITY_L.csv download karein</a>',
-                    unsafe_allow_html=True
-                )
-                uploaded = st.file_uploader(
-                    "📂 EQUITY_L.csv browse karein (manual fallback)",
-                    type=["csv"], key="equity_csv"
-                )
-                if uploaded:
+            # ── NSE direct fetch ──────────────────────────────
+            if nse_btn:
+                with st.spinner("🌐 NSE se EQUITY_L.csv fetch ho raha hai... (cloud pe block hoga)"):
                     try:
-                        eq_df = parse_equity_csv(uploaded)
+                        eq_df = _fetch_from_nse()
                         syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
                         syms_ns = add_extra_symbols(syms_ns)
-                        st.session_state.eq_df  = eq_df
-                        st.session_state.symbols = syms_ns
-                        st.session_state.universe_label = f"AllNSE (CSV — {len(syms_ns):,} stocks)"
-                        st.session_state["allnse_source"] = "CSV Upload"
-                        st.success(f"✅ CSV loaded: **{len(syms_ns):,}** EQ stocks (incl. GOLDBEES & SILVERBEES)")
+                        st.session_state.eq_df           = eq_df
+                        st.session_state.symbols          = syms_ns
+                        st.session_state.universe_label   = f"AllNSE (NSE Live — {len(syms_ns):,} stocks)"
+                        st.session_state["allnse_source"] = "NSE Live"
+                        st.success(f"✅ NSE se {len(syms_ns):,} EQ stocks loaded!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"CSV parse error: {e}")
+                        st.warning(
+                            f"⚠️ NSE direct fetch failed: `{e}`\n\n"
+                            "💡 Cloud environment mein NSE IP-block karta hai — "
+                            "**GitHub Cache** ya **Manual Upload** use karo."
+                        )
+
+            # ── Manual CSV upload — ALWAYS VISIBLE ────────────
+            st.markdown("---")
+            st.markdown(
+                '<a href="https://www.nseindia.com/static/market-data/securities-available-for-trading" '
+                'target="_blank" style="font-size:12px;color:var(--blue);font-weight:600;">'
+                '📥 NSE se manually EQUITY_L.csv download karein</a>',
+                unsafe_allow_html=True
+            )
+            uploaded = st.file_uploader(
+                "📂 EQUITY_L.csv upload karein (manual — always works)",
+                type=["csv"], key="equity_csv"
+            )
+            if uploaded:
+                try:
+                    eq_df = parse_equity_csv(uploaded)
+                    syms_ns = [s + ".NS" for s in eq_df["SYMBOL"].tolist()]
+                    syms_ns = add_extra_symbols(syms_ns)
+                    st.session_state.eq_df           = eq_df
+                    st.session_state.symbols          = syms_ns
+                    st.session_state.universe_label   = f"AllNSE (CSV — {len(syms_ns):,} stocks)"
+                    st.session_state["allnse_source"] = "CSV Upload"
+                    st.success(f"✅ CSV loaded: **{len(syms_ns):,}** EQ stocks (incl. GOLDBEES & SILVERBEES)")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"CSV parse error: {e}")
 
             if not st.session_state.symbols:
                 st.info("💡 Symbol list load nahi hua — GitHub fallback (NSE_EQ_ALL.csv) screener run pe use hoga.")
