@@ -465,13 +465,56 @@ def fetch_all_sequential(
             if consecutive_fail >= CONSECUTIVE_FAIL_LIMIT and creds:
                 log(
                     f"  ⚠️  {consecutive_fail} consecutive failures at [{i+1}/{total}] "
-                    f"— session likely expired. Refreshing..."
+                    f"— session likely expired. Refreshing + retrying failed batch..."
                 )
+                # In {consecutive_fail} symbols failed = failed[-consecutive_fail:]
+                # Unhe failed list se nikalo aur retry karo
+                retry_batch = failed[-consecutive_fail:]
+                del failed[-consecutive_fail:]
+
                 try:
                     smart_api = _refresh_session(creds)
                     consecutive_fail = 0
+
+                    # ── Retry each symbol from the failed batch ──
+                    log(f"  🔄 Retrying {len(retry_batch)} symbols from failed batch...")
+                    retried_ok = 0
+                    for r_sym in retry_batch:
+                        r_token = _get_token(r_sym, instrument_map)
+                        if not r_token:
+                            failed.append(r_sym)
+                            continue
+                        r_chunks = []
+                        for from_d, to_d in date_ranges:
+                            try:
+                                df = _fetch_one_chunk(smart_api, r_token, from_d, to_d)
+                                if df is not None and not df.empty:
+                                    r_chunks.append(df)
+                            except Exception:
+                                pass
+                            time.sleep(RATE_LIMIT_SLEEP)
+
+                        if r_chunks:
+                            merged = pd.concat(r_chunks).sort_index()
+                            merged = merged[~merged.index.duplicated(keep="last")]
+                            ath_dict[r_sym] = float(merged["high"].max())
+                            df_r = merged[merged.index >= start_recent]
+                            if not df_r.empty:
+                                idx = pd.to_datetime(df_r.index)
+                                close_map[r_sym] = pd.Series(df_r["close"].values, index=idx)
+                                high_map[r_sym]  = pd.Series(df_r["high"].values,  index=idx)
+                                vol_map[r_sym]   = pd.Series(
+                                    (df_r["close"] * df_r["volume"]).values, index=idx
+                                )
+                            retried_ok += 1
+                        else:
+                            failed.append(r_sym)
+
+                    log(f"  ✅ Retry complete: {retried_ok}/{len(retry_batch)} recovered")
+
                 except RuntimeError as e:
-                    log(f"  ❌ {e}")
+                    log(f"  ❌ {e} — {len(retry_batch)} symbols permanently failed")
+                    failed.extend(retry_batch)   # wapas failed mein
                     break
 
         # ── Progress log every 50 symbols ─────────────────────
