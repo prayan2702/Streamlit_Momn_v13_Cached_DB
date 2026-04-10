@@ -659,6 +659,16 @@ _defaults = {
     "_pending_volume":  None,
     "_pending_fp":      None,
     "_pending_dates":   None,
+    # ── Cross-source review flow (Angel vs Upstox ATH/Close diff) ──
+    "_cross_review_done":      False,   # True = review completed/skipped
+    "_cross_review_overrides": {},      # {ticker: "primary"|"secondary"}
+    "_cross_sec_close":        None,    # secondary cache close df (top 400 slice)
+    "_cross_sec_high":         None,    # secondary cache high df (top 400 slice)
+    "_cross_diff_df":          None,    # DataFrame of stocks with significant diffs
+    "_cross_primary_label":    "",      # "Angel One" or "Upstox"
+    "_cross_secondary_label":  "",      # the other one
+    "_cross_filter_params":    None,    # filter params to re-apply after override
+    "_cross_top_n":            400,     # how many top-ranked stocks to compare
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -1426,6 +1436,10 @@ elif st.session_state.current_step == 2:
         st.session_state["_run_api_source"]    = api_source
         st.session_state["_run_end_date"]      = end_date
         st.session_state["_run_u"]             = U
+        # Reset cross-source review for fresh run
+        st.session_state["_cross_review_done"]      = False
+        st.session_state["_cross_review_overrides"] = {}
+        st.session_state["_cross_diff_df"]          = None
         st.rerun()
 
     if st.session_state.get("_run_download", False):
@@ -1663,6 +1677,7 @@ elif st.session_state.current_step == 2:
                 st.session_state.dfStats    = dfStats
                 st.session_state.dfFiltered = dfFiltered
                 st.session_state.screener_done = True
+                st.session_state["_cross_filter_params"] = _filter_params  # for cross-source review
                 st.session_state["_downloading"] = False   # unlock filters
                 prog_bar.progress(1.0)
                 status_tx.markdown("✅ **Screener complete!**")
@@ -1772,6 +1787,7 @@ elif st.session_state.current_step == 2:
                     st.session_state.dfFiltered      = _dfF
                     st.session_state.failed_blank    = _p_failed
                     st.session_state.screener_done   = True
+                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
                     st.session_state["_pending_merge"] = False
                     _prog_pm.progress(1.0)
                     _stat_pm.markdown("✅ **Screener complete!**")
@@ -1796,6 +1812,7 @@ elif st.session_state.current_step == 2:
                     st.session_state.dfFiltered      = _dfF
                     st.session_state.failed_blank    = _p_failed
                     st.session_state.screener_done   = True
+                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
                     st.session_state["_pending_merge"] = False
                     _prog_pm.progress(1.0)
                     _stat_pm.markdown("✅ **Screener complete!**")
@@ -1806,6 +1823,317 @@ elif st.session_state.current_step == 2:
 
         # Block results display until user makes a decision
         st.stop()
+
+    # ══════════════════════════════════════════════════════════
+    # CROSS-SOURCE REVIEW BLOCK
+    # Angel One vs Upstox ke beech top 400 stocks mein
+    # Close / ATH major difference detect karke user ko
+    # per-stock source select karne ka option deta hai.
+    # ══════════════════════════════════════════════════════════
+    _src = st.session_state.get("data_source", "")
+    _cross_done = st.session_state.get("_cross_review_done", False)
+
+    # Trigger: screener done, broker source selected, review not yet done
+    if (
+        st.session_state.screener_done
+        and st.session_state.dfStats is not None
+        and _src in ("Angel One", "Upstox")
+        and not _cross_done
+        and not st.session_state.get("_pending_merge", False)
+    ):
+        # ── Step A: Load secondary cache & compute diff (only once) ──
+        if st.session_state.get("_cross_diff_df") is None:
+            _TOP_N_COMPARE = st.session_state.get("_cross_top_n", 400)
+            _primary_lbl   = _src
+            _secondary_lbl = "Upstox" if _src == "Angel One" else "Angel One"
+
+            with st.spinner(f"🔄 {_secondary_lbl} cache load karke cross-source comparison ho raha hai (top {_TOP_N_COMPARE} stocks)..."):
+                try:
+                    # Load secondary cache
+                    if _secondary_lbl == "Upstox" and _CACHE_UPSTOX_AVAILABLE:
+                        _sec_close, _sec_high, _, _ = load_cache_upstox()
+                    elif _secondary_lbl == "Angel One" and _CACHE_ANGEL_AVAILABLE:
+                        _sec_close, _sec_high, _, _ = load_cache_angel()
+                    else:
+                        raise RuntimeError(f"{_secondary_lbl} cache loader available nahi hai.")
+
+                    # Normalize secondary cache column names (remove .NS suffix)
+                    def _norm_cols(df):
+                        df = df.copy()
+                        df.columns = df.columns.str.replace('.NS','',regex=False).str.upper()
+                        return df
+                    _sec_close = _norm_cols(_sec_close)
+                    _sec_high  = _norm_cols(_sec_high)
+
+                    # Get top N from primary dfStats
+                    _dfS = st.session_state.dfStats.reset_index() if "Ticker" not in st.session_state.dfStats.columns else st.session_state.dfStats.copy()
+                    _top_df = _dfS[_dfS["Rank"] <= _TOP_N_COMPARE].copy()
+
+                    # Build comparison rows
+                    _CLOSE_THRESH  = 2.0    # % difference threshold for Close
+                    _ATH_THRESH    = 10.0   # % difference threshold for ATH
+                    _AWAY_THRESH   = 8.0    # pp difference threshold for AWAY_ATH
+
+                    _rows = []
+                    for _, _row in _top_df.iterrows():
+                        _tick = str(_row["Ticker"]).replace(".NS","").upper()
+                        if _tick not in _sec_close.columns or _tick not in _sec_high.columns:
+                            continue
+                        # Secondary source values
+                        _sec_last_close = float(_sec_close[_tick].dropna().iloc[-1]) if _sec_close[_tick].dropna().shape[0] > 0 else None
+                        _sec_ath        = float(_sec_high[_tick].dropna().max())      if _sec_high[_tick].dropna().shape[0] > 0 else None
+                        if _sec_last_close is None or _sec_ath is None:
+                            continue
+                        _sec_away_ath   = (_sec_last_close - _sec_ath) / _sec_ath * 100
+
+                        # Primary values from dfStats
+                        _pri_close    = float(_row.get("Close", 0) or 0)
+                        _pri_ath      = float(_row.get("ATH",   0) or 0)
+                        _pri_away_ath = float(_row.get("AWAY_ATH", 0) or 0)
+
+                        if _pri_close == 0 or _pri_ath == 0:
+                            continue
+
+                        _close_diff = abs(_pri_close - _sec_last_close) / _pri_close * 100
+                        _ath_diff   = abs(_pri_ath   - _sec_ath)        / max(_pri_ath, _sec_ath) * 100
+                        _away_diff  = abs(_pri_away_ath - _sec_away_ath)
+
+                        if _close_diff > _CLOSE_THRESH or _ath_diff > _ATH_THRESH or _away_diff > _AWAY_THRESH:
+                            _rows.append({
+                                "Rank":            int(_row["Rank"]),
+                                "Ticker":          _tick,
+                                f"Close_{_primary_lbl[:3]}":   round(_pri_close, 2),
+                                f"Close_{_secondary_lbl[:3]}": round(_sec_last_close, 2),
+                                "Close_Diff%":     round(_close_diff, 2),
+                                f"ATH_{_primary_lbl[:3]}":     round(_pri_ath, 2),
+                                f"ATH_{_secondary_lbl[:3]}":   round(_sec_ath, 2),
+                                "ATH_Diff%":       round(_ath_diff, 2),
+                                f"Away_{_primary_lbl[:3]}%":   round(_pri_away_ath, 2),
+                                f"Away_{_secondary_lbl[:3]}%": round(_sec_away_ath, 2),
+                                "Away_Diff_pp":    round(_away_diff, 2),
+                                # Store secondary values for override application
+                                "_sec_close":      round(_sec_last_close, 4),
+                                "_sec_ath":        round(_sec_ath, 4),
+                                "_sec_away":       round(_sec_away_ath, 4),
+                            })
+
+                    _diff_df = pd.DataFrame(_rows)
+                    st.session_state["_cross_diff_df"]         = _diff_df
+                    st.session_state["_cross_primary_label"]   = _primary_lbl
+                    st.session_state["_cross_secondary_label"] = _secondary_lbl
+                    # Note: _cross_filter_params already saved at screener_done time
+
+                except Exception as _cx_e:
+                    st.warning(f"⚠️ Cross-source comparison skip: {_cx_e}")
+                    st.session_state["_cross_review_done"] = True
+                    st.rerun()
+
+            st.rerun()  # Fresh pass to render the review UI
+
+        # ── Step B: Show review UI ──
+        _diff_df   = st.session_state.get("_cross_diff_df", pd.DataFrame())
+        _pri_lbl   = st.session_state.get("_cross_primary_label", _src)
+        _sec_lbl   = st.session_state.get("_cross_secondary_label", "")
+
+        if _diff_df is not None and not _diff_df.empty:
+            _n_diff = len(_diff_df)
+
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,#1e3a5f,#0f2942);border-radius:12px;
+                        padding:16px 20px;margin-bottom:16px;border-left:4px solid #3b82f6;">
+              <div style="color:#93c5fd;font-size:13px;font-weight:700;letter-spacing:.5px;
+                          text-transform:uppercase;margin-bottom:6px;">
+                🔍 Cross-Source Review — {_pri_lbl} vs {_sec_lbl}
+              </div>
+              <div style="color:#f1f5f9;font-size:22px;font-weight:800;">
+                {_n_diff} stocks mein significant difference hai
+              </div>
+              <div style="color:#94a3b8;font-size:12px;margin-top:4px;">
+                Top {st.session_state.get('_cross_top_n',400)} ranked stocks mein se |
+                Close diff &gt; 2% ya ATH diff &gt; 10% ya AWAY_ATH diff &gt; 8pp
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── Global override buttons ──
+            _col_all_pri, _col_all_sec, _col_skip = st.columns([1,1,1])
+            with _col_all_pri:
+                if st.button(f"✅ Sabhi {_pri_lbl} rakho", key="cx_all_pri", use_container_width=True):
+                    st.session_state["_cross_review_overrides"] = {
+                        r["Ticker"]: "primary" for _, r in _diff_df.iterrows()
+                    }
+                    st.rerun()
+            with _col_all_sec:
+                if st.button(f"🔄 Sabhi {_sec_lbl} se override karo", key="cx_all_sec", use_container_width=True, type="secondary"):
+                    st.session_state["_cross_review_overrides"] = {
+                        r["Ticker"]: "secondary" for _, r in _diff_df.iterrows()
+                    }
+                    st.rerun()
+            with _col_skip:
+                if st.button("⏭ Skip — Review nahi karna", key="cx_skip", use_container_width=True):
+                    st.session_state["_cross_review_done"]      = True
+                    st.session_state["_cross_diff_df"]          = None
+                    st.session_state["_cross_review_overrides"] = {}
+                    st.rerun()
+
+            st.markdown("---")
+            st.markdown(f"**Per-stock source select karo** (default: primary = {_pri_lbl})")
+
+            # Initialize overrides dict if needed
+            _overrides = st.session_state.get("_cross_review_overrides", {})
+
+            # ── Display table with per-stock radio ──
+            # Show display columns (hide internal _sec_* cols)
+            _show_cols = [c for c in _diff_df.columns if not c.startswith("_")]
+            _display_df = _diff_df[_show_cols].copy()
+
+            # Color coding helper for ATH diff
+            _ATH_CRITICAL = 50.0  # > 50% diff = almost certainly split-adjusted error
+
+            # Render as custom table with selectbox per row
+            for _ridx, _drow in _diff_df.iterrows():
+                _tick = _drow["Ticker"]
+                _rank = int(_drow["Rank"])
+                _ath_d = float(_drow["ATH_Diff%"])
+                _close_d = float(_drow["Close_Diff%"])
+                _away_d = float(_drow["Away_Diff_pp"])
+
+                # Severity badge
+                if _ath_d > 50:
+                    _badge = "🔴 ATH Critical"
+                    _badge_color = "#ef4444"
+                elif _ath_d > _ATH_CRITICAL * 0.4 or _close_d > 5:
+                    _badge = "🟠 High Diff"
+                    _badge_color = "#f97316"
+                else:
+                    _badge = "🟡 Moderate"
+                    _badge_color = "#eab308"
+
+                _pri_ath_col = f"ATH_{_pri_lbl[:3]}"
+                _sec_ath_col = f"ATH_{_sec_lbl[:3]}"
+                _pri_cl_col  = f"Close_{_pri_lbl[:3]}"
+                _sec_cl_col  = f"Close_{_sec_lbl[:3]}"
+                _pri_aw_col  = f"Away_{_pri_lbl[:3]}%"
+                _sec_aw_col  = f"Away_{_sec_lbl[:3]}%"
+
+                # Suggestion: pick source with LOWER ATH (more likely split-adjusted)
+                _suggested = "secondary" if float(_drow[_sec_ath_col]) < float(_drow[_pri_ath_col]) else "primary"
+                _suggested_lbl = _sec_lbl if _suggested == "secondary" else _pri_lbl
+
+                with st.container():
+                    _c1, _c2 = st.columns([3, 1])
+                    with _c1:
+                        st.markdown(f"""
+                        <div style="background:#1e293b;border-radius:8px;padding:10px 14px;margin-bottom:6px;
+                                    border-left:3px solid {_badge_color};">
+                          <span style="color:#f1f5f9;font-weight:700;font-size:15px;">
+                            #{_rank} &nbsp; {_tick}
+                          </span>
+                          &nbsp;&nbsp;
+                          <span style="background:{_badge_color}20;color:{_badge_color};border-radius:10px;
+                                       padding:1px 8px;font-size:11px;font-weight:600;">{_badge}</span>
+                          &nbsp;
+                          <span style="color:#64748b;font-size:11px;">
+                            💡 Suggested: <b style="color:#a3e635;">{_suggested_lbl}</b>
+                          </span>
+                          <div style="display:flex;gap:24px;margin-top:8px;flex-wrap:wrap;">
+                            <span style="color:#94a3b8;font-size:12px;">
+                              Close: <b style="color:#e2e8f0;">{_drow[_pri_cl_col]}</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#e2e8f0;">{_drow[_sec_cl_col]}</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:#fbbf24;">Δ {_close_d:.1f}%</span>
+                            </span>
+                            <span style="color:#94a3b8;font-size:12px;">
+                              ATH: <b style="color:#e2e8f0;">{_drow[_pri_ath_col]:,.0f}</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#e2e8f0;">{_drow[_sec_ath_col]:,.0f}</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:{_badge_color};">Δ {_ath_d:.1f}%</span>
+                            </span>
+                            <span style="color:#94a3b8;font-size:12px;">
+                              Away ATH: <b style="color:#e2e8f0;">{_drow[_pri_aw_col]:.1f}%</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#e2e8f0;">{_drow[_sec_aw_col]:.1f}%</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:#a78bfa;">Δ {_away_d:.1f}pp</span>
+                            </span>
+                          </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with _c2:
+                        _cur_sel = _overrides.get(_tick, "primary")
+                        _opts    = [f"✅ {_pri_lbl}", f"🔄 {_sec_lbl}"]
+                        _sel_idx = 0 if _cur_sel == "primary" else 1
+                        _chosen  = st.radio(
+                            f"Source for {_tick}",
+                            _opts,
+                            index=_sel_idx,
+                            key=f"cx_radio_{_tick}",
+                            label_visibility="collapsed"
+                        )
+                        _overrides[_tick] = "primary" if _chosen == _opts[0] else "secondary"
+
+            st.session_state["_cross_review_overrides"] = _overrides
+
+            st.markdown("---")
+            _apply_col, _skip2_col = st.columns([1,1])
+            with _apply_col:
+                if st.button("✅ Apply Overrides & Continue →", key="cx_apply",
+                             type="primary", use_container_width=True):
+                    # Apply overrides to dfStats
+                    _dfS_mod = st.session_state.dfStats.copy()
+                    # Ensure Ticker is accessible (might be index)
+                    if "Ticker" not in _dfS_mod.columns:
+                        _dfS_mod = _dfS_mod.reset_index()
+                    _was_indexed = "Ticker" not in st.session_state.dfStats.columns
+
+                    _n_applied = 0
+                    for _, _orow in _diff_df.iterrows():
+                        _tick = _orow["Ticker"]
+                        if _overrides.get(_tick, "primary") == "secondary":
+                            _mask = _dfS_mod["Ticker"] == _tick
+                            if _mask.any():
+                                _dfS_mod.loc[_mask, "Close"]    = float(_orow["_sec_close"])
+                                _dfS_mod.loc[_mask, "ATH"]      = float(_orow["_sec_ath"])
+                                _dfS_mod.loc[_mask, "AWAY_ATH"] = float(_orow["_sec_away"])
+                                _n_applied += 1
+
+                    if _was_indexed:
+                        _dfS_mod = _dfS_mod.set_index("Ticker")
+
+                    # Re-apply filters with corrected data
+                    _fp_reapply = st.session_state.get("_cross_filter_params") or {}
+                    try:
+                        _fp_reapply = st.session_state.get("_cross_filter_params") or {}
+                        # If filter params empty, try to reconstruct from current dfFiltered
+                        # (safe fallback: just update dfStats & rerun apply_filters with existing params)
+                        _dfF_new = apply_filters(_dfS_mod.copy(), _fp_reapply)
+                        st.session_state.dfStats    = _dfS_mod
+                        st.session_state.dfFiltered = _dfF_new
+                        st.success(f"✅ {_n_applied} stocks ke liye {_sec_lbl} data apply hua! dfStats updated.")
+                    except Exception as _oe:
+                        # Fallback: just save modified dfStats, keep existing dfFiltered
+                        st.session_state.dfStats = _dfS_mod
+                        st.warning(f"Filter re-apply failed ({_oe}), dfStats updated only.")
+
+                    st.session_state["_cross_review_done"]      = True
+                    st.session_state["_cross_diff_df"]          = None
+                    st.session_state["_cross_review_overrides"] = {}
+                    st.rerun()
+
+            with _skip2_col:
+                if st.button("⏭ Skip — Primary source hi rakhna hai", key="cx_skip2",
+                             use_container_width=True):
+                    st.session_state["_cross_review_done"]      = True
+                    st.session_state["_cross_diff_df"]          = None
+                    st.session_state["_cross_review_overrides"] = {}
+                    st.rerun()
+
+            st.stop()  # Block results until decision
+
+        else:
+            # No significant differences found
+            st.success(f"✅ Cross-source check complete: {_pri_lbl} vs {_sec_lbl} — Top {st.session_state.get('_cross_top_n',400)} stocks mein koi major difference nahi mila. Primary source data use ho raha hai.")
+            st.session_state["_cross_review_done"] = True
+            st.session_state["_cross_diff_df"]     = None
+            # Auto-proceed
+            import time; time.sleep(1.5)
+            st.rerun()
 
     # ── Display results ───────────────────────────────────────
     if st.session_state.screener_done and st.session_state.dfFiltered is not None:
