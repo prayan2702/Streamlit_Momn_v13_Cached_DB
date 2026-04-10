@@ -1791,6 +1791,8 @@ elif st.session_state.current_step == 2:
                                 ))
                         except Exception as _me:
                             st.warning(f"Missing stocks fetch failed: {_me}")
+                    # ✅ _do_calculate MUST be inside this `if st.button` block
+                    # — agar bahar rakha to har render pe call hoga bina click ke
                     _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
 
             with col_skip:
