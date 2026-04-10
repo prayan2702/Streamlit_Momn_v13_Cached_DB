@@ -1851,9 +1851,9 @@ elif st.session_state.current_step == 2:
                 try:
                     # Load secondary cache
                     if _secondary_lbl == "Upstox" and _CACHE_UPSTOX_AVAILABLE:
-                        _sec_close, _sec_high, _, _ = load_cache_upstox()
+                        _sec_close, _sec_high, _ = load_cache_upstox()
                     elif _secondary_lbl == "Angel One" and _CACHE_ANGEL_AVAILABLE:
-                        _sec_close, _sec_high, _, _ = load_cache_angel()
+                        _sec_close, _sec_high, _ = load_cache_angel()
                     else:
                         raise RuntimeError(f"{_secondary_lbl} cache loader available nahi hai.")
 
