@@ -669,6 +669,8 @@ _defaults = {
     "_cross_secondary_label":  "",      # the other one
     "_cross_filter_params":    None,    # filter params to re-apply after override
     "_cross_top_n":            400,     # how many top-ranked stocks to compare
+    "_cross_error":            None,    # error string if comparison failed
+    "_cross_error_detail":     None,    # full traceback
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -1440,6 +1442,8 @@ elif st.session_state.current_step == 2:
         st.session_state["_cross_review_done"]      = False
         st.session_state["_cross_review_overrides"] = {}
         st.session_state["_cross_diff_df"]          = None
+        st.session_state["_cross_error"]            = None
+        st.session_state["_cross_error_detail"]     = None
         st.rerun()
 
     if st.session_state.get("_run_download", False):
@@ -1556,14 +1560,7 @@ elif st.session_state.current_step == 2:
                         s for s in _universe_syms
                         if s.replace('.NS', '').upper() not in _cache_syms
                     ]
-                    # Always show the pending merge / cross-source screen so user
-                    # can choose Close & ATH source before results appear.
-                    # Even when _missing is empty we want to pause here so that
-                    # the cross-source review block (below) can run on a clean pass.
-                    _always_pause_for_review = (
-                        _is_upstox_cache or _is_angel_cache
-                    )
-                    if _missing or _always_pause_for_review:
+                    if _missing:
                         # ── BUG FIX: Don't show a button inside the download
                         # flow — it gets skipped because code falls through to
                         # build_dfStats and st.rerun() fires before the user
@@ -1710,9 +1707,9 @@ elif st.session_state.current_step == 2:
 
     # ══════════════════════════════════════════════════════════
     # PENDING MERGE DECISION
-    # Shown after pre-cached load (Upstox / Angel One) so user
-    # can fetch missing stocks AND/OR proceed to cross-source
-    # ATH/Close review before results appear.
+    # Shown after pre-cached load when universe has stocks that
+    # are missing from the cache. Rendered on a clean pass so
+    # Streamlit can actually wait for a button click.
     # ══════════════════════════════════════════════════════════
     if st.session_state.get("_pending_merge", False):
         _missing_list  = st.session_state.get("_cache_missing_syms", [])
@@ -1726,98 +1723,107 @@ elif st.session_state.current_step == 2:
         _n_uni   = len(st.session_state.symbols or [])
         _n_cache = _p_close.shape[1]
 
+        st.info(
+            f"ℹ️ Cache mein **{len(_missing_list)} stocks missing** hain "
+            f"(Universe: {_n_uni:,} symbols, Cache: {_n_cache:,} symbols). "
+            f"YFinance se fetch karke merge kar sakte hain — ya seedha calculate karo."
+        )
+
         _prog_pm  = st.progress(0)
         _stat_pm  = st.empty()
 
-        # ── Helper: calculate & proceed ──────────────────────────
-        def _do_calculate(p_close, p_high, p_volume, p_dates, p_fp, p_failed):
-            _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
-            _prog_pm.progress(0.92)
-            try:
-                _dfS = build_dfStats(p_close, p_high, p_volume, p_dates,
-                                     st.session_state.ranking_method)
-                _dfF = apply_filters(_dfS.copy(), p_fp)
-                st.session_state.dfStats         = _dfS
-                st.session_state.dfFiltered      = _dfF
-                st.session_state.failed_blank    = p_failed
-                st.session_state.screener_done   = True
-                st.session_state["_cross_filter_params"] = p_fp
-                st.session_state["_pending_merge"] = False
-                _prog_pm.progress(1.0)
-                _stat_pm.markdown("✅ **Screener complete!**")
-            except Exception as _ce:
-                st.error(f"Calculation error: {_ce}")
-                st.stop()
-            st.rerun()
+        col_fetch, col_skip = st.columns(2)
 
-        # ── Case 1: Missing stocks present — show fetch/skip ─────
-        if _missing_list:
-            st.info(
-                f"ℹ️ Cache mein **{len(_missing_list)} stocks missing** hain "
-                f"(Universe: {_n_uni:,} symbols, Cache: {_n_cache:,} symbols). "
-                f"YFinance se fetch karke merge kar sakte hain — ya seedha calculate karo."
-            )
-
-            col_fetch, col_skip = st.columns(2)
-            with col_fetch:
-                if st.button(
-                    f"📡 Fetch {len(_missing_list)} missing stocks (YFinance) & merge",
-                    key="fetch_missing_btn", type="secondary", use_container_width=True
-                ):
-                    with st.spinner(f"YFinance se {len(_missing_list)} missing stocks fetch ho rahi hain..."):
-                        try:
-                            _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
-                                _missing_list, _p_dates['startDate'], _p_dates['endDate'],
-                                _prog_pm, _stat_pm, chunk_size=15
+        with col_fetch:
+            if st.button(
+                f"📡 Fetch {len(_missing_list)} missing stocks (YFinance) & merge",
+                key="fetch_missing_btn", type="secondary", use_container_width=True
+            ):
+                with st.spinner(f"YFinance se {len(_missing_list)} missing stocks fetch ho rahi hain..."):
+                    try:
+                        _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
+                            _missing_list, _p_dates['startDate'], _p_dates['endDate'],
+                            _prog_pm, _stat_pm, chunk_size=15
+                        )
+                        if _m_close is not None and not _m_close.empty:
+                            # ── MERGE FIX ─────────────────────────────────────
+                            # _m_close sirf 3 NEW columns hai (existing symbols nahi).
+                            # reindex+combine_first galat tha — YFinance 2000→today
+                            # fetch karta hai, to _m_close.index mein pre-40M dates
+                            # aate hain. union() → _p_close.reindex() pe Upstox
+                            # ke 2131 columns ke liye 2000-2022 ke rows = NaN.
+                            # Result: Close = NaN (wohi pehle wala bug wapas aa jaata).
+                            #
+                            # Sahi approach: sirf nayi columns add karo,
+                            # existing DataFrame ka index TOUCH MAT KARO.
+                            # _m_close ko _p_close ke index pe align karo (ffill safety)
+                            # aur concat(axis=1) se jodo.
+                            _cache_idx = _p_close.index
+                            _new_close  = _m_close.reindex(_cache_idx).ffill().bfill()
+                            _new_high   = _m_high.reindex(_cache_idx).ffill().bfill()
+                            _new_vol    = _m_vol.reindex(_cache_idx).ffill().bfill()
+                            _p_close  = pd.concat([_p_close,  _new_close],  axis=1)
+                            _p_high   = pd.concat([_p_high,   _new_high],   axis=1)
+                            _p_volume = pd.concat([_p_volume, _new_vol],    axis=1)
+                            # Duplicate columns remove (safety)
+                            _p_close  = _p_close.loc[:,  ~_p_close.columns.duplicated()]
+                            _p_high   = _p_high.loc[:,   ~_p_high.columns.duplicated()]
+                            _p_volume = _p_volume.loc[:, ~_p_volume.columns.duplicated()]
+                            st.success(
+                                f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
+                                f"Total: {_p_close.shape[1]:,} symbols"
                             )
-                            if _m_close is not None and not _m_close.empty:
-                                _cache_idx  = _p_close.index
-                                _new_close  = _m_close.reindex(_cache_idx).ffill().bfill()
-                                _new_high   = _m_high.reindex(_cache_idx).ffill().bfill()
-                                _new_vol    = _m_vol.reindex(_cache_idx).ffill().bfill()
-                                _p_close  = pd.concat([_p_close,  _new_close],  axis=1)
-                                _p_high   = pd.concat([_p_high,   _new_high],   axis=1)
-                                _p_volume = pd.concat([_p_volume, _new_vol],    axis=1)
-                                _p_close  = _p_close.loc[:,  ~_p_close.columns.duplicated()]
-                                _p_high   = _p_high.loc[:,   ~_p_high.columns.duplicated()]
-                                _p_volume = _p_volume.loc[:, ~_p_volume.columns.duplicated()]
-                                st.success(
-                                    f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
-                                    f"Total: {_p_close.shape[1]:,} symbols"
-                                )
-                            if _m_failed:
-                                _p_failed = list(dict.fromkeys(
-                                    _p_failed + [t.replace('.NS', '') for t in _m_failed]
-                                ))
-                        except Exception as _me:
-                            st.warning(f"Missing stocks fetch failed: {_me}")
-                    # ✅ _do_calculate MUST be inside this `if st.button` block
-                    # — agar bahar rakha to har render pe call hoga bina click ke
-                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
+                        if _m_failed:
+                            _p_failed = list(dict.fromkeys(
+                                _p_failed + [t.replace('.NS', '') for t in _m_failed]
+                            ))
+                    except Exception as _me:
+                        st.warning(f"Missing stocks fetch failed: {_me}")
 
-            with col_skip:
-                if st.button(
-                    "⏭ Skip — Calculate without missing stocks",
-                    key="skip_missing_btn", type="primary", use_container_width=True
-                ):
-                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
+                # Calculate after merge
+                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
+                _prog_pm.progress(0.92)
+                try:
+                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
+                                          st.session_state.ranking_method)
+                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
+                    st.session_state.dfStats         = _dfS
+                    st.session_state.dfFiltered      = _dfF
+                    st.session_state.failed_blank    = _p_failed
+                    st.session_state.screener_done   = True
+                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
+                    st.session_state["_pending_merge"] = False
+                    _prog_pm.progress(1.0)
+                    _stat_pm.markdown("✅ **Screener complete!**")
+                except Exception as _ce:
+                    st.error(f"Calculation error: {_ce}")
+                    st.stop()
+                st.rerun()
 
-        # ── Case 2: No missing stocks — just load cache & proceed ─
-        # This happens when universe symbols aren't preloaded
-        # (AllNSE without CSV) but user still needs to trigger
-        # calculation so cross-source review can run.
-        else:
-            st.info(
-                f"⚡ **Cache loaded!** {_n_cache:,} symbols ready. "
-                "Calculate karke aage badho."
-            )
-            _col_go, _ = st.columns([1, 2])
-            with _col_go:
-                if st.button(
-                    "▶ Calculate & Continue →",
-                    key="calc_proceed_btn", type="primary", use_container_width=True
-                ):
-                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
+        with col_skip:
+            if st.button(
+                "⏭ Skip — Calculate without missing stocks",
+                key="skip_missing_btn", type="primary", use_container_width=True
+            ):
+                # Calculate directly with what cache gave us
+                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
+                _prog_pm.progress(0.92)
+                try:
+                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
+                                          st.session_state.ranking_method)
+                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
+                    st.session_state.dfStats         = _dfS
+                    st.session_state.dfFiltered      = _dfF
+                    st.session_state.failed_blank    = _p_failed
+                    st.session_state.screener_done   = True
+                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
+                    st.session_state["_pending_merge"] = False
+                    _prog_pm.progress(1.0)
+                    _stat_pm.markdown("✅ **Screener complete!**")
+                except Exception as _ce:
+                    st.error(f"Calculation error: {_ce}")
+                    st.stop()
+                st.rerun()
 
         # Block results display until user makes a decision
         st.stop()
@@ -1849,93 +1855,125 @@ elif st.session_state.current_step == 2:
             _primary_lbl   = "Angel One" if _is_angel_src else "Upstox"
             _secondary_lbl = "Upstox" if _is_angel_src else "Angel One"
 
-            with st.spinner(f"🔄 {_secondary_lbl} cache load karke cross-source comparison ho raha hai (top {_TOP_N_COMPARE} stocks)..."):
-                try:
-                    # Load secondary cache
-                    if _secondary_lbl == "Upstox" and _CACHE_UPSTOX_AVAILABLE:
-                        _sec_close, _sec_high, _ = load_cache_upstox()
-                    elif _secondary_lbl == "Angel One" and _CACHE_ANGEL_AVAILABLE:
-                        _sec_close, _sec_high, _ = load_cache_angel()
-                    else:
-                        raise RuntimeError(f"{_secondary_lbl} cache loader available nahi hai.")
+            # Check secondary cache availability before trying
+            _sec_avail = (_secondary_lbl == "Upstox" and _CACHE_UPSTOX_AVAILABLE) or                          (_secondary_lbl == "Angel One" and _CACHE_ANGEL_AVAILABLE)
 
-                    # Normalize secondary cache column names (remove .NS suffix)
-                    def _norm_cols(df):
-                        df = df.copy()
-                        df.columns = df.columns.str.replace('.NS','',regex=False).str.upper()
-                        return df
-                    _sec_close = _norm_cols(_sec_close)
-                    _sec_high  = _norm_cols(_sec_high)
+            if not _sec_avail:
+                # Secondary cache not available — store error, show to user
+                st.session_state["_cross_error"] = (
+                    f"{_secondary_lbl} cache loader ({_secondary_lbl.lower().replace(' ','')}"
+                    f"_loader.py) available nahi hai. "
+                    f"Dono broker caches GitHub pe hone chahiye cross-review ke liye."
+                )
+                st.session_state["_cross_diff_df"] = pd.DataFrame()  # empty = no diff
 
-                    # Get top N from primary dfStats
-                    _dfS = st.session_state.dfStats.reset_index() if "Ticker" not in st.session_state.dfStats.columns else st.session_state.dfStats.copy()
-                    _top_df = _dfS[_dfS["Rank"] <= _TOP_N_COMPARE].copy()
+            else:
+                _cross_error = None
+                with st.spinner(f"🔄 {_secondary_lbl} cache load ho raha hai — top {_TOP_N_COMPARE} stocks ka comparison..."):
+                    try:
+                        # Load secondary cache (3 return values: close, high, volume)
+                        if _secondary_lbl == "Upstox":
+                            _sec_close, _sec_high, _ = load_cache_upstox()
+                        else:
+                            _sec_close, _sec_high, _ = load_cache_angel()
 
-                    # Build comparison rows
-                    _CLOSE_THRESH  = 2.0    # % difference threshold for Close
-                    _ATH_THRESH    = 10.0   # % difference threshold for ATH
-                    _AWAY_THRESH   = 8.0    # pp difference threshold for AWAY_ATH
+                        # Normalize column names (remove .NS suffix, uppercase)
+                        def _norm_cols(df):
+                            df = df.copy()
+                            df.columns = df.columns.str.replace(".NS","",regex=False).str.upper()
+                            return df
+                        _sec_close = _norm_cols(_sec_close)
+                        _sec_high  = _norm_cols(_sec_high)
 
-                    _rows = []
-                    for _, _row in _top_df.iterrows():
-                        _tick = str(_row["Ticker"]).replace(".NS","").upper()
-                        if _tick not in _sec_close.columns or _tick not in _sec_high.columns:
-                            continue
-                        # Secondary source values
-                        _sec_last_close = float(_sec_close[_tick].dropna().iloc[-1]) if _sec_close[_tick].dropna().shape[0] > 0 else None
-                        _sec_ath        = float(_sec_high[_tick].dropna().max())      if _sec_high[_tick].dropna().shape[0] > 0 else None
-                        if _sec_last_close is None or _sec_ath is None:
-                            continue
-                        _sec_away_ath   = (_sec_last_close - _sec_ath) / _sec_ath * 100
+                        # Get top N from primary dfStats
+                        _dfS_cx = (st.session_state.dfStats.reset_index()
+                                   if "Ticker" not in st.session_state.dfStats.columns
+                                   else st.session_state.dfStats.copy())
+                        _top_df = _dfS_cx[_dfS_cx["Rank"] <= _TOP_N_COMPARE].copy()
 
-                        # Primary values from dfStats
-                        _pri_close    = float(_row.get("Close", 0) or 0)
-                        _pri_ath      = float(_row.get("ATH",   0) or 0)
-                        _pri_away_ath = float(_row.get("AWAY_ATH", 0) or 0)
+                        # Thresholds
+                        _CLOSE_THRESH = 2.0   # %
+                        _ATH_THRESH   = 10.0  # %
+                        _AWAY_THRESH  = 8.0   # pp
 
-                        if _pri_close == 0 or _pri_ath == 0:
-                            continue
+                        _rows = []
+                        for _, _row in _top_df.iterrows():
+                            _tick = str(_row["Ticker"]).replace(".NS","").upper()
+                            if _tick not in _sec_close.columns or _tick not in _sec_high.columns:
+                                continue
+                            _sc_series = _sec_close[_tick].dropna()
+                            _sh_series = _sec_high[_tick].dropna()
+                            if _sc_series.empty or _sh_series.empty:
+                                continue
+                            _sec_cl  = float(_sc_series.iloc[-1])
+                            _sec_ath = float(_sh_series.max())
+                            _sec_aw  = (_sec_cl - _sec_ath) / _sec_ath * 100
 
-                        _close_diff = abs(_pri_close - _sec_last_close) / _pri_close * 100
-                        _ath_diff   = abs(_pri_ath   - _sec_ath)        / max(_pri_ath, _sec_ath) * 100
-                        _away_diff  = abs(_pri_away_ath - _sec_away_ath)
+                            _pri_cl  = float(_row.get("Close",    0) or 0)
+                            _pri_ath = float(_row.get("ATH",      0) or 0)
+                            _pri_aw  = float(_row.get("AWAY_ATH", 0) or 0)
+                            if _pri_cl == 0 or _pri_ath == 0:
+                                continue
 
-                        if _close_diff > _CLOSE_THRESH or _ath_diff > _ATH_THRESH or _away_diff > _AWAY_THRESH:
-                            _rows.append({
-                                "Rank":            int(_row["Rank"]),
-                                "Ticker":          _tick,
-                                f"Close_{_primary_lbl[:3]}":   round(_pri_close, 2),
-                                f"Close_{_secondary_lbl[:3]}": round(_sec_last_close, 2),
-                                "Close_Diff%":     round(_close_diff, 2),
-                                f"ATH_{_primary_lbl[:3]}":     round(_pri_ath, 2),
-                                f"ATH_{_secondary_lbl[:3]}":   round(_sec_ath, 2),
-                                "ATH_Diff%":       round(_ath_diff, 2),
-                                f"Away_{_primary_lbl[:3]}%":   round(_pri_away_ath, 2),
-                                f"Away_{_secondary_lbl[:3]}%": round(_sec_away_ath, 2),
-                                "Away_Diff_pp":    round(_away_diff, 2),
-                                # Store secondary values for override application
-                                "_sec_close":      round(_sec_last_close, 4),
-                                "_sec_ath":        round(_sec_ath, 4),
-                                "_sec_away":       round(_sec_away_ath, 4),
-                            })
+                            _cl_diff  = abs(_pri_cl  - _sec_cl)  / _pri_cl  * 100
+                            _ath_diff = abs(_pri_ath - _sec_ath) / max(_pri_ath, _sec_ath) * 100
+                            _aw_diff  = abs(_pri_aw  - _sec_aw)
 
-                    _diff_df = pd.DataFrame(_rows)
-                    st.session_state["_cross_diff_df"]         = _diff_df
-                    st.session_state["_cross_primary_label"]   = _primary_lbl
-                    st.session_state["_cross_secondary_label"] = _secondary_lbl
-                    # Note: _cross_filter_params already saved at screener_done time
+                            if _cl_diff > _CLOSE_THRESH or _ath_diff > _ATH_THRESH or _aw_diff > _AWAY_THRESH:
+                                _p3 = _primary_lbl[:3]
+                                _s3 = _secondary_lbl[:3]
+                                _rows.append({
+                                    "Rank":              int(_row["Rank"]),
+                                    "Ticker":            _tick,
+                                    f"Close_{_p3}":      round(_pri_cl, 2),
+                                    f"Close_{_s3}":      round(_sec_cl, 2),
+                                    "Close_Diff%":       round(_cl_diff, 2),
+                                    f"ATH_{_p3}":        round(_pri_ath, 2),
+                                    f"ATH_{_s3}":        round(_sec_ath, 2),
+                                    "ATH_Diff%":         round(_ath_diff, 2),
+                                    f"Away_{_p3}%":      round(_pri_aw, 2),
+                                    f"Away_{_s3}%":      round(_sec_aw, 2),
+                                    "Away_Diff_pp":      round(_aw_diff, 2),
+                                    "_sec_close":        round(_sec_cl,  4),
+                                    "_sec_ath":          round(_sec_ath, 4),
+                                    "_sec_away":         round(_sec_aw,  4),
+                                })
 
-                except Exception as _cx_e:
-                    st.warning(f"⚠️ Cross-source comparison skip: {_cx_e}")
-                    st.session_state["_cross_review_done"] = True
-                    st.rerun()
+                        _diff_df = pd.DataFrame(_rows)
+                        st.session_state["_cross_diff_df"]         = _diff_df
+                        st.session_state["_cross_primary_label"]   = _primary_lbl
+                        st.session_state["_cross_secondary_label"] = _secondary_lbl
 
-            st.rerun()  # Fresh pass to render the review UI
+                    except Exception as _cx_e:
+                        import traceback
+                        _cross_error = traceback.format_exc()
+                        # Store error — show to user with Skip button (do NOT auto-skip)
+                        st.session_state["_cross_error"] = str(_cx_e)
+                        st.session_state["_cross_error_detail"] = _cross_error
+                        # Set empty diff so Step B shows the error card
+                        st.session_state["_cross_diff_df"] = pd.DataFrame()
+
+            st.rerun()  # Fresh pass to render Step B (review UI or error card)
 
         # ── Step B: Show review UI ──
         _diff_df   = st.session_state.get("_cross_diff_df", pd.DataFrame())
         _pri_lbl   = st.session_state.get("_cross_primary_label", _src)
         _sec_lbl   = st.session_state.get("_cross_secondary_label", "")
+        _cx_err    = st.session_state.get("_cross_error", None)
+
+        # Error card — show prominently with Skip button (no auto-rerun!)
+        if _cx_err:
+            st.error(f"❌ Cross-source comparison error: {_cx_err}")
+            _det = st.session_state.get("_cross_error_detail","")
+            if _det:
+                with st.expander("🔍 Error detail (for debugging)"):
+                    st.code(_det)
+            if st.button("⏭ Skip cross-source review", key="cx_err_skip", type="primary"):
+                st.session_state["_cross_review_done"] = True
+                st.session_state["_cross_diff_df"]     = None
+                st.session_state["_cross_error"]       = None
+                st.rerun()
+            st.stop()
 
         if _diff_df is not None and not _diff_df.empty:
             _n_diff = len(_diff_df)
