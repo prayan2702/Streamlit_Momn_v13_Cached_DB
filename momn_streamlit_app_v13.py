@@ -1833,19 +1833,23 @@ elif st.session_state.current_step == 2:
     _src = st.session_state.get("data_source", "")
     _cross_done = st.session_state.get("_cross_review_done", False)
 
+    # Determine if source is a broker pre-cache (Angel One or Upstox)
+    _is_angel_src  = "Angel One" in _src
+    _is_upstox_src = "Upstox" in _src and "Angel" not in _src
+
     # Trigger: screener done, broker source selected, review not yet done
     if (
         st.session_state.screener_done
         and st.session_state.dfStats is not None
-        and _src in ("Angel One", "Upstox")
+        and (_is_angel_src or _is_upstox_src)
         and not _cross_done
         and not st.session_state.get("_pending_merge", False)
     ):
         # ── Step A: Load secondary cache & compute diff (only once) ──
         if st.session_state.get("_cross_diff_df") is None:
             _TOP_N_COMPARE = st.session_state.get("_cross_top_n", 400)
-            _primary_lbl   = _src
-            _secondary_lbl = "Upstox" if _src == "Angel One" else "Angel One"
+            _primary_lbl   = "Angel One" if _is_angel_src else "Upstox"
+            _secondary_lbl = "Upstox" if _is_angel_src else "Angel One"
 
             with st.spinner(f"🔄 {_secondary_lbl} cache load karke cross-source comparison ho raha hai (top {_TOP_N_COMPARE} stocks)..."):
                 try:
