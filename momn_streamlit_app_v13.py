@@ -1556,7 +1556,14 @@ elif st.session_state.current_step == 2:
                         s for s in _universe_syms
                         if s.replace('.NS', '').upper() not in _cache_syms
                     ]
-                    if _missing:
+                    # Always show the pending merge / cross-source screen so user
+                    # can choose Close & ATH source before results appear.
+                    # Even when _missing is empty we want to pause here so that
+                    # the cross-source review block (below) can run on a clean pass.
+                    _always_pause_for_review = (
+                        _is_upstox_cache or _is_angel_cache
+                    )
+                    if _missing or _always_pause_for_review:
                         # ── BUG FIX: Don't show a button inside the download
                         # flow — it gets skipped because code falls through to
                         # build_dfStats and st.rerun() fires before the user
@@ -1703,9 +1710,9 @@ elif st.session_state.current_step == 2:
 
     # ══════════════════════════════════════════════════════════
     # PENDING MERGE DECISION
-    # Shown after pre-cached load when universe has stocks that
-    # are missing from the cache. Rendered on a clean pass so
-    # Streamlit can actually wait for a button click.
+    # Shown after pre-cached load (Upstox / Angel One) so user
+    # can fetch missing stocks AND/OR proceed to cross-source
+    # ATH/Close review before results appear.
     # ══════════════════════════════════════════════════════════
     if st.session_state.get("_pending_merge", False):
         _missing_list  = st.session_state.get("_cache_missing_syms", [])
@@ -1719,107 +1726,96 @@ elif st.session_state.current_step == 2:
         _n_uni   = len(st.session_state.symbols or [])
         _n_cache = _p_close.shape[1]
 
-        st.info(
-            f"ℹ️ Cache mein **{len(_missing_list)} stocks missing** hain "
-            f"(Universe: {_n_uni:,} symbols, Cache: {_n_cache:,} symbols). "
-            f"YFinance se fetch karke merge kar sakte hain — ya seedha calculate karo."
-        )
-
         _prog_pm  = st.progress(0)
         _stat_pm  = st.empty()
 
-        col_fetch, col_skip = st.columns(2)
+        # ── Helper: calculate & proceed ──────────────────────────
+        def _do_calculate(p_close, p_high, p_volume, p_dates, p_fp, p_failed):
+            _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
+            _prog_pm.progress(0.92)
+            try:
+                _dfS = build_dfStats(p_close, p_high, p_volume, p_dates,
+                                     st.session_state.ranking_method)
+                _dfF = apply_filters(_dfS.copy(), p_fp)
+                st.session_state.dfStats         = _dfS
+                st.session_state.dfFiltered      = _dfF
+                st.session_state.failed_blank    = p_failed
+                st.session_state.screener_done   = True
+                st.session_state["_cross_filter_params"] = p_fp
+                st.session_state["_pending_merge"] = False
+                _prog_pm.progress(1.0)
+                _stat_pm.markdown("✅ **Screener complete!**")
+            except Exception as _ce:
+                st.error(f"Calculation error: {_ce}")
+                st.stop()
+            st.rerun()
 
-        with col_fetch:
-            if st.button(
-                f"📡 Fetch {len(_missing_list)} missing stocks (YFinance) & merge",
-                key="fetch_missing_btn", type="secondary", use_container_width=True
-            ):
-                with st.spinner(f"YFinance se {len(_missing_list)} missing stocks fetch ho rahi hain..."):
-                    try:
-                        _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
-                            _missing_list, _p_dates['startDate'], _p_dates['endDate'],
-                            _prog_pm, _stat_pm, chunk_size=15
-                        )
-                        if _m_close is not None and not _m_close.empty:
-                            # ── MERGE FIX ─────────────────────────────────────
-                            # _m_close sirf 3 NEW columns hai (existing symbols nahi).
-                            # reindex+combine_first galat tha — YFinance 2000→today
-                            # fetch karta hai, to _m_close.index mein pre-40M dates
-                            # aate hain. union() → _p_close.reindex() pe Upstox
-                            # ke 2131 columns ke liye 2000-2022 ke rows = NaN.
-                            # Result: Close = NaN (wohi pehle wala bug wapas aa jaata).
-                            #
-                            # Sahi approach: sirf nayi columns add karo,
-                            # existing DataFrame ka index TOUCH MAT KARO.
-                            # _m_close ko _p_close ke index pe align karo (ffill safety)
-                            # aur concat(axis=1) se jodo.
-                            _cache_idx = _p_close.index
-                            _new_close  = _m_close.reindex(_cache_idx).ffill().bfill()
-                            _new_high   = _m_high.reindex(_cache_idx).ffill().bfill()
-                            _new_vol    = _m_vol.reindex(_cache_idx).ffill().bfill()
-                            _p_close  = pd.concat([_p_close,  _new_close],  axis=1)
-                            _p_high   = pd.concat([_p_high,   _new_high],   axis=1)
-                            _p_volume = pd.concat([_p_volume, _new_vol],    axis=1)
-                            # Duplicate columns remove (safety)
-                            _p_close  = _p_close.loc[:,  ~_p_close.columns.duplicated()]
-                            _p_high   = _p_high.loc[:,   ~_p_high.columns.duplicated()]
-                            _p_volume = _p_volume.loc[:, ~_p_volume.columns.duplicated()]
-                            st.success(
-                                f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
-                                f"Total: {_p_close.shape[1]:,} symbols"
+        # ── Case 1: Missing stocks present — show fetch/skip ─────
+        if _missing_list:
+            st.info(
+                f"ℹ️ Cache mein **{len(_missing_list)} stocks missing** hain "
+                f"(Universe: {_n_uni:,} symbols, Cache: {_n_cache:,} symbols). "
+                f"YFinance se fetch karke merge kar sakte hain — ya seedha calculate karo."
+            )
+
+            col_fetch, col_skip = st.columns(2)
+            with col_fetch:
+                if st.button(
+                    f"📡 Fetch {len(_missing_list)} missing stocks (YFinance) & merge",
+                    key="fetch_missing_btn", type="secondary", use_container_width=True
+                ):
+                    with st.spinner(f"YFinance se {len(_missing_list)} missing stocks fetch ho rahi hain..."):
+                        try:
+                            _m_close, _m_high, _m_vol, _m_failed = _fetch_yfinance_inline(
+                                _missing_list, _p_dates['startDate'], _p_dates['endDate'],
+                                _prog_pm, _stat_pm, chunk_size=15
                             )
-                        if _m_failed:
-                            _p_failed = list(dict.fromkeys(
-                                _p_failed + [t.replace('.NS', '') for t in _m_failed]
-                            ))
-                    except Exception as _me:
-                        st.warning(f"Missing stocks fetch failed: {_me}")
+                            if _m_close is not None and not _m_close.empty:
+                                _cache_idx  = _p_close.index
+                                _new_close  = _m_close.reindex(_cache_idx).ffill().bfill()
+                                _new_high   = _m_high.reindex(_cache_idx).ffill().bfill()
+                                _new_vol    = _m_vol.reindex(_cache_idx).ffill().bfill()
+                                _p_close  = pd.concat([_p_close,  _new_close],  axis=1)
+                                _p_high   = pd.concat([_p_high,   _new_high],   axis=1)
+                                _p_volume = pd.concat([_p_volume, _new_vol],    axis=1)
+                                _p_close  = _p_close.loc[:,  ~_p_close.columns.duplicated()]
+                                _p_high   = _p_high.loc[:,   ~_p_high.columns.duplicated()]
+                                _p_volume = _p_volume.loc[:, ~_p_volume.columns.duplicated()]
+                                st.success(
+                                    f"✅ {_m_close.shape[1] - len(_m_failed)} missing stocks merged! "
+                                    f"Total: {_p_close.shape[1]:,} symbols"
+                                )
+                            if _m_failed:
+                                _p_failed = list(dict.fromkeys(
+                                    _p_failed + [t.replace('.NS', '') for t in _m_failed]
+                                ))
+                        except Exception as _me:
+                            st.warning(f"Missing stocks fetch failed: {_me}")
+                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
 
-                # Calculate after merge
-                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
-                _prog_pm.progress(0.92)
-                try:
-                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
-                                          st.session_state.ranking_method)
-                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
-                    st.session_state.dfStats         = _dfS
-                    st.session_state.dfFiltered      = _dfF
-                    st.session_state.failed_blank    = _p_failed
-                    st.session_state.screener_done   = True
-                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
-                    st.session_state["_pending_merge"] = False
-                    _prog_pm.progress(1.0)
-                    _stat_pm.markdown("✅ **Screener complete!**")
-                except Exception as _ce:
-                    st.error(f"Calculation error: {_ce}")
-                    st.stop()
-                st.rerun()
+            with col_skip:
+                if st.button(
+                    "⏭ Skip — Calculate without missing stocks",
+                    key="skip_missing_btn", type="primary", use_container_width=True
+                ):
+                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
 
-        with col_skip:
-            if st.button(
-                "⏭ Skip — Calculate without missing stocks",
-                key="skip_missing_btn", type="primary", use_container_width=True
-            ):
-                # Calculate directly with what cache gave us
-                _stat_pm.markdown("⏳ **Calculating momentum metrics...**")
-                _prog_pm.progress(0.92)
-                try:
-                    _dfS  = build_dfStats(_p_close, _p_high, _p_volume, _p_dates,
-                                          st.session_state.ranking_method)
-                    _dfF  = apply_filters(_dfS.copy(), _p_fp)
-                    st.session_state.dfStats         = _dfS
-                    st.session_state.dfFiltered      = _dfF
-                    st.session_state.failed_blank    = _p_failed
-                    st.session_state.screener_done   = True
-                    st.session_state["_cross_filter_params"] = _p_fp  # for cross-source review
-                    st.session_state["_pending_merge"] = False
-                    _prog_pm.progress(1.0)
-                    _stat_pm.markdown("✅ **Screener complete!**")
-                except Exception as _ce:
-                    st.error(f"Calculation error: {_ce}")
-                    st.stop()
-                st.rerun()
+        # ── Case 2: No missing stocks — just load cache & proceed ─
+        # This happens when universe symbols aren't preloaded
+        # (AllNSE without CSV) but user still needs to trigger
+        # calculation so cross-source review can run.
+        else:
+            st.info(
+                f"⚡ **Cache loaded!** {_n_cache:,} symbols ready. "
+                "Calculate karke aage badho."
+            )
+            _col_go, _ = st.columns([1, 2])
+            with _col_go:
+                if st.button(
+                    "▶ Calculate & Continue →",
+                    key="calc_proceed_btn", type="primary", use_container_width=True
+                ):
+                    _do_calculate(_p_close, _p_high, _p_volume, _p_dates, _p_fp, _p_failed)
 
         # Block results display until user makes a decision
         st.stop()
