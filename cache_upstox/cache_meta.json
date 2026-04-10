@@ -1,19 +1,19 @@
 {
-  "build_date": "2026-04-09",
-  "build_time_utc": "17:26:27",
-  "build_duration_min": 60.2,
-  "symbols_total": 2134,
-  "symbols_fetched": 2131,
-  "symbols_failed": 2,
-  "not_in_master": 1,
+  "build_date": "2026-04-10",
+  "build_time_utc": "17:12:43",
+  "build_duration_min": 72.1,
+  "symbols_total": 2133,
+  "symbols_fetched": 2130,
+  "symbols_failed": 3,
+  "not_in_master": 0,
   "failed_symbols": [
     "ANURAS.NS",
     "CHOLAFIN.NS",
     "SAHLIBHFI.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-09",
-  "data_end": "2026-04-09",
+  "data_start_recent": "2022-12-10",
+  "data_end": "2026-04-10",
   "recent_months": 40,
   "source": "Upstox V3 (daily candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct download)",
@@ -33,21 +33,21 @@
     ],
     [
       "2020-01-01",
-      "2026-04-09"
+      "2026-04-10"
     ]
   ],
-  "total_api_calls": 6393,
+  "total_api_calls": 6390,
   "close_shape": [
     826,
-    2131
+    2130
   ],
   "high_shape": [
     826,
-    2131
+    2130
   ],
   "volume_shape": [
     826,
-    2131
+    2130
   ],
-  "ath_count": 2131
+  "ath_count": 2130
 }
