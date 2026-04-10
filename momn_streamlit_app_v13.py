@@ -1885,10 +1885,19 @@ elif st.session_state.current_step == 2:
                         _sec_close = _norm_cols(_sec_close)
                         _sec_high  = _norm_cols(_sec_high)
 
-                        # Get top N from primary dfStats
-                        _dfS_cx = (st.session_state.dfStats.reset_index()
-                                   if "Ticker" not in st.session_state.dfStats.columns
-                                   else st.session_state.dfStats.copy())
+                        # Get top N — use dfStats with robust Rank access
+                        _dfS_cx = st.session_state.dfStats.copy()
+                        # Ensure Ticker is a column (not index)
+                        if "Ticker" not in _dfS_cx.columns:
+                            _dfS_cx = _dfS_cx.reset_index()
+                        # Ensure Rank is a column; if missing, synthesize from sort order
+                        if "Rank" not in _dfS_cx.columns:
+                            # Try one more reset (multi-index edge case)
+                            _dfS_cx = _dfS_cx.reset_index()
+                        if "Rank" not in _dfS_cx.columns:
+                            # Fallback: assign rank by current sort order
+                            _dfS_cx = _dfS_cx.reset_index(drop=True)
+                            _dfS_cx["Rank"] = range(1, len(_dfS_cx) + 1)
                         _top_df = _dfS_cx[_dfS_cx["Rank"] <= _TOP_N_COMPARE].copy()
 
                         # Thresholds
