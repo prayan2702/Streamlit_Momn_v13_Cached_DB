@@ -1,25 +1,29 @@
 """
 cache_builder.py
 ================
-GitHub Actions pe daily chalta hai (roz 8:30 PM IST).
+GitHub Actions pe daily chalta hai (roz 7:30 PM IST / 14:00 UTC).
 YFinance se data fetch karta hai aur cache/ folder mein save karta hai.
 
 Kya karta hai:
-  1. NSE_EQ_ALL.csv se symbols load karo (+ GOLDBEES + SILVERBEES)
+  1. NSE EQUITY_L.csv se symbols load karo (+ GOLDBEES + SILVERBEES)
   2. yfinance.download(start=2000-01-01) — full history ek hi call mein
   3. ATH = high.max() — sirf ek number per symbol (tiny file)
   4. Recent 40 months close/high/volume — Parquet files
-  5. cache_meta.json — build info
+  5. cache_meta.json — build info (last_date_in_cache + today_data_present fields)
 
-Run kaise karein:
-  Local test : python cache_builder.py
-  GitHub     : .github/workflows/daily_cache.yml automatically chalata hai
+── BUG FIX: yfinance end-date ────────────────────────────────
+  yfinance `end` parameter EXCLUSIVE hai (Python range jaisa).
+  end = "2026-04-10"  →  data sirf 2026-04-09 tak milta hai  ❌
+  end = "2026-04-11"  →  data 2026-04-10 tak milta hai       ✅
+  Isliye: end_date_yf = today + 1 day use karo.
+  Metadata mein `data_end` = today (actual last trading day) dikhata hai.
+──────────────────────────────────────────────────────────────
 """
 
 import json
 import time
 import sys
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -31,15 +35,13 @@ from dateutil.relativedelta import relativedelta
 # ── Config ────────────────────────────────────────────────────
 GITHUB_BASE   = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
 CACHE_DIR     = Path("cache")
-CHUNK_SIZE    = 50       # symbols per yfinance.download call
-CHUNK_SLEEP   = 0.5     # seconds between chunks (yfinance rate limit safe)
-RECENT_MONTHS = 40       # recent data kitne months ka store karein
+CHUNK_SIZE    = 50
+CHUNK_SLEEP   = 0.5
+RECENT_MONTHS = 40
 EXTRA_SYMBOLS = ["GOLDBEES.NS", "SILVERBEES.NS"]
 
-# NSE direct download URL — same file jo aap manually download karte ho
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
-# NSE website ke liye browser-like headers zaroori hain (403 avoid karne ke liye)
 NSE_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -53,80 +55,53 @@ NSE_HEADERS = {
 
 # ── Helpers ───────────────────────────────────────────────────
 def log(msg: str):
-    ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}", flush=True)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 def load_symbols() -> list:
-    """
-    NSE EQUITY_L.csv directly from NSE website download karo.
-    Same file jo manually download karte ho:
-      https://www.nseindia.com/static/market-data/securities-available-for-trading
-      → Securities available for Equity segment (.csv)
-
-    Filter: SERIES == 'EQ' only (same as app ka parse_equity_csv)
-    Then: GOLDBEES + SILVERBEES add karo
-    Fallback: GitHub repo ka NSE_EQ_ALL.csv use karo
-    """
     log("Downloading EQUITY_L.csv from NSE...")
-
-    # ── Primary: NSE direct download ─────────────────────────
     try:
-        # NSE ke liye pehle homepage visit simulate karna padta hai
         session = requests.Session()
         session.get("https://www.nseindia.com", headers=NSE_HEADERS, timeout=15)
-        time.sleep(1)  # brief pause
-
+        time.sleep(1)
         resp = session.get(NSE_EQUITY_URL, headers=NSE_HEADERS, timeout=30)
         resp.raise_for_status()
 
         from io import StringIO
         df = pd.read_csv(StringIO(resp.text), skipinitialspace=True)
         df.columns = [c.strip() for c in df.columns]
-
-        # Filter: sirf EQ series
         if 'SERIES' in df.columns:
             df = df[df['SERIES'].str.strip() == 'EQ'].copy()
-
         df['SYMBOL'] = df['SYMBOL'].str.strip().str.upper()
         df = df.reset_index(drop=True)
-
         symbols = (df['SYMBOL'] + '.NS').tolist()
-        log(f"  ✅ NSE EQUITY_L.csv: {len(df):,} EQ stocks downloaded")
-
-        # CSV bhi save karo cache/ mein (reference ke liye)
+        log(f"  ✅ NSE EQUITY_L.csv: {len(df):,} EQ stocks")
         df.to_csv(CACHE_DIR / "EQUITY_L.csv", index=False)
-        log(f"  Saved: cache/EQUITY_L.csv")
-        df.to_csv(Path("EQUITY_L.csv"), index=False)   # repo root — Streamlit app GitHub fetch ke liye
-        log(f"  Saved: EQUITY_L.csv (repo root)")
+        df.to_csv(Path("EQUITY_L.csv"), index=False)
 
     except Exception as e:
-        log(f"  ⚠️  NSE direct download failed: {e}")
-        log(f"  Falling back to GitHub NSE_EQ_ALL.csv...")
-
-        # ── Fallback: GitHub repo ka NSE_EQ_ALL.csv ──────────
+        log(f"  ⚠️  NSE download failed: {e} — falling back to GitHub...")
         try:
             url = f"{GITHUB_BASE}/NSE_EQ_ALL.csv"
             df  = pd.read_csv(url)
             symbols = (df['Symbol'].astype(str).str.strip() + '.NS').tolist()
-            log(f"  ✅ GitHub fallback: {len(symbols):,} symbols loaded")
+            log(f"  ✅ GitHub fallback: {len(symbols):,} symbols")
         except Exception as e2:
-            log(f"  ❌ Fallback also failed: {e2}")
-            raise RuntimeError("Symbol list load karna possible nahi hua.") from e2
+            raise RuntimeError("Symbol list load failed.") from e2
 
-    # ── GOLDBEES + SILVERBEES add karo ────────────────────────
     for s in EXTRA_SYMBOLS:
         if s not in symbols:
             symbols.append(s)
-
-    log(f"  Total symbols: {len(symbols):,} (incl. GOLDBEES & SILVERBEES)")
+    log(f"  Total: {len(symbols):,} (incl. GOLDBEES & SILVERBEES)")
     return symbols
 
 
-def fetch_all_chunks(symbols: list, start_full: datetime, end_date: datetime):
+def fetch_all_chunks(symbols: list, start_full: datetime, end_date_yf: datetime, start_recent: datetime):
     """
-    Chunked yfinance download — 2000 se aaj tak.
-    Returns: ath_dict, close_chunks, high_chunks, vol_chunks, failed
+    Chunked yfinance download.
+
+    end_date_yf = today + 1 day  (yfinance end is EXCLUSIVE)
+    Actual data will come up to today (last trading day).
     """
     total        = len(symbols)
     n_chunks     = (total + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -135,10 +110,11 @@ def fetch_all_chunks(symbols: list, start_full: datetime, end_date: datetime):
     high_chunks  = []
     vol_chunks   = []
     failed       = []
-    start_recent = end_date - relativedelta(months=RECENT_MONTHS)
 
-    log(f"Starting fetch: {total:,} symbols | {n_chunks} chunks | start=2000-01-01")
-    log(f"Recent window: {start_recent.strftime('%Y-%m-%d')} → {end_date.strftime('%Y-%m-%d')}")
+    effective_end = (end_date_yf - timedelta(days=1)).strftime('%Y-%m-%d')
+    log(f"Fetch: {total:,} symbols | {n_chunks} chunks")
+    log(f"yfinance end (exclusive): {end_date_yf.date()} → effective last date: {effective_end}")
+    log(f"Recent window start: {start_recent.strftime('%Y-%m-%d')}")
 
     t0 = time.monotonic()
 
@@ -151,7 +127,7 @@ def fetch_all_chunks(symbols: list, start_full: datetime, end_date: datetime):
             raw = yf.download(
                 chunk,
                 start=start_full,
-                end=end_date,
+                end=end_date_yf,        # ← FIXED: today+1 so today's data is included
                 progress=False,
                 auto_adjust=True,
                 threads=True,
@@ -164,11 +140,9 @@ def fetch_all_chunks(symbols: list, start_full: datetime, end_date: datetime):
                 time.sleep(CHUNK_SLEEP)
                 continue
 
-            # ── ATH: max High from 2000 to today ──────────────
             if "High" in raw.columns:
                 ath_dict.update(raw["High"].max().to_dict())
 
-            # ── Recent slice: last 40 months ───────────────────
             raw_r = raw[raw.index >= start_recent].copy()
 
             if "Close" in raw_r.columns:
@@ -182,58 +156,84 @@ def fetch_all_chunks(symbols: list, start_full: datetime, end_date: datetime):
             log(f"  Chunk {chunk_num}/{n_chunks} — ERROR: {e}")
             failed.extend(chunk)
 
-        # ── Progress log ───────────────────────────────────────
         elapsed   = time.monotonic() - t0
         remaining = (n_chunks - chunk_num) * (elapsed / chunk_num)
         log(
             f"  Chunk {chunk_num}/{n_chunks} | {pct*100:.0f}% | "
             f"ATH: {len(ath_dict):,} | "
-            f"Elapsed: {elapsed/60:.1f}min | "
-            f"ETA: {remaining/60:.1f}min"
+            f"Elapsed: {elapsed/60:.1f}min | ETA: {remaining/60:.1f}min"
         )
-
         time.sleep(CHUNK_SLEEP)
 
     return ath_dict, close_chunks, high_chunks, vol_chunks, failed
 
 
 def concat_and_dedup(chunks: list) -> pd.DataFrame:
-    """Chunks concat karo + duplicate columns remove karo."""
     if not chunks:
         return pd.DataFrame()
     df = pd.concat(chunks, axis=1)
     df = df.loc[:, ~df.columns.duplicated()]
     df.index = pd.to_datetime(df.index)
-    # Timezone remove karo agar ho
     if hasattr(df.index, 'tz') and df.index.tz is not None:
         df.index = df.index.tz_localize(None)
     return df
 
 
 def build_ath_df(ath_dict: dict) -> pd.DataFrame:
-    """ATH dict → clean DataFrame."""
     s = pd.Series(ath_dict, name="ATH", dtype=float)
     s = s.replace([np.inf, -np.inf], np.nan).dropna()
     return s.to_frame()
 
 
+def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
+    """
+    Cache mein today ka data hai ya nahi — check karo aur log karo.
+    Returns True if today's data is present.
+    """
+    if close.empty:
+        log("  ⚠️  close DataFrame empty — cannot verify freshness")
+        return False
+    last_date = close.index[-1].date()
+    log(f"  Last date in cache : {last_date}")
+    log(f"  Today's date       : {today}")
+    if last_date >= today:
+        log(f"  ✅ TODAY'S DATA CONFIRMED in cache ({last_date})")
+        return True
+    else:
+        log(f"  ⚠️  Today's data ({today}) NOT in cache!")
+        log(f"     Last available: {last_date}")
+        log(f"     Possible reason: market holiday/weekend, or yfinance data delay")
+        return False
+
+
 # ── Main ──────────────────────────────────────────────────────
 def build_cache():
-    log("=" * 55)
-    log("MOMN CACHE BUILDER — Starting")
-    log("=" * 55)
+    log("=" * 58)
+    log("MOMN CACHE BUILDER (YFinance) — Starting")
+    log("=" * 58)
 
     CACHE_DIR.mkdir(exist_ok=True)
     t_total = time.monotonic()
 
+    today      = date.today()
+    start_full = datetime(2000, 1, 1)
+
+    # ── KEY FIX: yfinance end is EXCLUSIVE ────────────────────
+    # end = today         →  data only up to YESTERDAY  ❌
+    # end = today + 1     →  data includes TODAY         ✅
+    end_date_yf  = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    start_recent = datetime.combine(today, datetime.min.time()) - relativedelta(months=RECENT_MONTHS)
+
+    log(f"Today              : {today}")
+    log(f"yfinance end (excl): {end_date_yf.date()}  (includes data up to {today})")
+    log(f"Recent window start: {start_recent.date()}")
+
     # 1. Symbols
-    symbols   = load_symbols()
-    end_date  = datetime.combine(date.today(), datetime.min.time())
-    start_full= datetime(2000, 1, 1)
+    symbols = load_symbols()
 
     # 2. Fetch
     ath_dict, close_chunks, high_chunks, vol_chunks, failed = fetch_all_chunks(
-        symbols, start_full, end_date
+        symbols, start_full, end_date_yf, start_recent
     )
 
     # 3. Concat
@@ -249,54 +249,62 @@ def build_cache():
     log(f"  ath    shape: {ath_df.shape}")
 
     if close.empty:
-        log("ERROR: close DataFrame is empty — something went wrong!")
+        log("ERROR: close DataFrame is empty!")
         sys.exit(1)
 
-    # 4. Save Parquet files
+    # 4. Data freshness check
+    log("Verifying data freshness...")
+    today_present = verify_data_freshness(close, today)
+    last_date_in_cache = close.index[-1].date() if not close.empty else None
+
+    # 5. Save Parquet
     log("Saving Parquet files...")
     close.to_parquet(CACHE_DIR / "close.parquet")
     high.to_parquet(CACHE_DIR  / "high.parquet")
     volume.to_parquet(CACHE_DIR/ "volume.parquet")
     ath_df.to_parquet(CACHE_DIR/ "ath.parquet")
 
-    # File sizes log karo
     for fname in ["close.parquet", "high.parquet", "volume.parquet", "ath.parquet"]:
         size_mb = (CACHE_DIR / fname).stat().st_size / (1024 * 1024)
         log(f"  {fname}: {size_mb:.1f} MB")
 
-    # 5. Meta JSON
+    # 6. Meta JSON
     total_time_min = (time.monotonic() - t_total) / 60
     meta = {
-        "build_date"         : date.today().isoformat(),
-        "build_time_utc"     : datetime.utcnow().strftime("%H:%M:%S"),
-        "build_duration_min" : round(total_time_min, 1),
-        "symbols_total"      : len(symbols),
-        "symbols_fetched"    : len(ath_dict),
-        "symbols_failed"     : len(failed),
-        "failed_symbols"     : sorted(failed)[:50],
-        "data_start_full"    : "2000-01-01",
-        "data_start_recent"  : (end_date - relativedelta(months=RECENT_MONTHS)).strftime("%Y-%m-%d"),
-        "data_end"           : end_date.strftime("%Y-%m-%d"),
-        "recent_months"      : RECENT_MONTHS,
-        "source"             : "YFinance",
-        "symbol_source"      : "NSE EQUITY_L.csv (direct)",
-        "extra_symbols"      : EXTRA_SYMBOLS,
-        "close_shape"        : list(close.shape),
-        "high_shape"         : list(high.shape),
-        "volume_shape"       : list(volume.shape),
-        "ath_count"          : len(ath_df),
+        "build_date"             : today.isoformat(),
+        "build_time_utc"         : datetime.utcnow().strftime("%H:%M:%S"),
+        "build_duration_min"     : round(total_time_min, 1),
+        "symbols_total"          : len(symbols),
+        "symbols_fetched"        : len(ath_dict),
+        "symbols_failed"         : len(failed),
+        "failed_symbols"         : sorted(failed)[:50],
+        "data_start_full"        : "2000-01-01",
+        "data_start_recent"      : start_recent.strftime("%Y-%m-%d"),
+        "data_end"               : today.isoformat(),
+        "last_date_in_cache"     : str(last_date_in_cache),
+        "today_data_present"     : today_present,
+        "recent_months"          : RECENT_MONTHS,
+        "source"                 : "YFinance",
+        "yfinance_end_exclusive" : end_date_yf.strftime("%Y-%m-%d"),
+        "symbol_source"          : "NSE EQUITY_L.csv (direct)",
+        "extra_symbols"          : EXTRA_SYMBOLS,
+        "close_shape"            : list(close.shape),
+        "high_shape"             : list(high.shape),
+        "volume_shape"           : list(volume.shape),
+        "ath_count"              : len(ath_df),
     }
 
     with open(CACHE_DIR / "cache_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
-    log("=" * 55)
-    log(f"✅ CACHE BUILD COMPLETE")
-    log(f"   Symbols: {meta['symbols_fetched']}/{meta['symbols_total']} fetched")
-    log(f"   Failed : {meta['symbols_failed']} symbols")
-    log(f"   Time   : {total_time_min:.1f} minutes")
-    log(f"   Files  : cache/ath.parquet + close/high/volume.parquet + cache_meta.json")
-    log("=" * 55)
+    log("=" * 58)
+    log("✅ CACHE BUILD COMPLETE")
+    log(f"   Symbols       : {meta['symbols_fetched']}/{meta['symbols_total']} fetched")
+    log(f"   Failed        : {meta['symbols_failed']} symbols")
+    log(f"   Last date     : {last_date_in_cache}")
+    log(f"   Today present : {'✅ YES' if today_present else '⚠️  NO (holiday/weekend?)'}")
+    log(f"   Time          : {total_time_min:.1f} minutes")
+    log("=" * 58)
 
 
 if __name__ == "__main__":

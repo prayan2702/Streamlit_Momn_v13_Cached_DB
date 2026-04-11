@@ -4,11 +4,25 @@ data_service.py
 Multi-API data-fetching service for Momentum Screener.
 Supports: YFinance (live) | Upstox (LIVE) | Angel One (LIVE) | Zerodha (placeholder)
 
+── BUG FIXES: end-date handling ──────────────────────────────
+  1. YFinance: `end` parameter is EXCLUSIVE.
+     Old: no end → inconsistent; or end=today → only gets yesterday.
+     Fix: always pass end = tomorrow explicitly.
+
+  2. Upstox live fetch: API to_date is inclusive but extending
+     to tomorrow ensures today's candle is always requested
+     (Upstox caps to latest available automatically).
+
+  3. Angel One live fetch: todate = "today 15:30" explicitly
+     specifies market close time — already correct, no change.
+
+  4. All fetchers now display `Last trading day: DD-Mon-YYYY`
+     so user can see exactly which date's data was fetched.
+──────────────────────────────────────────────────────────────
+
 ANGEL ONE SPEED OPTIMIZATION (v2):
   - ThreadPoolExecutor se parallel requests (5 workers)
   - Token Bucket Rate Limiter (3 req/sec strictly enforce)
-  - Fixed sleep hataya — ab network latency parallel mein hide hoti hai
-  - Expected speedup: 3-4x faster for large symbol lists
 """
 
 import time
@@ -18,7 +32,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -72,10 +86,21 @@ def _validate_token(access_token: str) -> bool:
 # ─────────────────────────────────────────────────────────────
 # SECTION C — UPSTOX SINGLE SYMBOL FETCHER (V3)
 # ─────────────────────────────────────────────────────────────
-def _fetch_upstox_history_live(instrument_key: str, access_token: str, start_date: datetime, end_date: datetime, retries: int = 2):
+def _fetch_upstox_history_live(
+    instrument_key : str,
+    access_token   : str,
+    start_date     : datetime,
+    end_date       : datetime,
+    retries        : int = 2
+):
     encoded_key   = instrument_key.replace("|", "%7C")
     from_date_str = start_date.strftime("%Y-%m-%d")
-    to_date_str   = end_date.strftime("%Y-%m-%d")
+
+    # ── FIX: use tomorrow as to_date ─────────────────────────
+    # Upstox to_date is inclusive. Using tomorrow guarantees
+    # today's candle is requested — API caps to latest available.
+    api_end_date  = end_date + timedelta(days=1)
+    to_date_str   = api_end_date.strftime("%Y-%m-%d")
 
     url = f"https://api.upstox.com/v3/historical-candle/{encoded_key}/days/1/{to_date_str}/{from_date_str}"
     headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
@@ -115,27 +140,56 @@ def _fetch_upstox_history_live(instrument_key: str, access_token: str, start_dat
     return None
 
 # ─────────────────────────────────────────────────────────────
-# SECTION F — YFINANCE FETCHER 
+# SECTION F — YFINANCE FETCHER
 # ─────────────────────────────────────────────────────────────
-def _download_yfinance_chunk(symbols, start_date, max_retries=3, delay=2.0):
+def _download_yfinance_chunk(symbols, start_date, end_date=None, max_retries=3, delay=2.0):
+    """
+    yfinance chunk download.
+
+    end_date parameter:
+      - yfinance end is EXCLUSIVE (like Python range).
+      - Pass end_date = tomorrow to include today's data.
+      - If None, defaults to tomorrow automatically.
+    """
+    if end_date is None:
+        # Default: always include today by using tomorrow as exclusive end
+        end_date = datetime.now() + timedelta(days=1)
+
     for attempt in range(max_retries):
         try:
-            return yf.download(symbols, start=start_date, progress=False, auto_adjust=True, threads=True, multi_level_index=False)
+            return yf.download(
+                symbols,
+                start=start_date,
+                end=end_date,           # ← FIXED: tomorrow so today is included
+                progress=False,
+                auto_adjust=True,
+                threads=True,
+                multi_level_index=False,
+            )
         except Exception as e:
             if attempt < max_retries - 1:
                 time.sleep(delay); delay *= 2
             else:
                 raise e
 
+
 def fetch_yfinance(symbols, start_date, chunk_size, progress_bar, status_text):
+    """
+    YFinance bulk fetcher.
+    Always fetches up to today (end = tomorrow, exclusive = today included).
+    """
     close_chunks, high_chunks, volume_chunks, failed_symbols = [], [], [], []
     total = len(symbols)
+
+    # ── FIX: explicit tomorrow end so today's close is included ──
+    end_tomorrow = datetime.now() + timedelta(days=1)
+
     for k in range(0, total, chunk_size):
         progress = min((k + chunk_size) / total, 1.0)
         chunk    = symbols[k:k + chunk_size]
         for attempt in range(3):
             try:
-                raw = _download_yfinance_chunk(chunk, start_date)
+                raw = _download_yfinance_chunk(chunk, start_date, end_date=end_tomorrow)
                 close_chunks.append(raw['Close'])
                 high_chunks.append(raw['High'])
                 volume_chunks.append(raw['Close'] * raw['Volume'])
@@ -148,12 +202,24 @@ def fetch_yfinance(symbols, start_date, chunk_size, progress_bar, status_text):
         time.sleep(1.5)
 
     progress_bar.progress(1.0)
-    status_text.text("Download complete!")
     close  = pd.concat(close_chunks,  axis=1) if close_chunks  else pd.DataFrame()
     high   = pd.concat(high_chunks,   axis=1) if high_chunks   else pd.DataFrame()
     volume = pd.concat(volume_chunks, axis=1) if volume_chunks else pd.DataFrame()
     for df in (close, high, volume):
         df.index = pd.to_datetime(df.index)
+
+    # ── Show data freshness info ──────────────────────────────
+    if not close.empty:
+        last_date = close.index[-1].date()
+        today     = date.today()
+        if last_date >= today:
+            status_text.text(f"✅ Data up-to-date | Last trading day: {close.index[-1].strftime('%d-%b-%Y')}")
+        else:
+            status_text.text(
+                f"⚠️ Last trading day: {close.index[-1].strftime('%d-%b-%Y')} "
+                f"(today: {today} — holiday/weekend?)"
+            )
+
     return close, high, volume, failed_symbols
 
 # ─────────────────────────────────────────────────────────────
@@ -161,19 +227,17 @@ def fetch_yfinance(symbols, start_date, chunk_size, progress_bar, status_text):
 # ─────────────────────────────────────────────────────────────
 def _trim_trailing_nan(close: pd.DataFrame, high: pd.DataFrame, volume: pd.DataFrame):
     """
-    Trailing all-NaN rows hatata hai (e.g., aaj ka date jab market candle
-    abhi finalize nahi hua — Upstox / Angel One dono ke liye).
+    Trailing all-NaN rows hatata hai.
 
-    Problem: pd.bdate_range(start, end_date) mein aaj ka date include hota hai,
+    Problem: pd.bdate_range mein aaj ka date include hota hai,
     lekin broker API ka today's candle market close ke baad available hota hai.
-    Agar user aaj ka date select kare to last row = all NaN → ROC/ZScore sab NaN.
+    Agar user ne aaj select kiya aur data nahi aaya to last row = all NaN.
 
-    Fix: Last row jahan SABHI symbols NaN hain, usse drop karo. Calculations
-    automatically last valid trading day use kar lenge.
+    Fix: Last row jahan SABHI symbols NaN hain, usse drop karo.
+    Calculations automatically last valid trading day use kar lenge.
     """
     if close.empty:
         return close, high, volume
-    # Last date jahan at least 1 symbol ka data hai
     last_valid_idx = close.dropna(how='all').index
     if len(last_valid_idx) == 0:
         return close, high, volume
@@ -186,14 +250,18 @@ def _trim_trailing_nan(close: pd.DataFrame, high: pd.DataFrame, volume: pd.DataF
 # ─────────────────────────────────────────────────────────────
 UPSTOX_MAX_LOOKBACK_MONTHS = 120
 
+
 def fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status_text):
-    # Token directly session_state se lo — sidebar mein pehle se render ho chuka hai.
-    # get_upstox_access_token(sidebar=True) yahan dobara call karne se
-    # same key='upstox_auth_code_input' widget do baar banta hai → Streamlit duplicate key error.
+    """
+    Upstox live bulk fetcher.
+
+    end_date from UI is used for bdate_range index construction.
+    But for API call, we extend by +1 day to guarantee today's candle.
+    The _trim_trailing_nan call handles any all-NaN rows gracefully.
+    """
     _token_data = st.session_state.get("upstox_token_data", {})
     access_token = _token_data.get("access_token", "") if isinstance(_token_data, dict) else ""
     if not access_token:
-        # Fallback: auth function se try karo (no-UI path — already logged in case)
         try:
             access_token = get_upstox_access_token(sidebar=False) or ""
         except Exception:
@@ -231,6 +299,7 @@ def fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status
             failed.append(sym)
         else:
             try:
+                # _fetch_upstox_history_live internally uses end_date+1 for to_date
                 df = _fetch_upstox_history_live(instrument_key, access_token, start_date, end_date)
                 if df is not None and not df.empty:
                     idx = pd.to_datetime(df.index)
@@ -252,19 +321,30 @@ def fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status
         time.sleep(0.05)
 
     progress_bar.progress(1.0)
-    status_text.text(f"Done - {len(close_map)}/{total} fetched | Not in master: {not_found}")
 
+    # Use end_date (original, not +1) for bdate_range — today's date included
     all_idx = pd.bdate_range(start=start_date, end=end_date)
     close  = pd.DataFrame({s: v.reindex(all_idx) for s, v in close_map.items()}, index=all_idx)
     high   = pd.DataFrame({s: v.reindex(all_idx) for s, v in high_map.items()},  index=all_idx)
     volume = pd.DataFrame({s: v.reindex(all_idx) for s, v in vol_map.items()},   index=all_idx)
 
-    # ── FIX: Aaj ka incomplete/missing candle trim karo ─────
-    # Agar user ne aaj ka date select kiya aur market candle finalize
-    # nahi hua to last row = all NaN → ROC/ZScore sab blank hote hain.
+    # Trim any all-NaN trailing rows (e.g. if run during market hours)
     close, high, volume = _trim_trailing_nan(close, high, volume)
-    last_date = close.index[-1].strftime('%d-%b-%Y') if not close.empty else "N/A"
-    status_text.text(f"Done - {len(close_map)}/{total} fetched | Last trading day: {last_date}")
+
+    if not close.empty:
+        last_date = close.index[-1].date()
+        today     = date.today()
+        if last_date >= today:
+            status_text.text(
+                f"✅ Data up-to-date | {len(close_map)}/{total} fetched | "
+                f"Last trading day: {close.index[-1].strftime('%d-%b-%Y')}"
+            )
+        else:
+            status_text.text(
+                f"⚠️ {len(close_map)}/{total} fetched | "
+                f"Last trading day: {close.index[-1].strftime('%d-%b-%Y')} "
+                f"(today: {today} — holiday/weekend?)"
+            )
 
     return close, high, volume, failed
 
@@ -279,7 +359,7 @@ def _load_angelone_instrument_map():
     global _ANGELONE_INSTRUMENT_MAP
     if _ANGELONE_INSTRUMENT_MAP is not None:
         return _ANGELONE_INSTRUMENT_MAP
-    
+
     if "angelone_instrument_map" in st.session_state:
         _ANGELONE_INSTRUMENT_MAP = st.session_state["angelone_instrument_map"]
         return _ANGELONE_INSTRUMENT_MAP
@@ -289,13 +369,11 @@ def _load_angelone_instrument_map():
         st.sidebar.info("Downloading Angel One instrument master...")
         response = requests.get(url, timeout=15)
         data = response.json()
-        
         mapping = {}
         for item in data:
             if item['exch_seg'] == 'NSE' and item['symbol'].endswith('-EQ'):
                 clean_symbol = item['symbol'].replace('-EQ', '').upper()
                 mapping[clean_symbol] = item['token']
-                
         _ANGELONE_INSTRUMENT_MAP = mapping
         st.session_state["angelone_instrument_map"] = mapping
         st.sidebar.success(f"Angel One master loaded - {len(mapping):,} NSE EQ symbols")
@@ -306,32 +384,23 @@ def _load_angelone_instrument_map():
 
 
 # ── Token Bucket Rate Limiter (Thread-Safe) ─────────────────
-# Angel One max ~3 requests/sec. Ye class precisely enforce karta hai.
 class _TokenBucket:
-    """
-    Thread-safe token bucket.
-    max_rate = 3 req/sec by default (Angel One limit).
-    Threads yahan block karte hain jab tak token available nahi hota.
-    """
     def __init__(self, max_rate: float = 3.0):
-        self._rate      = max_rate          # tokens added per second
-        self._tokens    = max_rate          # current available tokens
+        self._rate      = max_rate
+        self._tokens    = max_rate
         self._last_time = time.monotonic()
         self._lock      = threading.Lock()
 
     def acquire(self):
-        """Block until a token is available, then consume one."""
         while True:
             with self._lock:
-                now = time.monotonic()
+                now     = time.monotonic()
                 elapsed = now - self._last_time
-                # Refill tokens based on elapsed time
-                self._tokens = min(self._rate, self._tokens + elapsed * self._rate)
+                self._tokens    = min(self._rate, self._tokens + elapsed * self._rate)
                 self._last_time = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
                     return
-            # Not enough tokens — wait a tiny bit then retry
             time.sleep(0.05)
 
 
@@ -340,16 +409,15 @@ _RATE_LIMIT_KEYWORDS = ("rate", "limit", "exceed", "too many", "throttl", "acces
 
 def _fetch_angelone_history_live(client, token: str, start_date: datetime, end_date: datetime, retries=4):
     """
-    Single-symbol fetch. Thread-safe.
-    Angel One rate-limit aata hai JSON body mein (status:false + errorcode),
-    HTTP 429 nahi bhejta. Ye function dono cases handle karta hai.
+    Angel One single-symbol fetch.
+    todate = "end_date 15:30" explicitly requests market close time — includes today's candle.
     """
     historicParam = {
-        "exchange": "NSE",
+        "exchange":    "NSE",
         "symboltoken": token,
-        "interval": "ONE_DAY",
-        "fromdate": start_date.strftime("%Y-%m-%d 09:15"),
-        "todate":   end_date.strftime("%Y-%m-%d 15:30"),
+        "interval":    "ONE_DAY",
+        "fromdate":    start_date.strftime("%Y-%m-%d 09:15"),
+        "todate":      end_date.strftime("%Y-%m-%d 15:30"),   # ← explicit 15:30 = today's close
     }
 
     delay = 2.0
@@ -364,7 +432,6 @@ def _fetch_angelone_history_live(client, token: str, start_date: datetime, end_d
                 df.set_index('timestamp', inplace=True)
                 return df[['open', 'high', 'low', 'close', 'volume']]
 
-            # Rate-limit error JSON body mein check karo
             error_code = str(resp.get('errorcode', '') or resp.get('error_code', ''))
             error_msg  = str(resp.get('message', '') or resp.get('msg', '')).lower()
             is_rate_limit = (
@@ -373,10 +440,10 @@ def _fetch_angelone_history_live(client, token: str, start_date: datetime, end_d
             )
 
             if is_rate_limit:
-                time.sleep(delay * (2 ** attempt))   # exponential backoff
+                time.sleep(delay * (2 ** attempt))
                 continue
 
-            return None   # data nahi mila, retry ka fayda nahi
+            return None
 
         except Exception:
             if attempt == retries - 1:
@@ -386,35 +453,29 @@ def _fetch_angelone_history_live(client, token: str, start_date: datetime, end_d
     return None
 
 
-# ── Worker function (runs in each thread) ───────────────────
 def _angelone_worker(sym, token, client, start_date, end_date, rate_limiter):
     rate_limiter.acquire()
-    time.sleep(0.05)   # small jitter — threads ek saath burst na karein
+    time.sleep(0.05)
     df = _fetch_angelone_history_live(client, token, start_date, end_date)
     return sym, df
 
 
-_ANGELONE_LAST_RUN_TIME: float = 0.0   # epoch seconds — last run ka timestamp
-_ANGELONE_COOLDOWN_SECS: int   = 30    # consecutive runs ke beech minimum gap
+_ANGELONE_LAST_RUN_TIME: float = 0.0
+_ANGELONE_COOLDOWN_SECS: int   = 30
 
 def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, status_text):
     """
     Angel One bulk fetcher.
-    - Cooldown enforced between consecutive runs (30s) to avoid rate-limit spike
-    - 2 workers + 1.5 req/sec token bucket for safe throughput
-    - JSON-body rate-limit detection with exponential backoff in per-symbol fetcher
+    todate = "end_date 15:30" → explicitly covers today's market close.
     """
     global _ANGELONE_LAST_RUN_TIME
 
-    # Client directly session_state se lo — sidebar mein pehle se render ho chuka hai.
-    # get_angelone_client(sidebar=True) yahan dobara call karne se duplicate key error aata hai.
     client = st.session_state.get("angelone_client", None)
     if not client:
         progress_bar.progress(0.0)
         st.error("Please complete Angel One login in the sidebar first, then retry.")
         st.stop()
 
-    # ── Cooldown check ───────────────────────────────────────
     elapsed = time.monotonic() - _ANGELONE_LAST_RUN_TIME
     if elapsed < _ANGELONE_COOLDOWN_SECS and _ANGELONE_LAST_RUN_TIME > 0:
         wait = int(_ANGELONE_COOLDOWN_SECS - elapsed)
@@ -425,12 +486,11 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
             )
             time.sleep(1)
 
-    # ── Date cap: Angel One max 2000 days ───────────────────
     angelone_start = end_date - timedelta(days=2000)
     if start_date < angelone_start:
         st.sidebar.info(
             f"Angel One API Limit: Date capped to {angelone_start.strftime('%d-%m-%Y')} "
-            f"(Max 2000 days per request allowed)"
+            f"(Max 2000 days per request)"
         )
         start_date = angelone_start
 
@@ -440,7 +500,6 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
         st.error("Could not load Angel One instrument master.")
         st.stop()
 
-    # ── Symbol → Token resolution ────────────────────────────
     tasks     = []
     failed    = []
     not_found = 0
@@ -457,9 +516,6 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
     fetched_count = 0
     close_map, high_map, vol_map = {}, {}, {}
 
-    # ── 2 workers + 1.5 req/sec ──────────────────────────────
-    # 4 workers @ 2.5/sec caused burst spikes crossing Angel One's limit.
-    # 2 workers @ 1.5/sec = smooth, predictable, well under 3/sec hard limit.
     MAX_WORKERS  = 2
     rate_limiter = _TokenBucket(max_rate=1.5)
 
@@ -491,11 +547,9 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
                     f"Fetched: {len(close_map)} | Failed: {len(failed)}"
                 )
 
-    # ── Mark run completion time ─────────────────────────────
     _ANGELONE_LAST_RUN_TIME = time.monotonic()
 
     progress_bar.progress(1.0)
-    status_text.text(f"Done — {len(close_map)}/{total} fetched | Not in master: {not_found}")
 
     all_idx = pd.bdate_range(start=start_date, end=end_date)
     close  = pd.DataFrame({s: v.reindex(all_idx) for s, v in close_map.items()}, index=all_idx)
@@ -506,10 +560,23 @@ def fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, stat
         st.error("No data fetched from Angel One. Try re-logging in and retry.")
         st.stop()
 
-    # ── FIX: Aaj ka incomplete/missing candle trim karo ─────
+    # Trim any all-NaN trailing rows
     close, high, volume = _trim_trailing_nan(close, high, volume)
-    last_date = close.index[-1].strftime('%d-%b-%Y') if not close.empty else "N/A"
-    status_text.text(f"Done — {len(close_map)}/{total} fetched | Last trading day: {last_date}")
+
+    if not close.empty:
+        last_date = close.index[-1].date()
+        today     = date.today()
+        if last_date >= today:
+            status_text.text(
+                f"✅ Data up-to-date | {len(close_map)}/{total} fetched | "
+                f"Last trading day: {close.index[-1].strftime('%d-%b-%Y')}"
+            )
+        else:
+            status_text.text(
+                f"⚠️ {len(close_map)}/{total} fetched | "
+                f"Last trading day: {close.index[-1].strftime('%d-%b-%Y')} "
+                f"(today: {today} — holiday/weekend?)"
+            )
 
     return close, high, volume, failed
 

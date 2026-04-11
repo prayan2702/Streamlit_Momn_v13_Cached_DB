@@ -2,32 +2,23 @@
 cache_builder_upstox.py
 =======================
 Upstox V3 API se full history cache build karta hai.
-GitHub Actions pe daily 9:30 PM IST pe chalta hai.
+GitHub Actions pe daily 8:30 PM IST (15:00 UTC) pe chalta hai.
 
-Key design — original data_service.py ka same sequential pattern:
-  for each symbol:
-      for each decade (3 calls):
-          fetch()
-          time.sleep(0.05)
-  → Network latency (~0.5-1s per call) + sleep = ~1-2 req/sec
-  → Naturally safe for all 3 Upstox limits
-
-Decade ranges (Upstox max = 1 decade per days-interval call):
-  Call 1: 2000-01-01 → 2009-12-31
-  Call 2: 2010-01-01 → 2019-12-31
-  Call 3: 2020-01-01 → today
-
-ATH = concat(call1+call2+call3).high.max() — correct 2000-to-today ATH
-Recent 40M = slice from merged data — close/high/volume parquet
-
-SECURITY: access_token kabhi log nahi hota (sirf masked form mein)
+── BUG FIX: Upstox to_date ──────────────────────────────────
+  Upstox V3 API ka to_date parameter inclusive hai.
+  to_date = "2026-04-10"  →  April 10 ka data milna chahiye  ✅
+  Lekin safety ke liye tomorrow_str (today + 1) use karte hain —
+  Upstox future date ko silently ignore karta hai aur latest
+  available date tak ka data return karta hai.
+  Is tarah aaj ka data guaranteed milta hai.
+──────────────────────────────────────────────────────────────
 """
 
 import json
 import os
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 
@@ -40,30 +31,26 @@ from upstox_auto_auth import get_token_from_env, _mask, _safe_log
 
 # ── Config ────────────────────────────────────────────────────
 GITHUB_BASE    = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
-CACHE_DIR      = Path("cache_upstox")   # ← Separate folder — YFinance cache/ se alag
+CACHE_DIR      = Path("cache_upstox")
 RECENT_MONTHS  = 40
 EXTRA_SYMBOLS  = ["GOLDBEES.NS", "SILVERBEES.NS"]
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
-# Upstox V3 daily candle endpoint
 _UPSTOX_CANDLE = "https://api.upstox.com/v3/historical-candle"
 
-# Decade ranges — 1 decade per call (Upstox limit)
-_DECADE_RANGES = [
+# First two fixed decade ranges — third range built dynamically in build_cache()
+_DECADE_RANGES_FIXED = [
     ("2000-01-01", "2009-12-31"),
     ("2010-01-01", "2019-12-31"),
 ]
-# Third range: 2020-01-01 → today (added dynamically in build_cache)
 
 
 def log(msg: str):
-    """Safe log — credentials is function se kabhi pass nahi hone chahiye."""
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
 # ── Symbol loading ────────────────────────────────────────────
 def load_symbols() -> list:
-    """NSE EQUITY_L.csv + GOLDBEES + SILVERBEES."""
     log("Downloading EQUITY_L.csv from NSE...")
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0",
@@ -83,10 +70,8 @@ def load_symbols() -> list:
             df = df[df["SERIES"].str.strip() == "EQ"].copy()
         df["SYMBOL"] = df["SYMBOL"].str.strip().str.upper()
         symbols = (df["SYMBOL"] + ".NS").tolist()
-
-        # Save for reference
         df.to_csv(CACHE_DIR / "EQUITY_L.csv", index=False)
-        log(f"  NSE EQUITY_L.csv: {len(symbols):,} EQ stocks downloaded")
+        log(f"  NSE EQUITY_L.csv: {len(symbols):,} EQ stocks")
 
     except Exception as e:
         log(f"  NSE download failed ({type(e).__name__}) — GitHub fallback...")
@@ -95,12 +80,11 @@ def load_symbols() -> list:
             symbols = (df["Symbol"].astype(str).str.strip() + ".NS").tolist()
             log(f"  GitHub fallback: {len(symbols):,} symbols")
         except Exception as e2:
-            raise RuntimeError(f"Symbol load failed completely: {type(e2).__name__}") from None
+            raise RuntimeError(f"Symbol load failed: {type(e2).__name__}") from None
 
     for s in EXTRA_SYMBOLS:
         if s not in symbols:
             symbols.append(s)
-
     log(f"  Total: {len(symbols):,} (+ GOLDBEES & SILVERBEES)")
     return symbols
 
@@ -134,8 +118,8 @@ def _fetch_one_decade(
 ) -> pd.DataFrame | None:
     """
     Ek decade ka data fetch karo.
-    SAME logic as original data_service._fetch_upstox_history_live.
-    access_token kabhi log nahi hota.
+    to_date = tomorrow_str use karo (today+1) — Upstox future date ignore
+    karta hai aur latest available date tak data return karta hai.
     """
     encoded = instrument_key.replace("|", "%7C")
     url     = f"{_UPSTOX_CANDLE}/{encoded}/days/1/{to_date}/{from_date}"
@@ -155,7 +139,6 @@ def _fetch_one_decade(
                 continue
 
             if resp.status_code in (401, 403):
-                # Token invalid — value log nahi karte
                 raise ValueError(f"Token invalid (HTTP {resp.status_code})")
 
             resp.raise_for_status()
@@ -169,8 +152,6 @@ def _fetch_one_decade(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
             )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
-            # Timezone strip: tz_localize(None) removes tz without conversion
-            # Upstox daily candles: "2026-04-04T00:00:00+05:30" → "2026-04-04 00:00:00"
             if df["timestamp"].dt.tz is not None:
                 df["timestamp"] = df["timestamp"].dt.tz_localize(None)
             df.set_index("timestamp", inplace=True)
@@ -178,7 +159,7 @@ def _fetch_one_decade(
             return df[["open", "high", "low", "close", "volume"]]
 
         except ValueError:
-            raise  # Token error — caller handle karega
+            raise
         except requests.exceptions.Timeout:
             if attempt < retries - 1:
                 time.sleep(delay)
@@ -200,16 +181,6 @@ def fetch_all_sequential(
     decade_ranges  : list,
     end_date       : datetime,
 ) -> tuple[dict, dict, dict, dict, list]:
-    """
-    Original data_service.py ka same sequential pattern.
-    for each symbol:
-        for each of 3 decades:
-            _fetch_one_decade()
-            time.sleep(0.05)   ← original se same
-    Network latency (~0.5-1s) + sleep = ~1-2 req/sec naturally safe.
-
-    Returns: ath_dict, close_map, high_map, vol_map, failed
-    """
     start_recent = end_date - relativedelta(months=RECENT_MONTHS)
     total        = len(symbols)
     not_found    = 0
@@ -228,53 +199,43 @@ def fetch_all_sequential(
             not_found += 1
             failed.append(sym)
         else:
-            decade_dfs = []
+            decade_dfs    = []
             token_expired = False
 
-            # ── 3 decade calls — same as original per-symbol ──
             for from_d, to_d in decade_ranges:
                 try:
-                    df = _fetch_one_decade(
-                        instrument_key, access_token, from_d, to_d
-                    )
+                    df = _fetch_one_decade(instrument_key, access_token, from_d, to_d)
                     if df is not None and not df.empty:
                         decade_dfs.append(df)
                 except ValueError:
-                    # Token expired mid-download
                     log("Token expired mid-download — stopping.")
                     token_expired = True
                     break
                 except Exception:
-                    pass  # Is decade ka data nahi mila — skip, agla try karo
+                    pass
 
-                time.sleep(0.05)  # Original se same sleep
+                time.sleep(0.05)
 
             if token_expired:
-                # Baaki symbols skip karo — token invalid ho gaya
                 raise RuntimeError(
-                    "Upstox token expired mid-download. "
-                    "Re-run the workflow to get a fresh token."
+                    "Upstox token expired mid-download. Re-run to get a fresh token."
                 )
 
             if decade_dfs:
-                # Merge all decades
                 merged = pd.concat(decade_dfs).sort_index()
                 merged = merged[~merged.index.duplicated(keep="last")]
 
-                # ATH — full 2000-today max
                 ath_dict[sym] = float(merged["high"].max())
 
-                # Recent slice — last 40 months only (for parquet files)
                 df_r = merged[merged.index >= start_recent]
                 if not df_r.empty:
                     idx = pd.to_datetime(df_r.index)
-                    close_map[sym] = pd.Series(df_r["close"].values,                    index=idx)
-                    high_map[sym]  = pd.Series(df_r["high"].values,                     index=idx)
-                    vol_map[sym]   = pd.Series((df_r["close"]*df_r["volume"]).values,   index=idx)
+                    close_map[sym] = pd.Series(df_r["close"].values,                  index=idx)
+                    high_map[sym]  = pd.Series(df_r["high"].values,                   index=idx)
+                    vol_map[sym]   = pd.Series((df_r["close"]*df_r["volume"]).values, index=idx)
             else:
                 failed.append(sym)
 
-        # ── Progress log every 50 symbols ─────────────────────
         if i % 50 == 0 or i == total - 1:
             elapsed   = time.monotonic() - t0
             remaining = (total - i - 1) * (elapsed / max(i + 1, 1))
@@ -295,18 +256,32 @@ def fetch_all_sequential(
     return ath_dict, close_map, high_map, vol_map, failed
 
 
+def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
+    if close.empty:
+        return False
+    last_date = close.index[-1].date()
+    log(f"  Last date in cache : {last_date}")
+    log(f"  Today's date       : {today}")
+    if last_date >= today:
+        log(f"  ✅ TODAY'S DATA CONFIRMED in cache ({last_date})")
+        return True
+    else:
+        log(f"  ⚠️  Today's data ({today}) NOT in cache — last: {last_date}")
+        log(f"     Possible reason: holiday/weekend, or Upstox data delay")
+        return False
+
+
 # ── Main ──────────────────────────────────────────────────────
 def build_cache():
-    log("=" * 55)
+    log("=" * 58)
     log("MOMN CACHE BUILDER — UPSTOX VERSION")
-    log("=" * 55)
+    log("=" * 58)
     CACHE_DIR.mkdir(exist_ok=True)
     t_total = time.monotonic()
 
-    # 1. Auth (credentials env vars se — kabhi log nahi hote)
+    # 1. Auth
     log("Authenticating with Upstox...")
     access_token = get_token_from_env()
-    # Token value kabhi log nahi karte — sirf masked confirmation
     log(f"  Token received: {_mask(access_token)} ✅")
 
     # 2. Symbols
@@ -315,18 +290,29 @@ def build_cache():
     # 3. Instrument master
     instrument_map = load_instrument_map()
 
-    # 4. Build decade ranges (3rd range = 2020 → today)
-    end_date    = datetime.combine(date.today(), datetime.min.time())
-    today_str   = end_date.strftime("%Y-%m-%d")
+    # 4. Build decade ranges
+    today        = date.today()
+    today_str    = today.strftime("%Y-%m-%d")
+
+    # ── KEY FIX: use tomorrow as to_date ─────────────────────
+    # Upstox to_date is inclusive. Using tomorrow ensures today's
+    # candle is requested — Upstox silently caps at latest available.
+    tomorrow_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+
     decade_ranges = [
         ("2000-01-01", "2009-12-31"),
         ("2010-01-01", "2019-12-31"),
-        ("2020-01-01", today_str),
+        ("2020-01-01", tomorrow_str),   # ← FIXED: tomorrow_str instead of today_str
     ]
-    log(f"Decade ranges: {[f'{f}→{t}' for f,t in decade_ranges]}")
-    log(f"Total API calls: {len(symbols)} symbols × 3 decades = {len(symbols)*3:,}")
 
-    # 5. Sequential fetch (same pattern as original data_service.py)
+    end_date = datetime.combine(today, datetime.min.time())
+
+    log(f"Today              : {today_str}")
+    log(f"Upstox to_date     : {tomorrow_str} (includes today's data)")
+    log(f"Decade ranges      : {[f'{f}→{t}' for f,t in decade_ranges]}")
+    log(f"Total API calls    : {len(symbols)} × 3 = {len(symbols)*3:,}")
+
+    # 5. Fetch
     ath_dict, close_map, high_map, vol_map, failed = fetch_all_sequential(
         symbols, instrument_map, access_token, decade_ranges, end_date
     )
@@ -335,21 +321,12 @@ def build_cache():
     log("Assembling DataFrames...")
     start_recent = end_date - relativedelta(months=RECENT_MONTHS)
 
-    # ── BUILDER FIX: bdate_range ka use mat karo ──────────────
-    # `pd.bdate_range` sirf weekends exclude karta hai, Indian market
-    # holidays (Good Friday, Diwali etc.) include karta hai.
-    # Agar last date holiday hai → Upstox data nahi → reindex → NaN last row
-    # → `Close = data12M.iloc[-1]` = NaN → AWAY_ATH blank.
-    #
-    # Fix: pd.DataFrame(data_map) directly — pandas automatically
-    # union of actual trading dates use karta hai. Koi artificial
-    # holiday dates nahi aate. Phir dropna(how='all') safety ke liye.
     def _make_df(data_map):
         if not data_map:
             return pd.DataFrame()
-        df = pd.DataFrame(data_map)   # index = union of actual trading dates
+        df = pd.DataFrame(data_map)
         df = df.sort_index()
-        df = df.dropna(how='all')     # remove any rows where ALL symbols = NaN
+        df = df.dropna(how='all')
         return df.loc[:, ~df.columns.duplicated()]
 
     close  = _make_df(close_map)
@@ -360,10 +337,15 @@ def build_cache():
     log(f"  close: {close.shape} | high: {high.shape} | vol: {volume.shape} | ath: {ath_df.shape}")
 
     if close.empty:
-        log("ERROR: close DataFrame empty — something went wrong")
+        log("ERROR: close DataFrame empty")
         sys.exit(1)
 
-    # 7. Save Parquet files
+    # 7. Data freshness check
+    log("Verifying data freshness...")
+    today_present      = verify_data_freshness(close, today)
+    last_date_in_cache = close.index[-1].date() if not close.empty else None
+
+    # 8. Save Parquet
     log("Saving Parquet files...")
     close.to_parquet(CACHE_DIR  / "close.parquet")
     high.to_parquet(CACHE_DIR   / "high.parquet")
@@ -374,10 +356,10 @@ def build_cache():
         mb = (CACHE_DIR / fname).stat().st_size / 1_048_576
         log(f"  {fname}: {mb:.1f} MB")
 
-    # 8. Meta JSON
+    # 9. Meta JSON
     total_min = (time.monotonic() - t_total) / 60
     meta = {
-        "build_date"         : date.today().isoformat(),
+        "build_date"         : today.isoformat(),
         "build_time_utc"     : datetime.utcnow().strftime("%H:%M:%S"),
         "build_duration_min" : round(total_min, 1),
         "symbols_total"      : len(symbols),
@@ -386,13 +368,16 @@ def build_cache():
                                     [s for s in symbols if not _get_key(s, instrument_map)]]),
         "not_in_master"      : len(symbols) - len([s for s in symbols
                                                    if _get_key(s, instrument_map)]),
-        "failed_symbols"     : sorted(failed),          # ← ALL failed (no [:50] cap — Issue 3 fix)
+        "failed_symbols"     : sorted(failed),
         "data_start_full"    : "2000-01-01",
         "data_start_recent"  : start_recent.strftime("%Y-%m-%d"),
         "data_end"           : today_str,
+        "last_date_in_cache" : str(last_date_in_cache),
+        "today_data_present" : today_present,
         "recent_months"      : RECENT_MONTHS,
         "source"             : "Upstox V3 (daily candles)",
-        "symbol_source"      : "NSE EQUITY_L.csv (direct download)",
+        "upstox_to_date"     : tomorrow_str,
+        "symbol_source"      : "NSE EQUITY_L.csv (direct)",
         "extra_symbols"      : EXTRA_SYMBOLS,
         "decades_per_symbol" : 3,
         "decade_ranges"      : decade_ranges,
@@ -405,12 +390,14 @@ def build_cache():
     with open(CACHE_DIR / "cache_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
 
-    log("=" * 55)
-    log(f"✅ UPSTOX CACHE BUILD COMPLETE")
-    log(f"   Symbols  : {meta['symbols_fetched']}/{meta['symbols_total']} fetched")
-    log(f"   API calls: {meta['total_api_calls']:,}")
-    log(f"   Time     : {total_min:.1f} min")
-    log("=" * 55)
+    log("=" * 58)
+    log("✅ UPSTOX CACHE BUILD COMPLETE")
+    log(f"   Symbols       : {meta['symbols_fetched']}/{meta['symbols_total']} fetched")
+    log(f"   API calls     : {meta['total_api_calls']:,}")
+    log(f"   Last date     : {last_date_in_cache}")
+    log(f"   Today present : {'✅ YES' if today_present else '⚠️  NO (holiday/weekend?)'}")
+    log(f"   Time          : {total_min:.1f} min")
+    log("=" * 58)
 
 
 if __name__ == "__main__":
