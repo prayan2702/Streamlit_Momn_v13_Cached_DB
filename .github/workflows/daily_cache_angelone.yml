@@ -2,30 +2,25 @@ name: Daily Cache Build — Angel One
 
 # ════════════════════════════════════════════════════════════
 # GitHub Actions Angel One cache builder
-# Runs daily at 9:30 PM IST (4:00 PM UTC)
+# Runs daily at 11:30 PM IST (17:00 UTC), 2 hrs after Upstox
+#
+# Angel One todate = "today+1 15:30" — today's candle guaranteed
 #
 # Static IP Problem — FREE SOLUTION:
 #   GitHub Actions ka IP dynamic hota hai (static nahi).
 #   Angel One SmartAPI app mein "127.0.0.1" as Primary Static IP enter karo.
 #   Historical data endpoint (getCandleData) IP-check enforce nahi karta.
-#   Sirf order placement APIs ke liye strict IP whitelisting hoti hai.
-#   Data-only apps ke liye 127.0.0.1 placeholder perfectly kaam karta hai.
 #
 # Required GitHub Secrets (Repo → Settings → Secrets → Actions):
-#   ANGELONE_CLIENT_ID    — R/T number (e.g., R1234567)
-#   ANGELONE_API_KEY      — SmartAPI app ka API key
-#   ANGELONE_PASSWORD     — Angel One login password
-#   ANGELONE_TOTP_SECRET  — TOTP secret (smartapi.angelone.in → Enable TOTP)
-#   PAT_TOKEN             — GitHub Personal Access Token (write access)
-#
+#   ANGELONE_CLIENT_ID | ANGELONE_API_KEY | ANGELONE_PASSWORD
+#   ANGELONE_TOTP_SECRET | PAT_TOKEN
 # ════════════════════════════════════════════════════════════
 
 on:
   schedule:
-    - cron: "0 17 * * 1-5"   # Mon-Fri 6:00 PM UTC = 11:30 PM IST
-                               # INTENTIONALLY 2hr AFTER Upstox (16:00 UTC, ~82 min run)
-                               # Avoids git push conflict on same repo
-  workflow_dispatch:           # Manual trigger bhi possible
+    - cron: "0 17 * * 1-5"   # Mon-Fri 17:00 UTC = 10:30 PM IST
+                               # 2 hrs after Upstox (15:00 UTC) — avoids push conflict
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -33,24 +28,21 @@ env:
 jobs:
   build-cache:
     runs-on: ubuntu-latest
-    timeout-minutes: 300       # 5 hours — 2134 syms × 5.6s ~215 min + 85 min buffer
+    timeout-minutes: 300       # 5 hours — 2134 syms × ~5.6s
 
     steps:
-      # ── 1. Checkout repo ──────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4.2.2
         with:
           token: ${{ secrets.PAT_TOKEN }}
           fetch-depth: 0
 
-      # ── 2. Python setup ────────────────────────────────────
       - name: Setup Python 3.11
         uses: actions/setup-python@v5.4.0
         with:
           python-version: "3.11"
           cache: "pip"
 
-      # ── 3. Install dependencies ────────────────────────────
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -65,11 +57,9 @@ jobs:
             python-dateutil \
             websocket-client
 
-      # ── 3a. Verify SmartApi import ─────────────────────────
       - name: Verify SmartApi import
         run: python -c "from SmartApi import SmartConnect; import pyotp; print('✅ SmartApi + pyotp OK')"
 
-      # ── 4. Run Angel One cache builder ────────────────────
       - name: Build Angel One cache
         env:
           ANGELONE_CLIENT_ID:   ${{ secrets.ANGELONE_CLIENT_ID }}
@@ -83,7 +73,6 @@ jobs:
           echo "=== Build complete ==="
           ls -lh cache_angelone/ || echo "cache_angelone/ not found"
 
-      # ── 5. Verify output files ─────────────────────────────
       - name: Verify cache files
         run: |
           echo "=== Cache file sizes ==="
@@ -91,7 +80,43 @@ jobs:
           echo "=== Cache meta ==="
           cat cache_angelone/cache_meta.json 2>/dev/null | python -m json.tool | head -30 || true
 
-      # ── 6. Commit & push to repo ───────────────────────────
+      # ── Data freshness validation ─────────────────────────
+      - name: Verify today's data is present in cache
+        run: |
+          python - <<'EOF'
+          import json, sys
+          from datetime import date
+
+          try:
+              with open("cache_angelone/cache_meta.json") as f:
+                  meta = json.load(f)
+
+              today            = date.today().isoformat()
+              last_in_cache    = meta.get("last_date_in_cache", "N/A")
+              today_present    = meta.get("today_data_present", False)
+              symbols_fetched  = meta.get("symbols_fetched", 0)
+              symbols_total    = meta.get("symbols_total", 0)
+              last_chunk       = meta.get("last_chunk_todate", "N/A")
+
+              print(f"Build date         : {meta.get('build_date')}")
+              print(f"Today              : {today}")
+              print(f"Last chunk todate  : {last_chunk}")
+              print(f"Last date cached   : {last_in_cache}")
+              print(f"Today present      : {'✅ YES' if today_present else '⚠️  NO'}")
+              print(f"Symbols            : {symbols_fetched}/{symbols_total} fetched")
+
+              if today_present:
+                  print("✅ PASS: Today's closing data is in the cache.")
+              else:
+                  print(f"⚠️  NOTE: Today ({today}) not in cache.")
+                  print(f"   Last available: {last_in_cache}")
+                  print("   Expected on market holidays and weekends.")
+                  sys.exit(0)
+          except Exception as e:
+              print(f"Validation check failed: {e}")
+              sys.exit(0)
+          EOF
+
       - name: Commit cache to repository
         run: |
           git config user.name  "github-actions[bot]"

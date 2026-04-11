@@ -2,7 +2,10 @@ name: Daily Cache Builder — Upstox
 
 on:
   schedule:
-    - cron: '0 15 * * 1-5'   # 9:30 PM IST weekdays
+    # Roz 15:00 UTC = 8:30 PM IST, Monday-Friday
+    # Market 3:30 PM IST close — cache 5 ghante baad build hota hai
+    # Upstox to_date = tomorrow — today's candle guaranteed
+    - cron: '0 15 * * 1-5'
   workflow_dispatch:
 
 env:
@@ -48,6 +51,7 @@ jobs:
           UPSTOX_PIN:           ${{ secrets.UPSTOX_PIN }}
           UPSTOX_TOTP_SECRET:   ${{ secrets.UPSTOX_TOTP_SECRET }}
         run: python cache_builder_upstox.py
+
       - name: Upload debug artifacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -55,6 +59,44 @@ jobs:
           name: upstox-debug-screenshots
           path: /tmp/upstox_*.png
           retention-days: 7
+
+      # ── Data freshness validation ─────────────────────────
+      - name: Verify today's data is present in cache
+        run: |
+          python - <<'EOF'
+          import json, sys
+          from datetime import date
+
+          try:
+              with open("cache_upstox/cache_meta.json") as f:
+                  meta = json.load(f)
+
+              today            = date.today().isoformat()
+              last_in_cache    = meta.get("last_date_in_cache", "N/A")
+              today_present    = meta.get("today_data_present", False)
+              symbols_fetched  = meta.get("symbols_fetched", 0)
+              symbols_total    = meta.get("symbols_total", 0)
+              upstox_to_date   = meta.get("upstox_to_date", "N/A")
+
+              print(f"Build date       : {meta.get('build_date')}")
+              print(f"Today            : {today}")
+              print(f"Upstox to_date   : {upstox_to_date}")
+              print(f"Last date cached : {last_in_cache}")
+              print(f"Today present    : {'✅ YES' if today_present else '⚠️  NO'}")
+              print(f"Symbols          : {symbols_fetched}/{symbols_total} fetched")
+
+              if today_present:
+                  print("✅ PASS: Today's closing data is in the cache.")
+              else:
+                  print(f"⚠️  NOTE: Today ({today}) not in cache.")
+                  print(f"   Last available: {last_in_cache}")
+                  print("   Expected on market holidays and weekends.")
+                  sys.exit(0)
+          except Exception as e:
+              print(f"Validation check failed: {e}")
+              sys.exit(0)
+          EOF
+
       - name: Commit and push cache_upstox files
         run: |
           git config user.name  "github-actions[bot]"

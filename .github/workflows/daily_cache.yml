@@ -1,11 +1,12 @@
-name: Daily Cache Builder
+name: Daily Cache Builder (YFinance)
 
 on:
   schedule:
-    # Roz 3:00 PM UTC = 8:30 PM IST, Monday-Friday (weekdays only)
+    # Roz 14:00 UTC = 7:30 PM IST, Monday-Friday
+    # Market 3:30 PM IST close — cache 4 ghante baad build hota hai
+    # yfinance end = today+1 (exclusive) — today ka data included hoga
     - cron: '0 14 * * 1-5'
 
-  # Manual trigger bhi possible hai (GitHub Actions tab se)
   workflow_dispatch:
 
 env:
@@ -32,6 +33,46 @@ jobs:
 
       - name: Build cache
         run: python cache_builder.py
+
+      # ── Data freshness validation ─────────────────────────
+      # Checks if today's date is in the built cache.
+      # Fails with a warning (non-blocking) if today's data is absent
+      # (expected on market holidays / weekends).
+      - name: Verify today's data is present in cache
+        run: |
+          python - <<'EOF'
+          import json, sys
+          from datetime import date
+
+          try:
+              with open("cache/cache_meta.json") as f:
+                  meta = json.load(f)
+
+              today            = date.today().isoformat()
+              last_in_cache    = meta.get("last_date_in_cache", "N/A")
+              today_present    = meta.get("today_data_present", False)
+              symbols_fetched  = meta.get("symbols_fetched", 0)
+              symbols_total    = meta.get("symbols_total", 0)
+
+              print(f"Build date       : {meta.get('build_date')}")
+              print(f"Today            : {today}")
+              print(f"Last date cached : {last_in_cache}")
+              print(f"Today present    : {'✅ YES' if today_present else '⚠️  NO'}")
+              print(f"Symbols          : {symbols_fetched}/{symbols_total} fetched")
+
+              if today_present:
+                  print("✅ PASS: Today's closing data is in the cache.")
+              else:
+                  print(f"⚠️  NOTE: Today ({today}) not in cache.")
+                  print(f"   Last available: {last_in_cache}")
+                  print("   This is expected on market holidays and weekends.")
+                  print("   If today was a trading day, check yfinance data availability.")
+                  # Non-blocking — workflow still succeeds (market holiday case)
+                  sys.exit(0)
+          except Exception as e:
+              print(f"Validation check failed: {e}")
+              sys.exit(0)   # Non-blocking
+          EOF
 
       - name: Commit and push cache files
         run: |
