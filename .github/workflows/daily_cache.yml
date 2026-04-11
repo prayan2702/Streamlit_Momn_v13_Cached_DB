@@ -5,7 +5,7 @@ on:
     # Roz 14:00 UTC = 7:30 PM IST, Monday-Friday
     # Market 3:30 PM IST close — cache 4 ghante baad build hota hai
     # yfinance end = today+1 (exclusive) — today ka data included hoga
-    - cron: '0 14 * * 1-5'
+    - cron: '0 12 * * 1-5'
 
   workflow_dispatch:
 
