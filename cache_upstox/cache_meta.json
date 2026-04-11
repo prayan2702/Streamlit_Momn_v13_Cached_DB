@@ -1,22 +1,24 @@
 {
-  "build_date": "2026-04-10",
-  "build_time_utc": "17:12:43",
-  "build_duration_min": 72.1,
+  "build_date": "2026-04-11",
+  "build_time_utc": "10:32:17",
+  "build_duration_min": 92.6,
   "symbols_total": 2133,
-  "symbols_fetched": 2130,
-  "symbols_failed": 3,
+  "symbols_fetched": 2131,
+  "symbols_failed": 2,
   "not_in_master": 0,
   "failed_symbols": [
     "ANURAS.NS",
-    "CHOLAFIN.NS",
-    "SAHLIBHFI.NS"
+    "CHOLAFIN.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-10",
-  "data_end": "2026-04-10",
+  "data_start_recent": "2022-12-11",
+  "data_end": "2026-04-11",
+  "last_date_in_cache": "2026-04-10",
+  "today_data_present": false,
   "recent_months": 40,
   "source": "Upstox V3 (daily candles)",
-  "symbol_source": "NSE EQUITY_L.csv (direct download)",
+  "upstox_to_date": "2026-04-12",
+  "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
     "SILVERBEES.NS"
@@ -33,21 +35,21 @@
     ],
     [
       "2020-01-01",
-      "2026-04-10"
+      "2026-04-12"
     ]
   ],
-  "total_api_calls": 6390,
+  "total_api_calls": 6393,
   "close_shape": [
-    826,
-    2130
+    827,
+    2131
   ],
   "high_shape": [
-    826,
-    2130
+    827,
+    2131
   ],
   "volume_shape": [
-    826,
-    2130
+    827,
+    2131
   ],
-  "ath_count": 2130
+  "ath_count": 2131
 }
