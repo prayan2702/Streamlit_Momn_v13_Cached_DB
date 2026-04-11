@@ -2,10 +2,10 @@ name: Daily Cache Builder — Upstox
 
 on:
   schedule:
-    # Roz 15:00 UTC = 8:30 PM IST, Monday-Friday
-    # Market 3:30 PM IST close — cache 5 ghante baad build hota hai
+    # Roz 13:00 UTC = 6:30 PM IST, Monday-Friday
+    # Market 3:30 PM IST close — cache 3 ghante baad build hota hai
     # Upstox to_date = tomorrow — today's candle guaranteed
-    - cron: '0 15 * * 1-5'
+    - cron: '0 13 * * 1-5'
   workflow_dispatch:
 
 env:
