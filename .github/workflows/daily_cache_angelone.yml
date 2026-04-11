@@ -2,7 +2,7 @@ name: Daily Cache Build — Angel One
 
 # ════════════════════════════════════════════════════════════
 # GitHub Actions Angel One cache builder
-# Runs daily at 11:30 PM IST (17:00 UTC), 2 hrs after Upstox
+# Runs daily at 11:30 PM IST (13:00 UTC), 2 hrs after Upstox
 #
 # Angel One todate = "today+1 15:30" — today's candle guaranteed
 #
@@ -18,7 +18,7 @@ name: Daily Cache Build — Angel One
 
 on:
   schedule:
-    - cron: "0 17 * * 1-5"   # Mon-Fri 17:00 UTC = 10:30 PM IST
+    - cron: "0 13 * * 1-5"   # Mon-Fri 13:00 UTC = 6:30 PM IST
                                # 2 hrs after Upstox (15:00 UTC) — avoids push conflict
   workflow_dispatch:
 
