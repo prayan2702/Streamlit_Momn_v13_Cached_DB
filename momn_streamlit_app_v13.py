@@ -671,6 +671,9 @@ _defaults = {
     "_cross_top_n":            400,     # how many top-ranked stocks to compare
     "_cross_error":            None,    # error string if comparison failed
     "_cross_error_detail":     None,    # full traceback
+    # ── ATH Override Memory (persisted in ath_memory.json) ──────
+    "_ath_memory":             {},     # loaded from file on first cross-review run
+    "_ath_memory_loaded":      False,  # sentinel to load from file exactly once
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -685,6 +688,34 @@ def fmt_inr(v):
     if abs(v) >= 10_000_000: return f"₹{v/10_000_000:.1f}Cr"
     if abs(v) >= 100_000:    return f"₹{v/100_000:.1f}L"
     return f"₹{v:,}"
+
+# ── ATH Override Memory (persists across sessions via JSON file) ──
+_ATH_MEMORY_FILE = "ath_memory.json"
+
+def _load_ath_memory() -> dict:
+    """Load ATH override memory from local JSON file.
+    Returns empty dict if file not found or unreadable."""
+    import json, os
+    try:
+        if os.path.exists(_ATH_MEMORY_FILE):
+            with open(_ATH_MEMORY_FILE, "r") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+def _save_ath_memory(mem: dict) -> bool:
+    """Save ATH override memory to local JSON file.
+    Returns True on success, False on error."""
+    import json
+    try:
+        with open(_ATH_MEMORY_FILE, "w") as f:
+            json.dump(mem, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
 
 def step_html(current):
     steps = [(1,"Universe Setup"),(2,"Run Screener"),(3,"Plan Rebalance"),(4,"Apply & Export")]
@@ -1044,6 +1075,50 @@ with st.sidebar:
        style="color:var(--violet);font-weight:600;text-decoration:none;">📈 Portfolio Dashboard</a>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── ATH Memory Panel ─────────────────────────────────────────
+    st.divider()
+    _ath_mem_sidebar = st.session_state.get("_ath_memory") or {}
+    _n_mem = len(_ath_mem_sidebar)
+    st.markdown(f"### 📚 ATH Memory &nbsp;<span style='font-size:11px;color:var(--muted);font-weight:400;'>({_n_mem} stocks)</span>", unsafe_allow_html=True)
+    if _n_mem > 0:
+        import json as _json_mod
+        _mem_bytes = _json_mod.dumps(_ath_mem_sidebar, indent=2, ensure_ascii=False).encode("utf-8")
+        st.download_button(
+            label="💾 Download ath_memory.json",
+            data=_mem_bytes,
+            file_name="ath_memory.json",
+            mime="application/json",
+            use_container_width=True,
+            help="Download karke GitHub repo root mein commit karo — app restart ke baad bhi memory bani rahegi.",
+        )
+        if st.button("🗑 Memory Clear karo", use_container_width=True, key="sb_clear_mem"):
+            st.session_state["_ath_memory"] = {}
+            st.session_state["_ath_memory_loaded"] = True
+            _save_ath_memory({})
+            st.rerun()
+        with st.expander(f"📋 Memory preview ({_n_mem} stocks)"):
+            for _t, _e in list(_ath_mem_sidebar.items())[:20]:
+                st.markdown(
+                    f"<div style='font-size:11px;line-height:1.8;'>"
+                    f"<b style='color:var(--text-main);'>{_t}</b> &nbsp;"
+                    f"<span style='color:var(--teal);'>{_e.get('chosen_lbl','?')}</span> &nbsp;"
+                    f"<span style='color:var(--muted);'>ATH {_e.get('chosen_ath',0):,.0f}</span> &nbsp;"
+                    f"<span style='color:var(--muted);font-size:10px;'>{_e.get('reviewed_date','')}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            if _n_mem > 20:
+                st.caption(f"... aur {_n_mem - 20} stocks (download karo full list)")
+        st.markdown(
+            "<div style='font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5;'>"
+            "💡 <b>Tip:</b> Download → GitHub repo root mein <code>ath_memory.json</code> commit karo "
+            "→ app restart pe bhi memory load hogi."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("Abhi koi ATH review save nahi hua. Cross-source review karke 'Apply' karo.")
 
     if st.button("🚪 Logout", use_container_width=True):
         for k in list(st.session_state.keys()):
@@ -2030,6 +2105,13 @@ elif st.session_state.current_step == 2:
 
             # Initialize overrides dict if needed
             _overrides = st.session_state.get("_cross_review_overrides", {})
+            # Load ATH memory from file exactly once per session
+            if not st.session_state.get("_ath_memory_loaded", False):
+                _loaded = _load_ath_memory()
+                if _loaded:
+                    st.session_state["_ath_memory"] = _loaded
+                st.session_state["_ath_memory_loaded"] = True
+            _ath_mem = st.session_state.get("_ath_memory") or {}
 
             # ── Display table with per-stock radio ──
             # Show display columns (hide internal _sec_* cols)
@@ -2069,6 +2151,35 @@ elif st.session_state.current_step == 2:
                 _suggested = "secondary" if float(_drow[_sec_ath_col]) < float(_drow[_pri_ath_col]) else "primary"
                 _suggested_lbl = _sec_lbl if _suggested == "secondary" else _pri_lbl
 
+                # ── ATH Memory lookup for this ticker ──────────────────
+                _mem_entry = _ath_mem.get(_tick)
+                _mem_hint_html = ""
+                _mem_role = None  # role (primary/secondary) from memory in THIS session's context
+                if _mem_entry:
+                    _m_lbl  = _mem_entry.get("chosen_lbl", "")
+                    _m_date = _mem_entry.get("reviewed_date", "?")
+                    _m_ath  = _mem_entry.get("chosen_ath", 0)
+                    # Map memory's chosen label to current session's primary/secondary roles
+                    if _m_lbl == _pri_lbl:
+                        _mem_role = "primary"
+                    elif _m_lbl == _sec_lbl:
+                        _mem_role = "secondary"
+                    # else: sources swapped or different — show hint but don't force default
+                    _mem_hint_html = (
+                        f'&nbsp;&nbsp;&nbsp;'
+                        f'<span style="background:#0f3460;border:1px solid #38bdf8;border-radius:10px;'
+                        f'padding:1px 8px;font-size:11px;color:#38bdf8;">'
+                        f'📚 Prev ({_m_date}): <b>{_m_lbl}</b>'
+                        f'&nbsp;<span style="color:#7dd3fc;font-weight:400;">ATH {_m_ath:,.0f}</span>'
+                        f'</span>'
+                    )
+
+                # Radio default: memory > algorithmic suggestion (only if not already set this session)
+                if _tick not in _overrides:
+                    _cur_sel = _mem_role if _mem_role is not None else _suggested
+                else:
+                    _cur_sel = _overrides[_tick]
+
                 with st.container():
                     _c1, _c2 = st.columns([3, 1])
                     with _c1:
@@ -2085,6 +2196,7 @@ elif st.session_state.current_step == 2:
                           <span style="color:#64748b;font-size:11px;">
                             💡 Suggested: <b style="color:#a3e635;">{_suggested_lbl}</b>
                           </span>
+                          {_mem_hint_html}
                           <div style="display:flex;gap:24px;margin-top:8px;flex-wrap:wrap;">
                             <span style="color:#94a3b8;font-size:12px;">
                               Close: <b style="color:#e2e8f0;">{_drow[_pri_cl_col]}</b> ({_pri_lbl[:3]})
@@ -2105,7 +2217,6 @@ elif st.session_state.current_step == 2:
                         </div>
                         """, unsafe_allow_html=True)
                     with _c2:
-                        _cur_sel = _overrides.get(_tick, "primary")
                         _opts    = [f"✅ {_pri_lbl}", f"🔄 {_sec_lbl}"]
                         _sel_idx = 0 if _cur_sel == "primary" else 1
                         _chosen  = st.radio(
@@ -2145,6 +2256,25 @@ elif st.session_state.current_step == 2:
                     if _was_indexed:
                         _dfS_mod = _dfS_mod.set_index("Ticker")
 
+                    # ── Save ATH override decisions to memory ──────────
+                    _today_str = datetime.date.today().strftime("%d-%b-%y")
+                    _ath_mem_upd = st.session_state.get("_ath_memory") or {}
+                    for _, _orow in _diff_df.iterrows():
+                        _tick = _orow["Ticker"]
+                        _chosen_role = _overrides.get(_tick, "primary")
+                        _chosen_lbl  = _pri_lbl if _chosen_role == "primary" else _sec_lbl
+                        _ath_col     = f"ATH_{_pri_lbl[:3]}" if _chosen_role == "primary" else f"ATH_{_sec_lbl[:3]}"
+                        _ath_mem_upd[_tick] = {
+                            "chosen_lbl":   _chosen_lbl,
+                            "chosen_role":  _chosen_role,
+                            "chosen_ath":   float(_orow[_ath_col]),
+                            "reviewed_date": _today_str,
+                            "pri_lbl":      _pri_lbl,
+                            "sec_lbl":      _sec_lbl,
+                        }
+                    st.session_state["_ath_memory"] = _ath_mem_upd
+                    _mem_saved = _save_ath_memory(_ath_mem_upd)
+
                     # Re-apply filters with corrected data
                     _fp_reapply = st.session_state.get("_cross_filter_params") or {}
                     try:
@@ -2154,7 +2284,8 @@ elif st.session_state.current_step == 2:
                         _dfF_new = apply_filters(_dfS_mod.copy(), _fp_reapply)
                         st.session_state.dfStats    = _dfS_mod
                         st.session_state.dfFiltered = _dfF_new
-                        st.success(f"✅ {_n_applied} stocks ke liye {_sec_lbl} data apply hua! dfStats updated.")
+                        _mem_info = f" | ATH memory updated ({len(_ath_mem_upd)} stocks)" if _mem_saved else ""
+                        st.success(f"✅ {_n_applied} stocks ke liye {_sec_lbl} data apply hua! dfStats updated.{_mem_info}")
                     except Exception as _oe:
                         # Fallback: just save modified dfStats, keep existing dfFiltered
                         st.session_state.dfStats = _dfS_mod
