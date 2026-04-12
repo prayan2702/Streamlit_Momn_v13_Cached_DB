@@ -1090,7 +1090,6 @@ with st.sidebar:
             file_name="ath_memory.json",
             mime="application/json",
             use_container_width=True,
-            help="Download karke GitHub repo root mein commit karo — app restart ke baad bhi memory bani rahegi.",
         )
         if st.button("🗑 Memory Clear karo", use_container_width=True, key="sb_clear_mem"):
             st.session_state["_ath_memory"] = {}
@@ -1111,9 +1110,13 @@ with st.sidebar:
             if _n_mem > 20:
                 st.caption(f"... aur {_n_mem - 20} stocks (download karo full list)")
         st.markdown(
-            "<div style='font-size:10.5px;color:var(--muted);margin-top:4px;line-height:1.5;'>"
-            "💡 <b>Tip:</b> Download → GitHub repo root mein <code>ath_memory.json</code> commit karo "
-            "→ app restart pe bhi memory load hogi."
+            "<div style='font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7;"
+            "background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);"
+            "padding:7px 10px;'>"
+            "📌 <b>Next steps:</b><br>"
+            "1️⃣ Upar button se download karo<br>"
+            "2️⃣ GitHub repo root mein <code>ath_memory.json</code> commit karo<br>"
+            "3️⃣ App restart pe bhi memory auto-load hogi"
             "</div>",
             unsafe_allow_html=True,
         )

@@ -1,0 +1,226 @@
+{
+  "AHLWEST": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 174.83,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SBC": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 33.62,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "NARMADA": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 36.99,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "NDLVENTURE": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 813.4,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "VCL": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 32.85,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SONAMLTD": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 96.7,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "JETFREIGHT": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 40.7,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "ATALREAL": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 29.5,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "ASIANTILES": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 390.5,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SIEMENS": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 4041.73,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "EDELWEISS": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 230.85,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "BAFNAPH": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 233.55,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "NMDC": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 134.34,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SHAH": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 10.68,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "MAANALU": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 259.5,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "AARTISURF": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 1209.6,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "AVADHSUGAR": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 885.0,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "HFCL": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 171.0,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "WEWIN": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 114.7,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "KANPRPLA": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 249.5,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "ANDHRSUGAR": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 177.6,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "RUBYMILLS": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 369.0,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "STARHEALTH": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 940.0,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "VISHNU": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 595.8,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "ONELIFECAP": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 159.94,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "UEL": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 220.0,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "AARTIIND": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 1019.31,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SELMC": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 554.1,
+    "reviewed_date": "12-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  }
+}
