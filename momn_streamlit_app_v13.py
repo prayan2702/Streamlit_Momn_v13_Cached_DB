@@ -2190,13 +2190,13 @@ elif st.session_state.current_step == 2:
                             #{_rank} &nbsp; {_tick}
                           </span>
                           &nbsp;
-                          <button id="cpybtn_{_tick}"
+                          <button
                             onclick="
                               navigator.clipboard.writeText('{_tick}');
-                              var b=document.getElementById('cpybtn_{_tick}');
-                              b.innerText='✓ Copied';
-                              b.style.color='#4ade80';
-                              b.style.borderColor='#4ade80';
+                              this.innerText='✓ Copied';
+                              this.style.color='#4ade80';
+                              this.style.borderColor='#4ade80';
+                              var b=this;
                               setTimeout(function(){{b.innerText='⧉ Copy';b.style.color='#64748b';b.style.borderColor='#334155';}},1500);
                             "
                             style="cursor:pointer;background:transparent;border:1px solid #334155;
