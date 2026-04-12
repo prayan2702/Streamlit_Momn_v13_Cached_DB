@@ -2183,54 +2183,81 @@ elif st.session_state.current_step == 2:
                 with st.container():
                     _c1, _c2 = st.columns([3, 1])
                     with _c1:
-                        st.markdown(f"""
-                        <div style="background:#1e293b;border-radius:8px;padding:10px 14px;margin-bottom:6px;
+                        # st.components.v1.html — proper iframe, onclick JS executes fully
+                        _card_html = f"""
+                        <style>
+                          body {{ margin:0; padding:0; background:transparent; font-family:'Segoe UI',sans-serif; }}
+                          .cpybtn {{
+                            cursor:pointer; background:transparent;
+                            border:1px solid #334155; border-radius:6px;
+                            padding:1px 7px; font-size:11px; color:#64748b;
+                            font-family:inherit; vertical-align:middle;
+                            transition:color .15s, border-color .15s;
+                          }}
+                          .cpybtn:hover {{ border-color:#64748b; color:#94a3b8; }}
+                        </style>
+                        <div style="background:#1e293b;border-radius:8px;padding:10px 14px;
                                     border-left:3px solid {_badge_color};">
                           <span style="color:#f1f5f9;font-weight:700;font-size:15px;">
                             #{_rank} &nbsp; {_tick}
                           </span>
                           &nbsp;
-                          <button
-                            onclick="
-                              navigator.clipboard.writeText('{_tick}');
-                              this.innerText='✓ Copied';
+                          <button class="cpybtn" onclick="
+                            var sym='{_tick}';
+                            navigator.clipboard.writeText(sym).then(function(){{
+                              this.innerText='\\u2713 Copied';
                               this.style.color='#4ade80';
                               this.style.borderColor='#4ade80';
                               var b=this;
-                              setTimeout(function(){{b.innerText='⧉ Copy';b.style.color='#64748b';b.style.borderColor='#334155';}},1500);
-                            "
-                            style="cursor:pointer;background:transparent;border:1px solid #334155;
-                                   border-radius:6px;padding:1px 7px;font-size:11px;color:#64748b;
-                                   font-family:inherit;vertical-align:middle;transition:all .2s;">
-                            ⧉ Copy
-                          </button>
+                              setTimeout(function(){{
+                                b.innerText='\\u29c9 Copy';
+                                b.style.color='#64748b';
+                                b.style.borderColor='#334155';
+                              }}, 1500);
+                            }}.bind(this)).catch(function(){{
+                              var ta=document.createElement('textarea');
+                              ta.value=sym; ta.style.position='fixed'; ta.style.opacity='0';
+                              document.body.appendChild(ta); ta.focus(); ta.select();
+                              document.execCommand('copy'); document.body.removeChild(ta);
+                              this.innerText='\\u2713 Copied';
+                              this.style.color='#4ade80';
+                              this.style.borderColor='#4ade80';
+                              var b=this;
+                              setTimeout(function(){{
+                                b.innerText='\\u29c9 Copy';
+                                b.style.color='#64748b';
+                                b.style.borderColor='#334155';
+                              }}, 1500);
+                            }}.bind(this));
+                          ">&#x29c9; Copy</button>
                           &nbsp;
                           <span style="background:{_badge_color}20;color:{_badge_color};border-radius:10px;
                                        padding:1px 8px;font-size:11px;font-weight:600;">{_badge}</span>
                           &nbsp;
                           <span style="color:#64748b;font-size:11px;">
-                            💡 Suggested: <b style="color:#a3e635;">{_suggested_lbl}</b>
+                            &#x1f4a1; Suggested: <b style="color:#a3e635;">{_suggested_lbl}</b>
                           </span>
                           {_mem_hint_html}
                           <div style="display:flex;gap:24px;margin-top:8px;flex-wrap:wrap;">
                             <span style="color:#94a3b8;font-size:12px;">
                               Close: <b style="color:#e2e8f0;">{_drow[_pri_cl_col]}</b> ({_pri_lbl[:3]})
                               vs <b style="color:#e2e8f0;">{_drow[_sec_cl_col]}</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:#fbbf24;">Δ {_close_d:.1f}%</span>
+                              &nbsp;<span style="color:#fbbf24;">&Delta; {_close_d:.1f}%</span>
                             </span>
                             <span style="color:#94a3b8;font-size:12px;">
                               ATH: <b style="color:#e2e8f0;">{_drow[_pri_ath_col]:,.0f}</b> ({_pri_lbl[:3]})
                               vs <b style="color:#e2e8f0;">{_drow[_sec_ath_col]:,.0f}</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:{_badge_color};">Δ {_ath_d:.1f}%</span>
+                              &nbsp;<span style="color:{_badge_color};">&Delta; {_ath_d:.1f}%</span>
                             </span>
                             <span style="color:#94a3b8;font-size:12px;">
                               Away ATH: <b style="color:#e2e8f0;">{_drow[_pri_aw_col]:.1f}%</b> ({_pri_lbl[:3]})
                               vs <b style="color:#e2e8f0;">{_drow[_sec_aw_col]:.1f}%</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:#a78bfa;">Δ {_away_d:.1f}pp</span>
+                              &nbsp;<span style="color:#a78bfa;">&Delta; {_away_d:.1f}pp</span>
                             </span>
                           </div>
-                        </div>
-                        """, unsafe_allow_html=True)
+                        </div>"""
+                        import streamlit.components.v1 as _stc
+                        _stc.html(_card_html, height=115)
                     with _c2:
                         _opts    = [f"✅ {_pri_lbl}", f"🔄 {_sec_lbl}"]
                         _sel_idx = 0 if _cur_sel == "primary" else 1
