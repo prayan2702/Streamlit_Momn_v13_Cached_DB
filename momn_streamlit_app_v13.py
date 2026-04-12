@@ -2189,7 +2189,22 @@ elif st.session_state.current_step == 2:
                           <span style="color:#f1f5f9;font-weight:700;font-size:15px;">
                             #{_rank} &nbsp; {_tick}
                           </span>
-                          &nbsp;&nbsp;
+                          &nbsp;
+                          <button id="cpybtn_{_tick}"
+                            onclick="
+                              navigator.clipboard.writeText('{_tick}');
+                              var b=document.getElementById('cpybtn_{_tick}');
+                              b.innerText='✓ Copied';
+                              b.style.color='#4ade80';
+                              b.style.borderColor='#4ade80';
+                              setTimeout(function(){{b.innerText='⧉ Copy';b.style.color='#64748b';b.style.borderColor='#334155';}},1500);
+                            "
+                            style="cursor:pointer;background:transparent;border:1px solid #334155;
+                                   border-radius:6px;padding:1px 7px;font-size:11px;color:#64748b;
+                                   font-family:inherit;vertical-align:middle;transition:all .2s;">
+                            ⧉ Copy
+                          </button>
+                          &nbsp;
                           <span style="background:{_badge_color}20;color:{_badge_color};border-radius:10px;
                                        padding:1px 8px;font-size:11px;font-weight:600;">{_badge}</span>
                           &nbsp;
