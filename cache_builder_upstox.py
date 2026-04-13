@@ -2,15 +2,29 @@
 cache_builder_upstox.py
 =======================
 Upstox V3 API se full history cache build karta hai.
-GitHub Actions pe daily 8:30 PM IST (15:00 UTC) pe chalta hai.
+GitHub Actions pe daily 6:02 PM IST (12:32 UTC) pe chalta hai.
 
-── BUG FIX: Upstox to_date ──────────────────────────────────
-  Upstox V3 API ka to_date parameter inclusive hai.
-  to_date = "2026-04-10"  →  April 10 ka data milna chahiye  ✅
-  Lekin safety ke liye tomorrow_str (today + 1) use karte hain —
-  Upstox future date ko silently ignore karta hai aur latest
-  available date tak ka data return karta hai.
-  Is tarah aaj ka data guaranteed milta hai.
+── ROOT CAUSE FIX: Upstox T+1 Delay ────────────────────────
+  Upstox /v3/historical-candle/days/1/ API genuinely T+1 delay
+  hai — same trading day ka candle KABHI nahi milta is endpoint
+  se, chahe to_date = tomorrow pass karo ya nahi.
+
+  CONFIRMED: 11:50 PM IST pe bhi Monday ka data nahi aata —
+  sirf Friday (prev trading day) tak ka data milta hai.
+
+  FIX: Upstox Market Quote API use karo today's data ke liye.
+    GET /v3/market-quote/quotes?symbol=NSE_EQ%7C...
+  
+  Market close (3:30 PM IST) ke baad:
+    - ohlc.close = official closing price for today ✅
+    - ohlc.high  = day's high ✅
+    - volume     = total day volume ✅
+  
+  Flow:
+    1. Historical fetch → data up to yesterday (as before)
+    2. Market Quote fetch → today's OHLCV in batches of 100
+    3. If today not in index AND volume > 0 → append today's row
+    4. Update ATH if today's high > historical max
 ──────────────────────────────────────────────────────────────
 """
 
@@ -36,13 +50,9 @@ RECENT_MONTHS  = 40
 EXTRA_SYMBOLS  = ["GOLDBEES.NS", "SILVERBEES.NS"]
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
-_UPSTOX_CANDLE = "https://api.upstox.com/v3/historical-candle"
-
-# First two fixed decade ranges — third range built dynamically in build_cache()
-_DECADE_RANGES_FIXED = [
-    ("2000-01-01", "2009-12-31"),
-    ("2010-01-01", "2019-12-31"),
-]
+_UPSTOX_CANDLE      = "https://api.upstox.com/v3/historical-candle"
+_UPSTOX_QUOTE_URL   = "https://api.upstox.com/v3/market-quote/quotes"
+_QUOTE_BATCH_SIZE   = 100   # symbols per market-quote request (URL length safe)
 
 
 def log(msg: str):
@@ -117,9 +127,9 @@ def _fetch_one_decade(
     retries        : int = 2,
 ) -> pd.DataFrame | None:
     """
-    Ek decade ka data fetch karo.
-    to_date = tomorrow_str use karo (today+1) — Upstox future date ignore
-    karta hai aur latest available date tak data return karta hai.
+    Ek decade ka historical data fetch karo.
+    NOTE: This endpoint has T+1 delay — today's candle NOT available here.
+    Today's data is handled separately via _fetch_today_quotes().
     """
     encoded = instrument_key.replace("|", "%7C")
     url     = f"{_UPSTOX_CANDLE}/{encoded}/days/1/{to_date}/{from_date}"
@@ -152,6 +162,7 @@ def _fetch_one_decade(
                 columns=["timestamp", "open", "high", "low", "close", "volume", "oi"]
             )
             df["timestamp"] = pd.to_datetime(df["timestamp"])
+            # Strip timezone: keep date as-is (IST date, not UTC conversion)
             if df["timestamp"].dt.tz is not None:
                 df["timestamp"] = df["timestamp"].dt.tz_localize(None)
             df.set_index("timestamp", inplace=True)
@@ -171,6 +182,185 @@ def _fetch_one_decade(
             delay *= 2
 
     return None
+
+
+# ── TODAY's data via Market Quote API ────────────────────────
+def _fetch_today_quotes(
+    symbols        : list,
+    instrument_map : dict,
+    access_token   : str,
+    today          : date,
+) -> dict:
+    """
+    Upstox Market Quote API se today's OHLCV fetch karo.
+
+    Historical candle API mein T+1 delay hai — same-day candle kabhi
+    nahi milta us endpoint se. Market Quote API real-time hai aur
+    market close (3:30 PM IST) ke baad today's final OHLCV return
+    karta hai.
+
+    API: GET /v3/market-quote/quotes?symbol=NSE_EQ%7CKEY1,NSE_EQ%7CKEY2,...
+    Returns ohlc.close = official close, ohlc.high = day high, volume = total
+
+    Returns: { "RELIANCE.NS": {"close":2889.5, "high":2910.0, "volume":1.23e9}, ... }
+    Filters out: symbols with volume=0 (market holiday / no trading)
+    """
+    # Skip weekends — market closed
+    if today.weekday() >= 5:
+        log(f"  Today ({today}) is weekend — no market quotes to fetch")
+        return {}
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept":        "application/json",
+    }
+
+    # Build (sym → key) pairs for symbols we have keys for
+    sym_key_pairs = []
+    for sym in symbols:
+        key = _get_key(sym, instrument_map)
+        if key:
+            sym_key_pairs.append((sym, key))
+
+    log(f"  Fetching today's quotes for {len(sym_key_pairs):,} symbols in batches of {_QUOTE_BATCH_SIZE}...")
+
+    today_data  = {}
+    n_batches   = (len(sym_key_pairs) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE
+    ok_count    = 0
+    skip_count  = 0
+    t0          = time.monotonic()
+
+    for b_idx in range(0, len(sym_key_pairs), _QUOTE_BATCH_SIZE):
+        batch    = sym_key_pairs[b_idx : b_idx + _QUOTE_BATCH_SIZE]
+        batch_no = b_idx // _QUOTE_BATCH_SIZE + 1
+
+        # Build key→sym reverse map for this batch
+        key_to_sym = {key: sym for sym, key in batch}
+
+        # URL-encode | → %7C
+        keys_param = ",".join(key.replace("|", "%7C") for _, key in batch)
+        url        = f"{_UPSTOX_QUOTE_URL}?symbol={keys_param}"
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+
+            if resp.status_code == 429:
+                time.sleep(5)
+                resp = requests.get(url, headers=headers, timeout=30)
+
+            if resp.status_code in (401, 403):
+                raise ValueError(f"Token invalid (HTTP {resp.status_code})")
+
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+
+            for raw_key, quote in data.items():
+                # raw_key from API may or may not include URL encoding
+                clean_key = raw_key.replace("%7C", "|")
+                sym = key_to_sym.get(clean_key) or key_to_sym.get(raw_key)
+                if not sym:
+                    continue
+
+                ohlc   = quote.get("ohlc", {})
+                close  = float(ohlc.get("close") or 0)
+                high   = float(ohlc.get("high")  or 0)
+                low    = float(ohlc.get("low")   or 0)
+                volume = float(quote.get("volume") or 0)
+
+                # Skip if no trading happened (holiday / data not yet available)
+                if close <= 0 or volume <= 0:
+                    skip_count += 1
+                    continue
+
+                today_data[sym] = {
+                    "close":  close,
+                    "high":   high,
+                    "low":    low,
+                    "volume": volume,
+                }
+                ok_count += 1
+
+        except ValueError:
+            raise
+        except Exception as e:
+            log(f"  Quote batch {batch_no}/{n_batches} failed: {type(e).__name__}: {e}")
+
+        # Minimal sleep between batches
+        time.sleep(0.2)
+
+        if batch_no % 5 == 0 or batch_no == n_batches:
+            elapsed = time.monotonic() - t0
+            log(
+                f"  Quote batches: {batch_no}/{n_batches} | "
+                f"Got: {ok_count} | Skipped: {skip_count} | "
+                f"Time: {elapsed:.1f}s"
+            )
+
+    log(f"  Today's quotes: {ok_count} symbols with data, {skip_count} skipped (no volume)")
+    return today_data
+
+
+def _apply_today_quotes(
+    close     : pd.DataFrame,
+    high      : pd.DataFrame,
+    volume    : pd.DataFrame,
+    ath_dict  : dict,
+    today_data: dict,
+    today     : date,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
+    """
+    Today's market quote data ko close/high/volume DataFrames mein append karo.
+    ATH bhi update karo agar today's high > historical max.
+    """
+    if not today_data:
+        log("  No today's quote data to apply.")
+        return close, high, volume, ath_dict
+
+    today_ts = pd.Timestamp(today)
+
+    # Check karo ki today already index mein hai (shouldn't be, but safety)
+    if today_ts in close.index:
+        log(f"  Today ({today}) already in index — skipping quote append")
+        return close, high, volume, ath_dict
+
+    # Build today's rows — only for symbols present in our DataFrames
+    close_today = {}
+    high_today  = {}
+    vol_today   = {}
+
+    for sym, q in today_data.items():
+        if sym in close.columns:
+            close_today[sym] = q["close"]
+        if sym in high.columns:
+            high_today[sym]  = q["high"]
+        if sym in volume.columns:
+            vol_today[sym]   = q["close"] * q["volume"]   # value of volume traded
+
+        # Update ATH
+        if sym in ath_dict and q["high"] > ath_dict[sym]:
+            ath_dict[sym] = q["high"]
+
+    if not close_today:
+        log("  Today's data has no overlap with cache columns — skipping")
+        return close, high, volume, ath_dict
+
+    # Create single-row DataFrames for today
+    new_row_close  = pd.DataFrame(close_today, index=[today_ts])
+    new_row_high   = pd.DataFrame(high_today,  index=[today_ts])
+    new_row_volume = pd.DataFrame(vol_today,   index=[today_ts])
+
+    # Reindex to match existing columns (fills NaN for symbols without data)
+    new_row_close  = new_row_close.reindex(columns=close.columns)
+    new_row_high   = new_row_high.reindex(columns=high.columns)
+    new_row_volume = new_row_volume.reindex(columns=volume.columns)
+
+    # Concat
+    close  = pd.concat([close,  new_row_close],  axis=0).sort_index()
+    high   = pd.concat([high,   new_row_high],   axis=0).sort_index()
+    volume = pd.concat([volume, new_row_volume], axis=0).sort_index()
+
+    log(f"  ✅ Today ({today}) appended: {len(close_today)} close | {len(high_today)} high | {len(vol_today)} volume values")
+    return close, high, volume, ath_dict
 
 
 # ── Sequential bulk fetch — 3 decades per symbol ─────────────
@@ -267,7 +457,7 @@ def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
         return True
     else:
         log(f"  ⚠️  Today's data ({today}) NOT in cache — last: {last_date}")
-        log(f"     Possible reason: holiday/weekend, or Upstox data delay")
+        log(f"     Possible reason: holiday/weekend, or all-zero volume (market holiday)")
         return False
 
 
@@ -293,26 +483,20 @@ def build_cache():
     # 4. Build decade ranges
     today        = date.today()
     today_str    = today.strftime("%Y-%m-%d")
-
-    # ── KEY FIX: use tomorrow as to_date ─────────────────────
-    # Upstox to_date is inclusive. Using tomorrow ensures today's
-    # candle is requested — Upstox silently caps at latest available.
     tomorrow_str = (today + timedelta(days=1)).strftime("%Y-%m-%d")
 
     decade_ranges = [
         ("2000-01-01", "2009-12-31"),
         ("2010-01-01", "2019-12-31"),
-        ("2020-01-01", tomorrow_str),   # ← FIXED: tomorrow_str instead of today_str
+        ("2020-01-01", tomorrow_str),
     ]
-
     end_date = datetime.combine(today, datetime.min.time())
 
     log(f"Today              : {today_str}")
-    log(f"Upstox to_date     : {tomorrow_str} (includes today's data)")
     log(f"Decade ranges      : {[f'{f}→{t}' for f,t in decade_ranges]}")
-    log(f"Total API calls    : {len(symbols)} × 3 = {len(symbols)*3:,}")
+    log(f"NOTE: Historical API has T+1 delay — today's data via Market Quote API")
 
-    # 5. Fetch
+    # 5. Historical fetch (up to yesterday)
     ath_dict, close_map, high_map, vol_map, failed = fetch_all_sequential(
         symbols, instrument_map, access_token, decade_ranges, end_date
     )
@@ -332,20 +516,49 @@ def build_cache():
     close  = _make_df(close_map)
     high   = _make_df(high_map)
     volume = _make_df(vol_map)
-    ath_df = pd.Series(ath_dict, name="ATH", dtype=float).to_frame()
 
-    log(f"  close: {close.shape} | high: {high.shape} | vol: {volume.shape} | ath: {ath_df.shape}")
+    log(f"  After historical fetch: close {close.shape} | high {high.shape} | vol {volume.shape}")
 
     if close.empty:
-        log("ERROR: close DataFrame empty")
+        log("ERROR: close DataFrame empty after historical fetch")
         sys.exit(1)
 
-    # 7. Data freshness check
+    # 7. TODAY's data via Market Quote API ──────────────────────
+    # Upstox historical API has T+1 delay. Today's candle is NOT
+    # available in /days/1/ endpoint on the same day.
+    # We fetch today's OHLCV via Market Quote API instead.
+    log("=" * 40)
+    log("Fetching TODAY's data via Market Quote API...")
+    log(f"  (Historical API ends at: {close.index[-1].date()})")
+    log("=" * 40)
+
+    today_data = {}
+    try:
+        today_data = _fetch_today_quotes(symbols, instrument_map, access_token, today)
+    except ValueError as e:
+        log(f"  ⚠️  Market quote fetch: token error — {e}")
+    except Exception as e:
+        log(f"  ⚠️  Market quote fetch failed: {type(e).__name__}: {e}")
+        log(f"  Proceeding with historical data only.")
+
+    if today_data:
+        close, high, volume, ath_dict = _apply_today_quotes(
+            close, high, volume, ath_dict, today_data, today
+        )
+    else:
+        log(f"  No today's data applied (weekend / holiday / API issue).")
+
+    # Rebuild ath_df after potential ATH updates
+    ath_df = pd.Series(ath_dict, name="ATH", dtype=float).to_frame()
+
+    log(f"  Final: close {close.shape} | high {high.shape} | vol {volume.shape} | ath {ath_df.shape}")
+
+    # 8. Data freshness check
     log("Verifying data freshness...")
     today_present      = verify_data_freshness(close, today)
     last_date_in_cache = close.index[-1].date() if not close.empty else None
 
-    # 8. Save Parquet
+    # 9. Save Parquet
     log("Saving Parquet files...")
     close.to_parquet(CACHE_DIR  / "close.parquet")
     high.to_parquet(CACHE_DIR   / "high.parquet")
@@ -356,36 +569,39 @@ def build_cache():
         mb = (CACHE_DIR / fname).stat().st_size / 1_048_576
         log(f"  {fname}: {mb:.1f} MB")
 
-    # 9. Meta JSON
+    # 10. Meta JSON
     total_min = (time.monotonic() - t_total) / 60
     meta = {
-        "build_date"         : today.isoformat(),
-        "build_time_utc"     : datetime.utcnow().strftime("%H:%M:%S"),
-        "build_duration_min" : round(total_min, 1),
-        "symbols_total"      : len(symbols),
-        "symbols_fetched"    : len(ath_dict),
-        "symbols_failed"     : len([f for f in failed if f not in
-                                    [s for s in symbols if not _get_key(s, instrument_map)]]),
-        "not_in_master"      : len(symbols) - len([s for s in symbols
-                                                   if _get_key(s, instrument_map)]),
-        "failed_symbols"     : sorted(failed),
-        "data_start_full"    : "2000-01-01",
-        "data_start_recent"  : start_recent.strftime("%Y-%m-%d"),
-        "data_end"           : today_str,
-        "last_date_in_cache" : str(last_date_in_cache),
-        "today_data_present" : today_present,
-        "recent_months"      : RECENT_MONTHS,
-        "source"             : "Upstox V3 (daily candles)",
-        "upstox_to_date"     : tomorrow_str,
-        "symbol_source"      : "NSE EQUITY_L.csv (direct)",
-        "extra_symbols"      : EXTRA_SYMBOLS,
-        "decades_per_symbol" : 3,
-        "decade_ranges"      : decade_ranges,
-        "total_api_calls"    : len(ath_dict) * 3,
-        "close_shape"        : list(close.shape),
-        "high_shape"         : list(high.shape),
-        "volume_shape"       : list(volume.shape),
-        "ath_count"          : len(ath_df),
+        "build_date"                 : today.isoformat(),
+        "build_time_utc"             : datetime.utcnow().strftime("%H:%M:%S"),
+        "build_duration_min"         : round(total_min, 1),
+        "symbols_total"              : len(symbols),
+        "symbols_fetched"            : len(ath_dict),
+        "symbols_failed"             : len([f for f in failed if f not in
+                                            [s for s in symbols if not _get_key(s, instrument_map)]]),
+        "not_in_master"              : len(symbols) - len([s for s in symbols
+                                                           if _get_key(s, instrument_map)]),
+        "failed_symbols"             : sorted(failed),
+        "data_start_full"            : "2000-01-01",
+        "data_start_recent"          : start_recent.strftime("%Y-%m-%d"),
+        "data_end"                   : today_str,
+        "last_date_in_cache"         : str(last_date_in_cache),
+        "today_data_present"         : today_present,
+        "today_quotes_fetched"       : len(today_data),
+        "recent_months"              : RECENT_MONTHS,
+        "source"                     : "Upstox V3 (historical candle + market quote for today)",
+        "today_data_source"          : "Upstox Market Quote API (/v3/market-quote/quotes)",
+        "upstox_to_date"             : tomorrow_str,
+        "symbol_source"              : "NSE EQUITY_L.csv (direct)",
+        "extra_symbols"              : EXTRA_SYMBOLS,
+        "decades_per_symbol"         : 3,
+        "decade_ranges"              : decade_ranges,
+        "total_api_calls_historical" : len(ath_dict) * 3,
+        "total_api_calls_quotes"     : (len(symbols) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE,
+        "close_shape"                : list(close.shape),
+        "high_shape"                 : list(high.shape),
+        "volume_shape"               : list(volume.shape),
+        "ath_count"                  : len(ath_df),
     }
     with open(CACHE_DIR / "cache_meta.json", "w") as f:
         json.dump(meta, f, indent=2)
@@ -393,7 +609,7 @@ def build_cache():
     log("=" * 58)
     log("✅ UPSTOX CACHE BUILD COMPLETE")
     log(f"   Symbols       : {meta['symbols_fetched']}/{meta['symbols_total']} fetched")
-    log(f"   API calls     : {meta['total_api_calls']:,}")
+    log(f"   Today quotes  : {meta['today_quotes_fetched']} symbols")
     log(f"   Last date     : {last_date_in_cache}")
     log(f"   Today present : {'✅ YES' if today_present else '⚠️  NO (holiday/weekend?)'}")
     log(f"   Time          : {total_min:.1f} min")
