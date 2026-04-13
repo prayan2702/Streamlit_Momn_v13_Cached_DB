@@ -2,8 +2,8 @@ name: Morning Equity List Fetch
 
 on:
   schedule:
-    # Roz 3:30 AM UTC = 9:00 AM IST, Monday-Friday
-    - cron: '30 3 * * 1-5'
+    # Target approx 7:00 AM IST to beat the delay
+    - cron: '17 1 * * 1-5'
 
   workflow_dispatch:
 
