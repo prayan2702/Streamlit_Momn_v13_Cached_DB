@@ -1036,7 +1036,9 @@ with st.sidebar:
     elif st.session_state.data_source == "Angel One":
         st.divider()
         if _ANGEL_AVAILABLE:
-            get_angelone_client(sidebar=True)
+            _ao_client = get_angelone_client(sidebar=True)
+            if _ao_client:
+                st.session_state["angelone_client"] = _ao_client
         else:
             st.sidebar.markdown("""
             <div style="background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #d97706;
