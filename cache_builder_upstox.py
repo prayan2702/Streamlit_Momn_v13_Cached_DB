@@ -51,8 +51,21 @@ EXTRA_SYMBOLS  = ["GOLDBEES.NS", "SILVERBEES.NS"]
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
 _UPSTOX_CANDLE      = "https://api.upstox.com/v3/historical-candle"
-_UPSTOX_QUOTE_URL   = "https://api.upstox.com/v3/market-quote/quotes"
-_QUOTE_BATCH_SIZE   = 100   # symbols per market-quote request (URL length safe)
+_UPSTOX_OHLC_URL    = "https://api.upstox.com/v3/market-quote/ohlc"   # ← FIXED endpoint
+_QUOTE_BATCH_SIZE   = 100   # symbols per request (URL length safe)
+
+# ── Why OHLC endpoint, not quotes endpoint ───────────────────
+# /v3/market-quote/quotes  → ohlc.close = PREVIOUS SESSION close ❌
+# /v3/market-quote/ohlc    → live_ohlc  = current session  ✅
+#                             prev_ohlc  = previous session
+#
+# Field selection logic (based on IST time when script runs):
+#   live_ohlc.volume > 0  → market traded today → use live_ohlc ✅
+#   live_ohlc.volume = 0  → next session not started (12:10 AM case)
+#                         → use prev_ohlc = last completed session ✅
+#
+# Response key format: API returns "NSE_EQ:RELIANCE" (colon, not pipe)
+# Must normalize: raw_key.replace(":", "|") before lookup
 
 
 def log(msg: str):
@@ -184,7 +197,7 @@ def _fetch_one_decade(
     return None
 
 
-# ── TODAY's data via Market Quote API ────────────────────────
+# ── TODAY's data via OHLC Market Quote API ───────────────────
 def _fetch_today_quotes(
     symbols        : list,
     instrument_map : dict,
@@ -192,22 +205,28 @@ def _fetch_today_quotes(
     today          : date,
 ) -> dict:
     """
-    Upstox Market Quote API se today's OHLCV fetch karo.
+    Upstox OHLC Market Quote API se today's OHLCV fetch karo.
 
-    Historical candle API mein T+1 delay hai — same-day candle kabhi
-    nahi milta us endpoint se. Market Quote API real-time hai aur
-    market close (3:30 PM IST) ke baad today's final OHLCV return
-    karta hai.
+    Historical candle API has T+1 delay — same-day candle NEVER available.
+    OHLC Quote API (/v3/market-quote/ohlc?interval=1d) is the correct fix:
+      live_ohlc = current trading session (today, if market has traded)
+      prev_ohlc = previous trading session (yesterday)
 
-    API: GET /v3/market-quote/quotes?symbol=NSE_EQ%7CKEY1,NSE_EQ%7CKEY2,...
-    Returns ohlc.close = official close, ohlc.high = day high, volume = total
+    Field selection:
+      live_ohlc.volume > 0  → market traded today → use live_ohlc ✅
+      live_ohlc.volume = 0  → 12:10 AM case (next session not started)
+                            → use prev_ohlc = last completed session ✅
 
-    Returns: { "RELIANCE.NS": {"close":2889.5, "high":2910.0, "volume":1.23e9}, ... }
-    Filters out: symbols with volume=0 (market holiday / no trading)
+    IMPORTANT: Response keys use COLON not pipe:
+      Sent:     "NSE_EQ|RELIANCE"
+      Returned: "NSE_EQ:RELIANCE"   ← must normalize before lookup!
+
+    Params passed via requests params dict (not manual %7C encoding).
+
+    Returns: { "RELIANCE.NS": {"close":..., "high":..., "volume":...}, ... }
     """
-    # Skip weekends — market closed
     if today.weekday() >= 5:
-        log(f"  Today ({today}) is weekend — no market quotes to fetch")
+        log(f"  Today ({today}) is weekend — skipping quotes")
         return {}
 
     headers = {
@@ -215,38 +234,44 @@ def _fetch_today_quotes(
         "Accept":        "application/json",
     }
 
-    # Build (sym → key) pairs for symbols we have keys for
     sym_key_pairs = []
     for sym in symbols:
         key = _get_key(sym, instrument_map)
         if key:
             sym_key_pairs.append((sym, key))
 
-    log(f"  Fetching today's quotes for {len(sym_key_pairs):,} symbols in batches of {_QUOTE_BATCH_SIZE}...")
+    log(f"  Fetching OHLC quotes for {len(sym_key_pairs):,} symbols "
+        f"in batches of {_QUOTE_BATCH_SIZE} via /v3/market-quote/ohlc...")
 
-    today_data  = {}
-    n_batches   = (len(sym_key_pairs) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE
-    ok_count    = 0
-    skip_count  = 0
-    t0          = time.monotonic()
+    today_data = {}
+    n_batches  = (len(sym_key_pairs) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE
+    ok_count   = 0
+    skip_count = 0
+    t0         = time.monotonic()
 
     for b_idx in range(0, len(sym_key_pairs), _QUOTE_BATCH_SIZE):
         batch    = sym_key_pairs[b_idx : b_idx + _QUOTE_BATCH_SIZE]
         batch_no = b_idx // _QUOTE_BATCH_SIZE + 1
 
-        # Build key→sym reverse map for this batch
-        key_to_sym = {key: sym for sym, key in batch}
+        # Build lookup: both pipe and colon variants → sym
+        # API response uses COLON ("NSE_EQ:RELIANCE"), we send PIPE ("NSE_EQ|RELIANCE")
+        key_to_sym = {}
+        for sym, key in batch:
+            key_to_sym[key]                    = sym   # NSE_EQ|RELIANCE
+            key_to_sym[key.replace("|", ":")] = sym   # NSE_EQ:RELIANCE ← API response format
 
-        # URL-encode | → %7C
-        keys_param = ",".join(key.replace("|", "%7C") for _, key in batch)
-        url        = f"{_UPSTOX_QUOTE_URL}?symbol={keys_param}"
+        # Use requests params dict — requests handles URL encoding automatically
+        keys_str = ",".join(key for _, key in batch)
+        params   = {"instrument_key": keys_str, "interval": "1d"}
 
         try:
-            resp = requests.get(url, headers=headers, timeout=30)
+            resp = requests.get(_UPSTOX_OHLC_URL, headers=headers,
+                                params=params, timeout=30)
 
             if resp.status_code == 429:
                 time.sleep(5)
-                resp = requests.get(url, headers=headers, timeout=30)
+                resp = requests.get(_UPSTOX_OHLC_URL, headers=headers,
+                                    params=params, timeout=30)
 
             if resp.status_code in (401, 403):
                 raise ValueError(f"Token invalid (HTTP {resp.status_code})")
@@ -255,19 +280,40 @@ def _fetch_today_quotes(
             data = resp.json().get("data", {})
 
             for raw_key, quote in data.items():
-                # raw_key from API may or may not include URL encoding
-                clean_key = raw_key.replace("%7C", "|")
-                sym = key_to_sym.get(clean_key) or key_to_sym.get(raw_key)
+                # Normalize: response key may be "NSE_EQ:RELIANCE" or "NSE_EQ|RELIANCE"
+                sym = key_to_sym.get(raw_key)
+                if not sym:
+                    # Try alternate separator just in case
+                    sym = key_to_sym.get(raw_key.replace(":", "|"))
                 if not sym:
                     continue
 
-                ohlc   = quote.get("ohlc", {})
-                close  = float(ohlc.get("close") or 0)
-                high   = float(ohlc.get("high")  or 0)
-                low    = float(ohlc.get("low")   or 0)
-                volume = float(quote.get("volume") or 0)
+                # ── FIELD SELECTION: live vs prev ──────────────
+                # live_ohlc = current trading session (today)
+                # prev_ohlc = previous session (yesterday)
+                #
+                # At 12:10 AM: live_ohlc.volume = 0 (session not started)
+                #   → use prev_ohlc which = today's just-closed session ✅
+                # At 8 PM same day: live_ohlc.volume > 0 (today's data) ✅
+                live  = quote.get("live_ohlc", {}) or {}
+                prev  = quote.get("prev_ohlc", {}) or {}
 
-                # Skip if no trading happened (holiday / data not yet available)
+                live_vol   = float(live.get("volume") or 0)
+                live_close = float(live.get("close")  or 0)
+
+                if live_vol > 0 and live_close > 0:
+                    # Market has traded today — use live session
+                    chosen     = live
+                    chosen_src = "live_ohlc"
+                else:
+                    # Session not started (midnight case) — use prev session
+                    chosen     = prev
+                    chosen_src = "prev_ohlc"
+
+                close  = float(chosen.get("close")  or 0)
+                high   = float(chosen.get("high")   or 0)
+                volume = float(chosen.get("volume") or 0)
+
                 if close <= 0 or volume <= 0:
                     skip_count += 1
                     continue
@@ -275,8 +321,8 @@ def _fetch_today_quotes(
                 today_data[sym] = {
                     "close":  close,
                     "high":   high,
-                    "low":    low,
                     "volume": volume,
+                    "_src":   chosen_src,
                 }
                 ok_count += 1
 
@@ -285,7 +331,6 @@ def _fetch_today_quotes(
         except Exception as e:
             log(f"  Quote batch {batch_no}/{n_batches} failed: {type(e).__name__}: {e}")
 
-        # Minimal sleep between batches
         time.sleep(0.2)
 
         if batch_no % 5 == 0 or batch_no == n_batches:
@@ -296,7 +341,12 @@ def _fetch_today_quotes(
                 f"Time: {elapsed:.1f}s"
             )
 
-    log(f"  Today's quotes: {ok_count} symbols with data, {skip_count} skipped (no volume)")
+    # Report which source was used (live vs prev)
+    live_count = sum(1 for v in today_data.values() if v.get("_src") == "live_ohlc")
+    prev_count = sum(1 for v in today_data.values() if v.get("_src") == "prev_ohlc")
+    log(f"  Today's quotes: {ok_count} symbols | "
+        f"live_ohlc: {live_count} | prev_ohlc: {prev_count} | "
+        f"skipped: {skip_count}")
     return today_data
 
 
