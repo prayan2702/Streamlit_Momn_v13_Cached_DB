@@ -1,25 +1,24 @@
 {
-  "build_date": "2026-04-14",
-  "build_time_utc": "15:18:55",
-  "build_duration_min": 59.1,
+  "build_date": "2026-04-15",
+  "build_time_utc": "15:23:52",
+  "build_duration_min": 72.0,
   "symbols_total": 2136,
-  "symbols_fetched": 2134,
+  "symbols_fetched": 2135,
   "symbols_failed": 1,
-  "not_in_master": 1,
+  "not_in_master": 0,
   "failed_symbols": [
-    "AKZOINDIA.NS",
     "CHOLAFIN.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-14",
-  "data_end": "2026-04-14",
+  "data_start_recent": "2022-12-15",
+  "data_end": "2026-04-15",
   "last_date_in_cache": "2026-04-13",
   "today_data_present": false,
   "today_quotes_fetched": 0,
   "recent_months": 40,
   "source": "Upstox V3 (historical candle + market quote for today)",
   "today_data_source": "Upstox Market Quote API (/v3/market-quote/quotes)",
-  "upstox_to_date": "2026-04-15",
+  "upstox_to_date": "2026-04-16",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -37,22 +36,22 @@
     ],
     [
       "2020-01-01",
-      "2026-04-15"
+      "2026-04-16"
     ]
   ],
-  "total_api_calls_historical": 6402,
+  "total_api_calls_historical": 6405,
   "total_api_calls_quotes": 22,
   "close_shape": [
-    826,
-    2134
+    825,
+    2135
   ],
   "high_shape": [
-    826,
-    2134
+    825,
+    2135
   ],
   "volume_shape": [
-    826,
-    2134
+    825,
+    2135
   ],
-  "ath_count": 2134
+  "ath_count": 2135
 }
