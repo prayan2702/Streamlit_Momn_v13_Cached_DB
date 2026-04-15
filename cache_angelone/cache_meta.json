@@ -1,19 +1,17 @@
 {
-  "build_date": "2026-04-14",
-  "build_time_utc": "17:40:28",
-  "build_duration_min": 197.4,
+  "build_date": "2026-04-15",
+  "build_time_utc": "17:34:43",
+  "build_duration_min": 200.1,
   "symbols_total": 2136,
-  "symbols_fetched": 2135,
+  "symbols_fetched": 2136,
   "symbols_failed": 0,
-  "not_in_master": 1,
-  "failed_symbols": [
-    "AKZOINDIA.NS"
-  ],
+  "not_in_master": 0,
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2022-12-14",
-  "data_end": "2026-04-14",
-  "last_date_in_cache": "2026-04-13",
-  "today_data_present": false,
+  "data_start_recent": "2022-12-15",
+  "data_end": "2026-04-15",
+  "last_date_in_cache": "2026-04-15",
+  "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
@@ -42,23 +40,23 @@
     ],
     [
       "2021-11-26",
-      "2026-04-15"
+      "2026-04-16"
     ]
   ],
-  "last_chunk_todate": "2026-04-15 15:30",
-  "total_api_calls": 10675,
+  "last_chunk_todate": "2026-04-16 15:30",
+  "total_api_calls": 10680,
   "rate_limit": "3 req/sec",
   "close_shape": [
     825,
-    2135
+    2136
   ],
   "high_shape": [
     825,
-    2135
+    2136
   ],
   "volume_shape": [
     825,
-    2135
+    2136
   ],
-  "ath_count": 2135
+  "ath_count": 2136
 }
