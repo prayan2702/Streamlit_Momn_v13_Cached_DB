@@ -233,17 +233,17 @@ def _fetch_upstox_today_quotes(
             key_to_sym[key]                    = sym   # NSE_EQ|RELIANCE
             key_to_sym[key.replace("|", ":")] = sym   # NSE_EQ:RELIANCE (API response)
 
-        # requests params dict handles URL encoding — no manual %7C needed
-        keys_str = ",".join(key for _, key in batch)
-        params   = {"instrument_key": keys_str, "interval": "1d"}
+        # ── URL FIX: manual URL, NOT requests params= ────────────
+        # requests params= encodes commas as %2C → Upstox returns empty {}
+        # Correct: encode | → %7C, commas stay literal
+        keys_encoded = ",".join(key.replace("|", "%7C") for _, key in batch)
+        full_url     = f"{_UPSTOX_QUOTE_URL}?instrument_key={keys_encoded}&interval=1d"
 
         try:
-            resp = requests.get(_UPSTOX_QUOTE_URL, headers=headers,
-                                params=params, timeout=30)
+            resp = requests.get(full_url, headers=headers, timeout=30)
             if resp.status_code == 429:
                 time.sleep(5)
-                resp = requests.get(_UPSTOX_QUOTE_URL, headers=headers,
-                                    params=params, timeout=30)
+                resp = requests.get(full_url, headers=headers, timeout=30)
             if resp.status_code in (401, 403):
                 raise ValueError(f"Token invalid (HTTP {resp.status_code})")
             resp.raise_for_status()

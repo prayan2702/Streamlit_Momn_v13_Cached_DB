@@ -128,17 +128,24 @@ except Exception:
 # ── Inline YFinance fetcher (fallback when data_service fails) ─
 def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
                             progress_bar, status_text, chunk_size=15):
-    """Pure yfinance fetch — no data_service dependency."""
+    """Pure yfinance fetch — no data_service dependency.
+
+    yfinance end is EXCLUSIVE — end=today means data only until yesterday.
+    We always pass end = end_date + 1 day to include today's data.
+    """
+    import datetime as _dt
     close_chunks, high_chunks, vol_chunks = [], [], []
     failed = []
     total  = len(symbols_ns)
+    # ── FIX: yfinance end is exclusive — add 1 day to include today ──
+    end_date_excl = end_date + _dt.timedelta(days=1) if hasattr(end_date, 'day') else end_date
     for k in range(0, total, chunk_size):
         chunk = symbols_ns[k:k + chunk_size]
         pct   = min((k + chunk_size) / total, 1.0)
         status_text.markdown(f"⏳ **Fetching {k+1}–{min(k+chunk_size, total)} / {total}**")
         progress_bar.progress(pct * 0.88)
         try:
-            raw = yf.download(chunk, start=start_date, end=end_date,
+            raw = yf.download(chunk, start=start_date, end=end_date_excl,
                               progress=False, auto_adjust=True, threads=True,
                               multi_level_index=False)
             if not raw.empty:
@@ -1521,6 +1528,7 @@ elif st.session_state.current_step == 2:
         # Reset cross-source review for fresh run
         st.session_state["_cross_review_done"]      = False
         st.session_state["_cross_review_overrides"] = {}
+        st.session_state["_pending_topup"]          = False   # clear stale top-up state
         st.session_state["_cross_diff_df"]          = None
         st.session_state["_cross_error"]            = None
         st.session_state["_cross_error_detail"]     = None
@@ -1618,6 +1626,10 @@ elif st.session_state.current_step == 2:
                     st.session_state.failed_blank = failed_blank
 
                     age = _age_fn()
+                    # ── Cache freshness info ──────────────────────
+                    _cache_last_date_str = meta.get("last_date_in_cache", "?")
+                    _today_flag          = meta.get("today_data_present", False)
+                    _freshness_icon      = "✅" if _today_flag else "⚠️"
                     if age > 3:
                         st.warning(
                             f"⚠️ {_cache_lbl} Cache {int(age)} din purana hai "
@@ -1630,8 +1642,44 @@ elif st.session_state.current_step == 2:
                             f"✅ {_cache_lbl} Cache loaded! "
                             f"{meta.get('symbols_fetched','?'):,} symbols | "
                             f"Build: {meta.get('build_date','?')} | "
+                            f"Last date: {_freshness_icon} **{_cache_last_date_str}** | "
                             f"Age: {int(age)} din"
                         )
+
+                    # ── Stale close check → pending_topup ────────
+                    # If last cached date is not today (last trading day), offer
+                    # a close top-up so calculations use the latest closing prices.
+                    _today_date = datetime.date.today()
+                    # Last expected trading day: today if weekday, else last Friday
+                    _weekday = _today_date.weekday()
+                    if _weekday == 5:   # Saturday → Friday
+                        _last_trade_day = _today_date - datetime.timedelta(days=1)
+                    elif _weekday == 6: # Sunday → Friday
+                        _last_trade_day = _today_date - datetime.timedelta(days=2)
+                    else:
+                        _last_trade_day = _today_date
+
+                    _cache_last = None
+                    try:
+                        import datetime as _dtmod
+                        _cache_last = _dtmod.date.fromisoformat(_cache_last_date_str)
+                    except Exception:
+                        pass
+
+                    _is_stale = (_cache_last is not None and _cache_last < _last_trade_day)
+
+                    if _is_stale:
+                        st.session_state["_pending_topup"]        = True
+                        st.session_state["_topup_close"]          = close
+                        st.session_state["_topup_high"]           = high
+                        st.session_state["_topup_volume"]         = volume
+                        st.session_state["_topup_fp"]             = _filter_params
+                        st.session_state["_topup_dates"]          = dates
+                        st.session_state["_topup_cache_lbl"]      = _cache_lbl
+                        st.session_state["_topup_cache_lbl_src"]  = _api_source
+                        st.session_state["_topup_last_date"]      = str(_cache_last)
+                        st.session_state["_topup_target_date"]    = str(_last_trade_day)
+                        st.rerun()
 
                     # ── Issue 4: Missing stocks detection + YFinance top-up ──
                     _universe_syms = st.session_state.symbols or []
@@ -1906,6 +1954,261 @@ elif st.session_state.current_step == 2:
                 st.rerun()
 
         # Block results display until user makes a decision
+        st.stop()
+
+    # ══════════════════════════════════════════════════════════
+    # PENDING CLOSE TOP-UP
+    # Shown when cache's last date < last trading day.
+    # User can pick a source to fetch missing closing prices.
+    # Only close/high/volume rows are appended — calculations
+    # use the freshest data available.
+    # ══════════════════════════════════════════════════════════
+    if st.session_state.get("_pending_topup", False):
+        _tp_close     = st.session_state["_topup_close"]
+        _tp_high      = st.session_state["_topup_high"]
+        _tp_volume    = st.session_state["_topup_volume"]
+        _tp_fp        = st.session_state["_topup_fp"]
+        _tp_dates     = st.session_state["_topup_dates"]
+        _tp_lbl       = st.session_state["_topup_cache_lbl"]
+        _tp_src       = st.session_state["_topup_cache_lbl_src"]
+        _tp_last      = st.session_state["_topup_last_date"]
+        _tp_target    = st.session_state["_topup_target_date"]
+        _tp_prog      = st.progress(0)
+        _tp_stat      = st.empty()
+
+        st.markdown(
+            f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-left:4px solid #f97316;'
+            f'border-radius:10px;padding:12px 16px;margin:8px 0;font-size:13px;color:#7c2d12;">'
+            f'⚠️ <b>{_tp_lbl} cache last date: {_tp_last}</b> &nbsp;|&nbsp; '
+            f'Expected last trading day: <b>{_tp_target}</b><br>'
+            f'<span style="font-size:12px;">Cache mein latest closing prices nahi hain. '
+            f'Neeche se source choose karo aur Close column top-up karo, '
+            f'ya skip karke cached data se hi calculate karo.</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # Determine available top-up sources
+        # YFinance always available; broker options if token/client present
+        _topup_options = ["YFinance (recommended)"]
+        _upstox_token  = (st.session_state.get("upstox_token_data") or {}).get("access_token", "")
+        _angel_client  = st.session_state.get("angelone_client", None)
+        if _upstox_token:
+            _topup_options.append("Upstox OHLC (prev_ohlc)")
+        if _angel_client:
+            _topup_options.append("Angel One LTP")
+
+        _tp_col1, _tp_col2, _tp_col3 = st.columns([2, 2, 1])
+        with _tp_col1:
+            _chosen_src = st.selectbox(
+                "📡 Top-up source",
+                _topup_options,
+                key="topup_src_select",
+                help="Kaunse source se missing closing prices lene hain"
+            )
+        with _tp_col2:
+            _do_topup = st.button(
+                f"🔄 Top-up Close from {_chosen_src.split()[0]}",
+                key="topup_btn", type="primary", use_container_width=True
+            )
+        with _tp_col3:
+            _skip_topup = st.button(
+                "⏭ Skip top-up",
+                key="skip_topup_btn", use_container_width=True
+            )
+
+        if _do_topup:
+            import datetime as _dtmod
+            _start_topup = _dtmod.date.fromisoformat(_tp_last) + _dtmod.timedelta(days=1)
+            _end_topup   = _dtmod.date.today()
+            _syms_topup  = list(_tp_close.columns)
+
+            _tp_stat.text(f"Fetching missing close data ({_start_topup} → {_end_topup}) from {_chosen_src}...")
+            _tp_prog.progress(0.1)
+
+            _new_close = _new_high = _new_vol = None
+
+            try:
+                if _chosen_src.startswith("YFinance"):
+                    # YFinance: end+1 for exclusive end
+                    _yf_end = datetime.datetime.combine(_end_topup + _dtmod.timedelta(days=1), datetime.time())
+                    _yf_start = datetime.datetime.combine(_start_topup, datetime.time())
+                    _topup_chunks_c, _topup_chunks_h, _topup_chunks_v = [], [], []
+                    _chunk_sz = 50
+                    for _ki in range(0, len(_syms_topup), _chunk_sz):
+                        _ch = _syms_topup[_ki:_ki+_chunk_sz]
+                        try:
+                            _raw = yf.download(_ch, start=_yf_start, end=_yf_end,
+                                               progress=False, auto_adjust=True,
+                                               threads=True, multi_level_index=False)
+                            if not _raw.empty:
+                                if "Close" in _raw.columns:  _topup_chunks_c.append(_raw["Close"])
+                                if "High"  in _raw.columns:  _topup_chunks_h.append(_raw["High"])
+                                if "Close" in _raw.columns and "Volume" in _raw.columns:
+                                    _topup_chunks_v.append(_raw["Close"] * _raw["Volume"])
+                        except Exception:
+                            pass
+                        _tp_prog.progress(min(0.1 + 0.7 * (_ki+_chunk_sz)/len(_syms_topup), 0.80))
+
+                    if _topup_chunks_c:
+                        _new_close = pd.concat(_topup_chunks_c, axis=1)
+                        _new_high  = pd.concat(_topup_chunks_h, axis=1) if _topup_chunks_h else None
+                        _new_vol   = pd.concat(_topup_chunks_v, axis=1) if _topup_chunks_v else None
+                        _new_close.index = pd.to_datetime(_new_close.index).tz_localize(None)
+                        if _new_high  is not None: _new_high.index  = pd.to_datetime(_new_high.index).tz_localize(None)
+                        if _new_vol   is not None: _new_vol.index   = pd.to_datetime(_new_vol.index).tz_localize(None)
+
+                elif _chosen_src.startswith("Upstox"):
+                    # Upstox OHLC prev_ohlc: gives last completed trading session close
+                    _inst_map = st.session_state.get("upstox_instrument_map") or {}
+                    if not _inst_map:
+                        _tp_stat.text("Upstox instrument master loading...")
+                        try:
+                            _df_inst = pd.read_csv(
+                                "https://assets.upstox.com/market-quote/instruments/exchange/complete.csv.gz",
+                                compression="gzip", low_memory=False
+                            )
+                            _df_inst = _df_inst[_df_inst["instrument_key"].astype(str).str.startswith("NSE_EQ|")]
+                            _inst_map = dict(zip(_df_inst["tradingsymbol"].str.upper(), _df_inst["instrument_key"]))
+                        except Exception:
+                            pass
+
+                    _ohlc_url = "https://api.upstox.com/v3/market-quote/ohlc"
+                    _up_hdrs  = {"Authorization": f"Bearer {_upstox_token}", "Accept": "application/json"}
+                    _sym_key  = [(s, _inst_map.get(s.replace(".NS","").upper())) for s in _syms_topup]
+                    _sym_key  = [(s,k) for s,k in _sym_key if k]
+                    _close_vals, _high_vals = {}, {}
+                    _today_ts = pd.Timestamp(_end_topup)
+                    _batch_sz = 100
+                    for _bi in range(0, len(_sym_key), _batch_sz):
+                        _b    = _sym_key[_bi:_bi+_batch_sz]
+                        _kmap = {k: s for s,k in _b}
+                        _kmap.update({k.replace("|",";"): s for s,k in _b})
+                        # Fix: colon variant for response key matching
+                        for s,k in _b: _kmap[k.replace("|",":")] = s
+                        _enc  = ",".join(k.replace("|","%7C") for _,k in _b)
+                        try:
+                            _r = requests.get(f"{_ohlc_url}?instrument_key={_enc}&interval=1d",
+                                              headers=_up_hdrs, timeout=30)
+                            _r.raise_for_status()
+                            for _rk, _q in (_r.json().get("data") or {}).items():
+                                _s = _kmap.get(_rk)
+                                if not _s: continue
+                                _live = _q.get("live_ohlc") or {}
+                                _prev = _q.get("prev_ohlc") or {}
+                                _chosen = _live if float(_live.get("volume") or 0) > 0 else _prev
+                                _c = float(_chosen.get("close") or 0)
+                                _h = float(_chosen.get("high")  or 0)
+                                if _c > 0:
+                                    _close_vals[_s] = _c
+                                    _high_vals[_s]  = _h
+                        except Exception:
+                            pass
+                        _tp_prog.progress(min(0.1 + 0.7*(_bi+_batch_sz)/len(_sym_key), 0.80))
+                    if _close_vals:
+                        _new_close = pd.DataFrame([_close_vals], index=[_today_ts])
+                        _new_high  = pd.DataFrame([_high_vals],  index=[_today_ts])
+
+                elif _chosen_src.startswith("Angel One"):
+                    # Angel One: use LTP / candle API for latest close
+                    _angel_inst_map = st.session_state.get("angelone_instrument_map") or {}
+                    _close_vals_a = {}
+                    _today_ts_a   = pd.Timestamp(_end_topup)
+                    _hist_param_base = {
+                        "exchange": "NSE", "interval": "ONE_DAY",
+                        "fromdate": f"{_end_topup} 09:15",
+                        "todate":   f"{_end_topup} 15:30",
+                    }
+                    for _sa in _syms_topup:
+                        _tok_a = _angel_inst_map.get(_sa.upper().replace(".NS",""))
+                        if not _tok_a: continue
+                        try:
+                            _hp = dict(_hist_param_base, symboltoken=_tok_a)
+                            _resp_a = _angel_client.getCandleData(_hp)
+                            if _resp_a.get("status") and _resp_a.get("data"):
+                                _row = _resp_a["data"][-1]   # last row = today
+                                _close_vals_a[_sa] = float(_row[4])  # close col
+                        except Exception:
+                            pass
+                    if _close_vals_a:
+                        _new_close = pd.DataFrame([_close_vals_a], index=[_today_ts_a])
+
+            except Exception as _te:
+                st.warning(f"Top-up fetch error: {_te}")
+
+            _tp_prog.progress(0.88)
+
+            # ── Merge new rows into cache DataFrames ──────────
+            if _new_close is not None and not _new_close.empty:
+                # Filter to rows not already in cache
+                _existing_idx = set(_tp_close.index)
+                _new_rows_c   = _new_close[~_new_close.index.isin(_existing_idx)]
+                if not _new_rows_c.empty:
+                    # Reindex to cache columns (fill NaN for missing symbols)
+                    _nr_c = _new_rows_c.reindex(columns=_tp_close.columns)
+                    _tp_close = pd.concat([_tp_close, _nr_c], axis=0).sort_index()
+
+                    if _new_high is not None and not _new_high.empty:
+                        _nr_h = _new_high[~_new_high.index.isin(_existing_idx)].reindex(columns=_tp_high.columns)
+                        _tp_high = pd.concat([_tp_high, _nr_h], axis=0).sort_index()
+
+                    if _new_vol is not None and not _new_vol.empty:
+                        _nr_v = _new_vol[~_new_vol.index.isin(_existing_idx)].reindex(columns=_tp_volume.columns)
+                        _tp_volume = pd.concat([_tp_volume, _nr_v], axis=0).sort_index()
+
+                    _added = len(_new_rows_c)
+                    _new_last = _tp_close.index[-1].strftime('%d-%b-%Y')
+                    st.success(
+                        f"✅ Close top-up done! Added {_added} new date row(s). "
+                        f"New last date: **{_new_last}**"
+                    )
+                else:
+                    st.info("ℹ️ No new rows to add — cache already up-to-date.")
+            else:
+                st.warning(
+                    "⚠️ Top-up mein koi data nahi mila. "
+                    "Market holiday ho sakta hai, ya source se data available nahi. "
+                    "Cached data se calculate karta hoon."
+                )
+
+            _tp_prog.progress(0.92)
+            _tp_stat.text("Calculating momentum metrics...")
+            try:
+                _dfS = build_dfStats(_tp_close, _tp_high, _tp_volume, _tp_dates,
+                                     st.session_state.ranking_method)
+                _dfF = apply_filters(_dfS.copy(), _tp_fp)
+                st.session_state.dfStats       = _dfS
+                st.session_state.dfFiltered    = _dfF
+                st.session_state.screener_done = True
+                st.session_state["_cross_filter_params"] = _tp_fp
+                st.session_state["_pending_topup"] = False
+                _tp_prog.progress(1.0)
+                _tp_stat.text("✅ Screener complete!")
+            except Exception as _te2:
+                st.error(f"Calculation error after top-up: {_te2}")
+                st.stop()
+            st.rerun()
+
+        if _skip_topup:
+            # Calculate directly with cached data as-is
+            _tp_stat.text("Calculating with cached data...")
+            _tp_prog.progress(0.92)
+            try:
+                _dfS = build_dfStats(_tp_close, _tp_high, _tp_volume, _tp_dates,
+                                     st.session_state.ranking_method)
+                _dfF = apply_filters(_dfS.copy(), _tp_fp)
+                st.session_state.dfStats       = _dfS
+                st.session_state.dfFiltered    = _dfF
+                st.session_state.screener_done = True
+                st.session_state["_cross_filter_params"] = _tp_fp
+                st.session_state["_pending_topup"] = False
+                _tp_prog.progress(1.0)
+                _tp_stat.text("✅ Done!")
+            except Exception as _te3:
+                st.error(f"Calculation error: {_te3}")
+                st.stop()
+            st.rerun()
+
         st.stop()
 
     # ══════════════════════════════════════════════════════════

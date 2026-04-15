@@ -260,18 +260,31 @@ def _fetch_today_quotes(
             key_to_sym[key]                    = sym   # NSE_EQ|RELIANCE
             key_to_sym[key.replace("|", ":")] = sym   # NSE_EQ:RELIANCE ← API response format
 
-        # Use requests params dict — requests handles URL encoding automatically
-        keys_str = ",".join(key for _, key in batch)
-        params   = {"instrument_key": keys_str, "interval": "1d"}
+        # ── URL FIX: manual URL, NOT requests params= ────────────
+        # requests params= encodes commas as %2C:
+        #   "K1,K2" → "instrument_key=K1%2CK2"   ← Upstox returns empty data!
+        # Correct: encode | → %7C, leave commas literal:
+        #   "instrument_key=NSE_EQ%7CK1,NSE_EQ%7CK2"  ← works ✅
+        keys_encoded = ",".join(key.replace("|", "%7C") for _, key in batch)
+        full_url     = f"{_UPSTOX_OHLC_URL}?instrument_key={keys_encoded}&interval=1d"
 
         try:
-            resp = requests.get(_UPSTOX_OHLC_URL, headers=headers,
-                                params=params, timeout=30)
+            resp = requests.get(full_url, headers=headers, timeout=30)
+
+            # Debug first batch so we can see actual API response format in logs
+            if batch_no == 1:
+                try:
+                    _d    = resp.json()
+                    _keys = list((_d.get("data") or {}).keys())[:3]
+                    log(f"  [Debug b1] HTTP {resp.status_code} | "
+                        f"sample keys: {_keys} | "
+                        f"total: {len((_d.get('data') or {}))}")
+                except Exception:
+                    log(f"  [Debug b1] HTTP {resp.status_code} | parse error")
 
             if resp.status_code == 429:
                 time.sleep(5)
-                resp = requests.get(_UPSTOX_OHLC_URL, headers=headers,
-                                    params=params, timeout=30)
+                resp = requests.get(full_url, headers=headers, timeout=30)
 
             if resp.status_code in (401, 403):
                 raise ValueError(f"Token invalid (HTTP {resp.status_code})")
