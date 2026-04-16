@@ -536,7 +536,7 @@ def build_cache():
         "decades_per_symbol"         : 3,
         "decade_ranges"              : decade_ranges,
         "total_api_calls_historical" : len(ath_dict) * 3,
-        "total_api_calls_quotes"     : (len(symbols) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE,
+        "total_api_calls_intraday"   : len(today_data),   # per-symbol intraday calls
         "close_shape"                : list(close.shape),
         "high_shape"                 : list(high.shape),
         "volume_shape"               : list(volume.shape),
