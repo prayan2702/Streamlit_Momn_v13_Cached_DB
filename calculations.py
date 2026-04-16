@@ -29,11 +29,11 @@ def getStdev(data):
 
 def getAbsReturns(data):
     # ffill() → interior/trailing NaN fill (holidays ke beech ke gaps)
-    # bfill() → leading NaN fill (agar window ka pehla din Indian market holiday ho)
-    # Yeh fix "kabhi kabhi roc3M/roc12M blank" bug solve karta hai:
-    # pd.bdate_range mein Indian market holidays include hote hain (weekdays hain),
-    # to dates['date3M'] exact holiday pe land kar sakta hai → iloc[0] = NaN → ROC = NaN
-    d = data.ffill().bfill()
+    # bfill(limit=5) → sirf max 5 din ka leading NaN fill (Indian market holidays max 3-4 din hote hain)
+    # limit=5 kyun: unbounded bfill() AHLWEST jaise thin/suspended stocks mein weeks of missing data
+    # backward fill karta hai → spurious roc (40%+) + near-zero vol → sharpe ~1356 → outlier z-score
+    # → poori universe ki z-scores collapse ho jaati hain ek stock ki wajah se.
+    d = data.ffill().bfill(limit=5)
     return round((d.iloc[-1] / d.iloc[0] - 1) * 100, 2)
 
 def getVolatility(data):
