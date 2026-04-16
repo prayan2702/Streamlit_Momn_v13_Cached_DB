@@ -145,189 +145,113 @@ def _fetch_upstox_history_live(
 
 
 # ─────────────────────────────────────────────────────────────
-# SECTION D — UPSTOX TODAY's DATA via Market Quote API
 # ─────────────────────────────────────────────────────────────
-_UPSTOX_QUOTE_URL = "https://api.upstox.com/v3/market-quote/ohlc"  # ← FIXED: ohlc endpoint
-_QUOTE_BATCH_SIZE = 100   # symbols per request (URL length safe)
+# SECTION D — UPSTOX TODAY's DATA via Intraday API (days/1)
+# ─────────────────────────────────────────────────────────────
+# /v3/historical-candle/intraday/{key}/days/1
+# Returns full current-day candle: [ts, open, high, low, CLOSE, volume, oi]
+# Per-symbol call — no batch comma-encoding issues, no T+1 delay
+_UPSTOX_INTRADAY_URL = "https://api.upstox.com/v3/historical-candle/intraday"
 
-# ── Why OHLC endpoint, not quotes endpoint ───────────────────
-# /v3/market-quote/quotes  → ohlc.close = PREVIOUS SESSION close ❌
-# /v3/market-quote/ohlc    → live_ohlc  = current session  ✅
-#                             prev_ohlc  = previous session
-# At 12:10 AM: live_ohlc.volume = 0 → use prev_ohlc ✅
-# Response keys: "NSE_EQ:RELIANCE" (colon) — must normalize to pipe for lookup
+
+def _fetch_one_intraday_live(instrument_key: str, access_token: str, retries: int = 2) -> dict | None:
+    """Single symbol intraday days/1 call. Returns {close, high, volume} or None."""
+    encoded = instrument_key.replace("|", "%7C")
+    url     = f"{_UPSTOX_INTRADAY_URL}/{encoded}/days/1"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    delay   = 1.0
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            if resp.status_code == 429:
+                time.sleep(delay * 2); delay *= 2; continue
+            if resp.status_code in (401, 403):
+                raise ValueError(f"Token invalid (HTTP {resp.status_code})")
+            if resp.status_code == 200:
+                candles = resp.json().get("data", {}).get("candles", [])
+                if candles:
+                    c = candles[0]
+                    close  = float(c[4])
+                    high   = float(c[2])
+                    volume = float(c[5])
+                    if close > 0 and volume > 0:
+                        return {"close": close, "high": high, "volume": volume}
+            return None
+        except ValueError:
+            raise
+        except Exception:
+            if attempt == retries - 1:
+                return None
+            time.sleep(delay); delay *= 2
+    return None
 
 
 def _fetch_upstox_today_quotes(
     symbols        : list,
     instrument_map : dict,
     access_token   : str,
-    target_date    : date,
+    target_date,
     status_text    = None,
 ) -> dict:
     """
-    Upstox OHLC Market Quote API (/v3/market-quote/ohlc?interval=1d) se
-    today's OHLCV fetch karo.
-
-    BUGS FIXED vs previous version:
-      1. Endpoint changed: quotes → ohlc (quotes returns prev session close)
-      2. Key lookup: response uses COLON ("NSE_EQ:SYM"), we need both variants
-      3. params dict used (not manual %7C) — requests handles encoding
-      4. live_ohlc vs prev_ohlc: 12:10 AM case handled correctly
-
-    Field selection:
-      live_ohlc.volume > 0  → use live_ohlc (market traded today)
-      live_ohlc.volume = 0  → use prev_ohlc (midnight case, session not started)
+    Upstox Intraday days/1 API se today OHLCV fetch karo.
+    Per symbol — no batch/encoding issues.
+    Returns empty dict if market open or weekend.
     """
-    today = date.today()
-
-    if target_date < today:
+    from datetime import date as _date
+    today = _date.today()
+    if hasattr(target_date, 'year') and target_date < today:
         return {}
-
     if today.weekday() >= 5:
         return {}
-
-    # Check IST time — only after market close (15:30) OR after midnight
     ist_now = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    market_open_hour = 9
-    market_close_hour, market_close_min = 15, 30
-    is_intraday = (
-        ist_now.hour > market_open_hour and
-        (ist_now.hour < market_close_hour or
-         (ist_now.hour == market_close_hour and ist_now.minute < market_close_min))
-    )
-    if is_intraday:
+    # Skip if intraday (market open and still running)
+    if 9 < ist_now.hour < 15 or (ist_now.hour == 15 and ist_now.minute < 30):
         if status_text:
-            status_text.text(
-                f"Upstox: Market still open (IST {ist_now.strftime('%H:%M')}) "
-                "— skipping today's quote top-up"
-            )
+            status_text.text(f"Upstox: Market open ({ist_now.strftime('%H:%M' )} IST) — skipping today top-up")
         return {}
 
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept":        "application/json",
-    }
-
-    sym_key_pairs = []
-    for sym in symbols:
-        key = _get_instrument_key(sym, instrument_map)
-        if key:
-            sym_key_pairs.append((sym, key))
-
+    sym_key_pairs = [(s, _get_instrument_key(s, instrument_map)) for s in symbols]
+    sym_key_pairs = [(s, k) for s, k in sym_key_pairs if k]
+    total      = len(sym_key_pairs)
+    today_data = {}
+    ok, skip   = 0, 0
     if status_text:
-        status_text.text(
-            f"Upstox: Fetching today's OHLC quotes for {len(sym_key_pairs):,} symbols..."
-        )
+        status_text.text(f"Upstox: Fetching today intraday for {total:,} symbols...")
 
-    today_data    = {}
-    total_batches = (len(sym_key_pairs) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE
-
-    for b_idx in range(0, len(sym_key_pairs), _QUOTE_BATCH_SIZE):
-        batch    = sym_key_pairs[b_idx : b_idx + _QUOTE_BATCH_SIZE]
-        batch_no = b_idx // _QUOTE_BATCH_SIZE + 1
-
-        # Both pipe and colon variants → sym
-        key_to_sym = {}
-        for sym, key in batch:
-            key_to_sym[key]                    = sym   # NSE_EQ|RELIANCE
-            key_to_sym[key.replace("|", ":")] = sym   # NSE_EQ:RELIANCE (API response)
-
-        # ── URL FIX: manual URL, NOT requests params= ────────────
-        # requests params= encodes commas as %2C → Upstox returns empty {}
-        # Correct: encode | → %7C, commas stay literal
-        keys_encoded = ",".join(key.replace("|", "%7C") for _, key in batch)
-        full_url     = f"{_UPSTOX_QUOTE_URL}?instrument_key={keys_encoded}&interval=1d"
-
+    for i, (sym, key) in enumerate(sym_key_pairs):
         try:
-            resp = requests.get(full_url, headers=headers, timeout=30)
-            if resp.status_code == 429:
-                time.sleep(5)
-                resp = requests.get(full_url, headers=headers, timeout=30)
-            if resp.status_code in (401, 403):
-                raise ValueError(f"Token invalid (HTTP {resp.status_code})")
-            resp.raise_for_status()
-            data = resp.json().get("data", {})
-
-            for raw_key, quote in data.items():
-                sym = key_to_sym.get(raw_key) or key_to_sym.get(raw_key.replace(":", "|"))
-                if not sym:
-                    continue
-
-                live  = quote.get("live_ohlc", {}) or {}
-                prev  = quote.get("prev_ohlc", {}) or {}
-
-                live_vol   = float(live.get("volume") or 0)
-                live_close = float(live.get("close")  or 0)
-
-                # Use live_ohlc if today's session has trades, else prev_ohlc
-                chosen = live if (live_vol > 0 and live_close > 0) else prev
-
-                close  = float(chosen.get("close")  or 0)
-                high   = float(chosen.get("high")   or 0)
-                volume = float(chosen.get("volume") or 0)
-
-                if close > 0 and volume > 0:
-                    today_data[sym] = {"close": close, "high": high, "volume": volume}
-
+            q = _fetch_one_intraday_live(key, access_token)
+            if q:
+                today_data[sym] = q; ok += 1
+            else:
+                skip += 1
         except ValueError:
             raise
         except Exception:
-            pass
-
-        time.sleep(0.2)
-
-        if status_text and (batch_no % 10 == 0 or batch_no == total_batches):
-            status_text.text(
-                f"Upstox: Today's OHLC — {batch_no}/{total_batches} batches | "
-                f"Got: {len(today_data)}"
-            )
+            skip += 1
+        time.sleep(0.05)
+        if status_text and ((i + 1) % 200 == 0 or i == total - 1):
+            status_text.text(f"Upstox: Intraday {i+1}/{total} | Got: {ok} | Skip: {skip}")
 
     return today_data
 
 
-def _apply_today_quotes_to_maps(
-    close_map  : dict,
-    high_map   : dict,
-    vol_map    : dict,
-    today_data : dict,
-    today      : date,
-) -> None:
-    """
-    Today's market quote data ko existing Series maps mein add karo.
-    In-place modification.
-    """
+def _apply_today_quotes_to_maps(close_map, high_map, vol_map, today_data, today) -> None:
+    """Add today intraday data into existing Series maps (in-place)."""
     if not today_data:
         return
-
     today_ts = pd.Timestamp(today)
-
     for sym, q in today_data.items():
-        c     = q["close"]
-        h     = q["high"]
-        v_val = c * q["volume"]    # price × volume = value traded
+        c, h, v = q["close"], q["high"], q["close"] * q["volume"]
+        for mp, val in [(close_map, c), (high_map, h), (vol_map, v)]:
+            if sym in mp:
+                s = mp[sym]
+                if today_ts not in s.index:
+                    mp[sym] = pd.concat([s, pd.Series([val], index=[today_ts])])
+            else:
+                mp[sym] = pd.Series([val], index=[today_ts])
 
-        if sym in close_map:
-            # Already have historical series — append today
-            s = close_map[sym]
-            if today_ts not in s.index:
-                close_map[sym] = pd.concat([s, pd.Series([c], index=[today_ts])])
-        else:
-            close_map[sym] = pd.Series([c], index=[today_ts])
-
-        if sym in high_map:
-            s = high_map[sym]
-            if today_ts not in s.index:
-                high_map[sym] = pd.concat([s, pd.Series([h], index=[today_ts])])
-        else:
-            high_map[sym] = pd.Series([h], index=[today_ts])
-
-        if sym in vol_map:
-            s = vol_map[sym]
-            if today_ts not in s.index:
-                vol_map[sym] = pd.concat([s, pd.Series([v_val], index=[today_ts])])
-        else:
-            vol_map[sym] = pd.Series([v_val], index=[today_ts])
 
 
 # ─────────────────────────────────────────────────────────────

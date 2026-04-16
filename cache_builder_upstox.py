@@ -50,22 +50,15 @@ RECENT_MONTHS  = 40
 EXTRA_SYMBOLS  = ["GOLDBEES.NS", "SILVERBEES.NS"]
 NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 
-_UPSTOX_CANDLE      = "https://api.upstox.com/v3/historical-candle"
-_UPSTOX_OHLC_URL    = "https://api.upstox.com/v3/market-quote/ohlc"   # ← FIXED endpoint
-_QUOTE_BATCH_SIZE   = 100   # symbols per request (URL length safe)
+_UPSTOX_CANDLE       = "https://api.upstox.com/v3/historical-candle"
+_UPSTOX_INTRADAY_URL = "https://api.upstox.com/v3/historical-candle/intraday"
 
-# ── Why OHLC endpoint, not quotes endpoint ───────────────────
-# /v3/market-quote/quotes  → ohlc.close = PREVIOUS SESSION close ❌
-# /v3/market-quote/ohlc    → live_ohlc  = current session  ✅
-#                             prev_ohlc  = previous session
-#
-# Field selection logic (based on IST time when script runs):
-#   live_ohlc.volume > 0  → market traded today → use live_ohlc ✅
-#   live_ohlc.volume = 0  → next session not started (12:10 AM case)
-#                         → use prev_ohlc = last completed session ✅
-#
-# Response key format: API returns "NSE_EQ:RELIANCE" (colon, not pipe)
-# Must normalize: raw_key.replace(":", "|") before lookup
+# ── Why Intraday endpoint for today's data ───────────────────
+# /v3/market-quote/ohlc      → batch but response was 0 symbols (API issue)
+# /v3/historical-candle/intraday/{key}/days/1  ← correct for today ✅
+#   Returns full-day candle for current trading day
+#   candles[0] = [timestamp, open, high, low, CLOSE, volume, oi]
+#   Per-symbol call (no batch limit concern, no comma encoding issue)
 
 
 def log(msg: str):
@@ -142,7 +135,7 @@ def _fetch_one_decade(
     """
     Ek decade ka historical data fetch karo.
     NOTE: This endpoint has T+1 delay — today's candle NOT available here.
-    Today's data is handled separately via _fetch_today_quotes().
+    Today's data is handled separately via _fetch_today_intraday().
     """
     encoded = instrument_key.replace("|", "%7C")
     url     = f"{_UPSTOX_CANDLE}/{encoded}/days/1/{to_date}/{from_date}"
@@ -197,232 +190,115 @@ def _fetch_one_decade(
     return None
 
 
-# ── TODAY's data via OHLC Market Quote API ───────────────────
-def _fetch_today_quotes(
-    symbols        : list,
-    instrument_map : dict,
-    access_token   : str,
-    today          : date,
-) -> dict:
+
+# ── TODAY's data via Intraday API ────────────────────────────
+def _fetch_one_intraday(instrument_key: str, access_token: str, retries: int = 2) -> dict | None:
     """
-    Upstox OHLC Market Quote API se today's OHLCV fetch karo.
+    Upstox Intraday API se today's full-day OHLCV fetch karo (per symbol).
+    Endpoint: GET /v3/historical-candle/intraday/{encoded_key}/days/1
+    Returns today's completed trading day candle.
+    candles[0] = [timestamp, open, high, low, close, volume, oi]
+    """
+    encoded = instrument_key.replace("|", "%7C")
+    url     = f"{_UPSTOX_INTRADAY_URL}/{encoded}/days/1"
+    headers = {"Authorization": f"Bearer {access_token}", "Accept": "application/json"}
+    delay   = 1.0
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, timeout=15)
+            if resp.status_code == 429:
+                time.sleep(delay * 2); delay *= 2; continue
+            if resp.status_code in (401, 403):
+                raise ValueError(f"Token invalid (HTTP {resp.status_code})")
+            if resp.status_code == 200:
+                candles = resp.json().get("data", {}).get("candles", [])
+                if not candles:
+                    return None
+                c = candles[0]  # most recent = today full-day candle
+                close  = float(c[4])
+                high   = float(c[2])
+                volume = float(c[5])
+                if close > 0 and volume > 0:
+                    return {"close": close, "high": high, "volume": volume}
+            return None
+        except ValueError:
+            raise
+        except Exception:
+            if attempt == retries - 1:
+                return None
+            time.sleep(delay); delay *= 2
+    return None
 
-    Historical candle API has T+1 delay — same-day candle NEVER available.
-    OHLC Quote API (/v3/market-quote/ohlc?interval=1d) is the correct fix:
-      live_ohlc = current trading session (today, if market has traded)
-      prev_ohlc = previous trading session (yesterday)
 
-    Field selection:
-      live_ohlc.volume > 0  → market traded today → use live_ohlc ✅
-      live_ohlc.volume = 0  → 12:10 AM case (next session not started)
-                            → use prev_ohlc = last completed session ✅
-
-    IMPORTANT: Response keys use COLON not pipe:
-      Sent:     "NSE_EQ|RELIANCE"
-      Returned: "NSE_EQ:RELIANCE"   ← must normalize before lookup!
-
-    Params passed via requests params dict (not manual %7C encoding).
-
+def _fetch_today_intraday(symbols: list, instrument_map: dict, access_token: str, today: date) -> dict:
+    """
+    Sabhi symbols ke liye intraday days/1 API se today OHLCV fetch karo.
+    Sequential — same pattern as historical fetch.
     Returns: { "RELIANCE.NS": {"close":..., "high":..., "volume":...}, ... }
     """
     if today.weekday() >= 5:
-        log(f"  Today ({today}) is weekend — skipping quotes")
+        log(f"  Today ({today}) is weekend — skipping intraday fetch")
         return {}
 
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Accept":        "application/json",
-    }
-
-    sym_key_pairs = []
-    for sym in symbols:
-        key = _get_key(sym, instrument_map)
-        if key:
-            sym_key_pairs.append((sym, key))
-
-    log(f"  Fetching OHLC quotes for {len(sym_key_pairs):,} symbols "
-        f"in batches of {_QUOTE_BATCH_SIZE} via /v3/market-quote/ohlc...")
-
-    today_data = {}
-    n_batches  = (len(sym_key_pairs) + _QUOTE_BATCH_SIZE - 1) // _QUOTE_BATCH_SIZE
+    total      = len(symbols)
     ok_count   = 0
     skip_count = 0
+    today_data = {}
     t0         = time.monotonic()
+    log(f"  Fetching today intraday (days/1) for {total:,} symbols...")
 
-    for b_idx in range(0, len(sym_key_pairs), _QUOTE_BATCH_SIZE):
-        batch    = sym_key_pairs[b_idx : b_idx + _QUOTE_BATCH_SIZE]
-        batch_no = b_idx // _QUOTE_BATCH_SIZE + 1
-
-        # Build lookup: both pipe and colon variants → sym
-        # API response uses COLON ("NSE_EQ:RELIANCE"), we send PIPE ("NSE_EQ|RELIANCE")
-        key_to_sym = {}
-        for sym, key in batch:
-            key_to_sym[key]                    = sym   # NSE_EQ|RELIANCE
-            key_to_sym[key.replace("|", ":")] = sym   # NSE_EQ:RELIANCE ← API response format
-
-        # ── URL FIX: manual URL, NOT requests params= ────────────
-        # requests params= encodes commas as %2C:
-        #   "K1,K2" → "instrument_key=K1%2CK2"   ← Upstox returns empty data!
-        # Correct: encode | → %7C, leave commas literal:
-        #   "instrument_key=NSE_EQ%7CK1,NSE_EQ%7CK2"  ← works ✅
-        keys_encoded = ",".join(key.replace("|", "%7C") for _, key in batch)
-        full_url     = f"{_UPSTOX_OHLC_URL}?instrument_key={keys_encoded}&interval=1d"
-
+    for i, sym in enumerate(symbols):
+        key = _get_key(sym, instrument_map)
+        if not key:
+            skip_count += 1
+            time.sleep(0.01)
+            continue
         try:
-            resp = requests.get(full_url, headers=headers, timeout=30)
-
-            # Debug first batch so we can see actual API response format in logs
-            if batch_no == 1:
-                try:
-                    _d    = resp.json()
-                    _keys = list((_d.get("data") or {}).keys())[:3]
-                    log(f"  [Debug b1] HTTP {resp.status_code} | "
-                        f"sample keys: {_keys} | "
-                        f"total: {len((_d.get('data') or {}))}")
-                except Exception:
-                    log(f"  [Debug b1] HTTP {resp.status_code} | parse error")
-
-            if resp.status_code == 429:
-                time.sleep(5)
-                resp = requests.get(full_url, headers=headers, timeout=30)
-
-            if resp.status_code in (401, 403):
-                raise ValueError(f"Token invalid (HTTP {resp.status_code})")
-
-            resp.raise_for_status()
-            data = resp.json().get("data", {})
-
-            for raw_key, quote in data.items():
-                # Normalize: response key may be "NSE_EQ:RELIANCE" or "NSE_EQ|RELIANCE"
-                sym = key_to_sym.get(raw_key)
-                if not sym:
-                    # Try alternate separator just in case
-                    sym = key_to_sym.get(raw_key.replace(":", "|"))
-                if not sym:
-                    continue
-
-                # ── FIELD SELECTION: live vs prev ──────────────
-                # live_ohlc = current trading session (today)
-                # prev_ohlc = previous session (yesterday)
-                #
-                # At 12:10 AM: live_ohlc.volume = 0 (session not started)
-                #   → use prev_ohlc which = today's just-closed session ✅
-                # At 8 PM same day: live_ohlc.volume > 0 (today's data) ✅
-                live  = quote.get("live_ohlc", {}) or {}
-                prev  = quote.get("prev_ohlc", {}) or {}
-
-                live_vol   = float(live.get("volume") or 0)
-                live_close = float(live.get("close")  or 0)
-
-                if live_vol > 0 and live_close > 0:
-                    # Market has traded today — use live session
-                    chosen     = live
-                    chosen_src = "live_ohlc"
-                else:
-                    # Session not started (midnight case) — use prev session
-                    chosen     = prev
-                    chosen_src = "prev_ohlc"
-
-                close  = float(chosen.get("close")  or 0)
-                high   = float(chosen.get("high")   or 0)
-                volume = float(chosen.get("volume") or 0)
-
-                if close <= 0 or volume <= 0:
-                    skip_count += 1
-                    continue
-
-                today_data[sym] = {
-                    "close":  close,
-                    "high":   high,
-                    "volume": volume,
-                    "_src":   chosen_src,
-                }
+            q = _fetch_one_intraday(key, access_token)
+            if q:
+                today_data[sym] = q
                 ok_count += 1
-
+            else:
+                skip_count += 1
         except ValueError:
             raise
-        except Exception as e:
-            log(f"  Quote batch {batch_no}/{n_batches} failed: {type(e).__name__}: {e}")
-
-        time.sleep(0.2)
-
-        if batch_no % 5 == 0 or batch_no == n_batches:
+        except Exception:
+            skip_count += 1
+        time.sleep(0.05)
+        if (i + 1) % 200 == 0 or i == total - 1:
             elapsed = time.monotonic() - t0
-            log(
-                f"  Quote batches: {batch_no}/{n_batches} | "
-                f"Got: {ok_count} | Skipped: {skip_count} | "
-                f"Time: {elapsed:.1f}s"
-            )
+            log(f"  Intraday [{i+1}/{total}] | Got: {ok_count} | Skip: {skip_count} | Time: {elapsed/60:.1f}min")
 
-    # Report which source was used (live vs prev)
-    live_count = sum(1 for v in today_data.values() if v.get("_src") == "live_ohlc")
-    prev_count = sum(1 for v in today_data.values() if v.get("_src") == "prev_ohlc")
-    log(f"  Today's quotes: {ok_count} symbols | "
-        f"live_ohlc: {live_count} | prev_ohlc: {prev_count} | "
-        f"skipped: {skip_count}")
+    log(f"  Intraday done: {ok_count} with data, {skip_count} skipped")
     return today_data
 
 
-def _apply_today_quotes(
-    close     : pd.DataFrame,
-    high      : pd.DataFrame,
-    volume    : pd.DataFrame,
-    ath_dict  : dict,
-    today_data: dict,
-    today     : date,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
-    """
-    Today's market quote data ko close/high/volume DataFrames mein append karo.
-    ATH bhi update karo agar today's high > historical max.
-    """
+def _apply_today_quotes(close, high, volume, ath_dict, today_data, today):
+    """Append today intraday data as new row in DataFrames; update ATH."""
     if not today_data:
-        log("  No today's quote data to apply.")
+        log("  No today data to apply.")
         return close, high, volume, ath_dict
-
     today_ts = pd.Timestamp(today)
-
-    # Check karo ki today already index mein hai (shouldn't be, but safety)
     if today_ts in close.index:
-        log(f"  Today ({today}) already in index — skipping quote append")
+        log(f"  Today already in index — skipping")
         return close, high, volume, ath_dict
-
-    # Build today's rows — only for symbols present in our DataFrames
-    close_today = {}
-    high_today  = {}
-    vol_today   = {}
-
+    close_today, high_today, vol_today = {}, {}, {}
     for sym, q in today_data.items():
-        if sym in close.columns:
-            close_today[sym] = q["close"]
-        if sym in high.columns:
-            high_today[sym]  = q["high"]
-        if sym in volume.columns:
-            vol_today[sym]   = q["close"] * q["volume"]   # value of volume traded
-
-        # Update ATH
+        if sym in close.columns:  close_today[sym] = q["close"]
+        if sym in high.columns:   high_today[sym]  = q["high"]
+        if sym in volume.columns: vol_today[sym]   = q["close"] * q["volume"]
         if sym in ath_dict and q["high"] > ath_dict[sym]:
             ath_dict[sym] = q["high"]
-
     if not close_today:
-        log("  Today's data has no overlap with cache columns — skipping")
+        log("  No overlap with cache columns — skipping")
         return close, high, volume, ath_dict
-
-    # Create single-row DataFrames for today
-    new_row_close  = pd.DataFrame(close_today, index=[today_ts])
-    new_row_high   = pd.DataFrame(high_today,  index=[today_ts])
-    new_row_volume = pd.DataFrame(vol_today,   index=[today_ts])
-
-    # Reindex to match existing columns (fills NaN for symbols without data)
-    new_row_close  = new_row_close.reindex(columns=close.columns)
-    new_row_high   = new_row_high.reindex(columns=high.columns)
-    new_row_volume = new_row_volume.reindex(columns=volume.columns)
-
-    # Concat
-    close  = pd.concat([close,  new_row_close],  axis=0).sort_index()
-    high   = pd.concat([high,   new_row_high],   axis=0).sort_index()
-    volume = pd.concat([volume, new_row_volume], axis=0).sort_index()
-
-    log(f"  ✅ Today ({today}) appended: {len(close_today)} close | {len(high_today)} high | {len(vol_today)} volume values")
+    nr_c = pd.DataFrame(close_today, index=[today_ts]).reindex(columns=close.columns)
+    nr_h = pd.DataFrame(high_today,  index=[today_ts]).reindex(columns=high.columns)
+    nr_v = pd.DataFrame(vol_today,   index=[today_ts]).reindex(columns=volume.columns)
+    close  = pd.concat([close,  nr_c], axis=0).sort_index()
+    high   = pd.concat([high,   nr_h], axis=0).sort_index()
+    volume = pd.concat([volume, nr_v], axis=0).sort_index()
+    log(f"  ✅ Today ({today}) appended: {len(close_today)} close | {len(high_today)} high | {len(vol_today)} vol")
     return close, high, volume, ath_dict
 
 
@@ -597,7 +473,7 @@ def build_cache():
 
     today_data = {}
     try:
-        today_data = _fetch_today_quotes(symbols, instrument_map, access_token, today)
+        today_data = _fetch_today_intraday(symbols, instrument_map, access_token, today)
     except ValueError as e:
         log(f"  ⚠️  Market quote fetch: token error — {e}")
     except Exception as e:
