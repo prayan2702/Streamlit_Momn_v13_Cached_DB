@@ -1,23 +1,15 @@
 """
-momn_streamlit_app_v13.py
+momn_streamlit_app_v14.py
 =========================
-Momentum Screener + Portfolio Rebalancer — v13
+Momentum Screener + Portfolio Rebalancer — v14
 
-Changes vs v12:
-  • UI v13 redesign — logic/calculations untouched
-  • New CSS design system with CSS variables (--navy, --teal, --green etc.)
-  • Outfit + DM Mono fonts (replaces DM Sans)
-  • Metric cards: left-accent colored border, hover lift, shadow
-  • Step bar: gradient active state, 3px ring glow, gradient connector
-  • Section headers: left-border teal accent with subtle bg wash
-  • Chips (SELL/BUY/HOLD): bordered pill style, per-list color tokens
-  • Reb-strip: card layout with divider lines (replaces flex+gap)
-  • App header: radial glow overlay, v13 badge, date display, user chip
-  • Login page: branded card with logo, wider col layout
-  • Sidebar: colored dot status indicators (🟢🔵⚪), icon prefixes
-  • Workflow box: numbered step-tag chips, left-border blue accent
-  • Quick-link buttons: gradient with box-shadow, hover transform
-  • Step 2 info strip: card-styled with CSS var colors
+Changes vs v13:
+  • _verify_pin() bug fix — str() wrap added (TOML integer type mismatch fix)
+  • _pin_secret_exists() helper — debug ke liye
+  • GitHub Actions + ATH push panel: smarter error messages
+    - Secret missing → alag message (TRIGGER_PIN set nahi)
+    - Wrong PIN → alag message
+  • Logic/calculations untouched
 """
 
 import io
@@ -55,9 +47,17 @@ def _verify_pin(entered: str) -> bool:
     """
     Entered PIN ko TRIGGER_PIN secret se match karo.
     Secret set nahi hai → always False (safe default).
+    Note: str() wrap kiya — TOML mein quotes na hone par integer aa sakta hai.
     """
     correct = _get_secret("TRIGGER_PIN", "")
-    return bool(correct) and entered.strip() == correct.strip()
+    if not correct:
+        return False
+    return str(entered).strip() == str(correct).strip()
+
+
+def _pin_secret_exists() -> bool:
+    """TRIGGER_PIN secret set hai ya nahi — debug ke liye."""
+    return bool(_get_secret("TRIGGER_PIN", ""))
 
 
 def _gh_headers() -> dict:
@@ -1256,7 +1256,11 @@ with st.sidebar:
             )
             if st.button("📤 ath_memory.json → GitHub", use_container_width=True, key="ath_gh_push"):
                 if not _verify_pin(_ath_pin_inp):
-                    st.error("❌ Wrong PIN")
+                    if not _pin_secret_exists():
+                        st.error("❌ TRIGGER_PIN secret set nahi hai")
+                        st.caption("ℹ️ Streamlit Secrets mein `TRIGGER_PIN = \"your_pin\"` add karo")
+                    else:
+                        st.error("❌ Wrong PIN")
                 elif not _get_secret("GITHUB_PAT"):
                     st.error("❌ GITHUB_PAT secret set nahi hai")
                 else:
@@ -1329,7 +1333,12 @@ with st.sidebar:
                         st.error(_msg)
 
         if not _ga_pin_ok and _ga_pin:
-            st.error("❌ Wrong PIN")
+            _pin_exists = _pin_secret_exists()
+            if not _pin_exists:
+                st.error("❌ TRIGGER_PIN secret Streamlit mein set nahi hai")
+                st.caption("ℹ️ Settings → Secrets mein `TRIGGER_PIN = \"your_pin\"` add karo (quotes zaroori hain)")
+            else:
+                st.error("❌ Wrong PIN")
         elif not _ga_pin:
             st.caption("PIN daalo → buttons active honge")
 
