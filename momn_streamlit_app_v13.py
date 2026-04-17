@@ -21,6 +21,9 @@ Changes vs v12:
 """
 
 import io
+import os
+import json
+import base64
 import time
 import datetime
 import warnings
@@ -29,6 +32,108 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import requests
+
+# ── GitHub API helpers (PIN-protected) ───────────────────────
+_GH_OWNER = "prayan2702"
+_GH_REPO  = "Streamlit_Momn_v13_Cached_DB"
+
+# Workflow file names in .github/workflows/
+_WF_YFINANCE = "daily_cache.yml"
+_WF_UPSTOX   = "daily_cache_upstox.yml"
+_WF_ANGEL    = "daily_cache_angelone.yml"
+
+
+def _get_secret(key: str, default: str = "") -> str:
+    """st.secrets se safely read karo."""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+def _verify_pin(entered: str) -> bool:
+    """
+    Entered PIN ko TRIGGER_PIN secret se match karo.
+    Secret set nahi hai → always False (safe default).
+    """
+    correct = _get_secret("TRIGGER_PIN", "")
+    return bool(correct) and entered.strip() == correct.strip()
+
+
+def _gh_headers() -> dict:
+    """GitHub API headers with PAT token."""
+    token = _get_secret("GITHUB_PAT", "")
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept":        "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+
+def _trigger_workflow(workflow_file: str) -> tuple[bool, str]:
+    """
+    GitHub Actions workflow_dispatch trigger karo.
+    Returns: (success: bool, message: str)
+    """
+    url = (
+        f"https://api.github.com/repos/{_GH_OWNER}/{_GH_REPO}"
+        f"/actions/workflows/{workflow_file}/dispatches"
+    )
+    try:
+        r = requests.post(
+            url,
+            headers=_gh_headers(),
+            json={"ref": "main"},
+            timeout=15,
+        )
+        if r.status_code == 204:
+            return True, f"✅ Workflow `{workflow_file}` triggered!"
+        elif r.status_code == 401:
+            return False, "❌ GitHub PAT invalid ya expired. Secrets check karo."
+        elif r.status_code == 404:
+            return False, f"❌ Workflow `{workflow_file}` nahi mila. Repo/name check karo."
+        elif r.status_code == 422:
+            return False, "❌ Branch `main` nahi mili. Repo settings check karo."
+        else:
+            return False, f"❌ HTTP {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"❌ Network error: {e}"
+
+
+def _push_json_to_github(path: str, content_dict: dict, commit_msg: str) -> tuple[bool, str]:
+    """
+    JSON dict ko GitHub repo mein push karo (create or update).
+    path = repo root se relative, e.g. "ath_memory.json"
+    Returns: (success: bool, message: str)
+    """
+    url = f"https://api.github.com/repos/{_GH_OWNER}/{_GH_REPO}/contents/{path}"
+    try:
+        # Pehle current SHA fetch karo (update ke liye zaroori)
+        r_get = requests.get(url, headers=_gh_headers(), timeout=10)
+        sha = r_get.json().get("sha") if r_get.status_code == 200 else None
+
+        content_b64 = base64.b64encode(
+            json.dumps(content_dict, indent=2, ensure_ascii=False).encode("utf-8")
+        ).decode("ascii")
+
+        payload = {
+            "message": commit_msg,
+            "content": content_b64,
+            "branch":  "main",
+        }
+        if sha:
+            payload["sha"] = sha
+
+        r_put = requests.put(url, headers=_gh_headers(), json=payload, timeout=20)
+        if r_put.status_code in (200, 201):
+            action = "updated" if sha else "created"
+            return True, f"✅ `{path}` GitHub pe {action}!"
+        elif r_put.status_code == 401:
+            return False, "❌ GitHub PAT invalid ya expired. Secrets check karo."
+        else:
+            return False, f"❌ HTTP {r_put.status_code}: {r_put.text[:200]}"
+    except Exception as e:
+        return False, f"❌ Network error: {e}"
 
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
@@ -705,7 +810,6 @@ _ATH_MEMORY_FILE = "ath_memory.json"
 def _load_ath_memory() -> dict:
     """Load ATH override memory from local JSON file.
     Returns empty dict if file not found or unreadable."""
-    import json, os
     try:
         if os.path.exists(_ATH_MEMORY_FILE):
             with open(_ATH_MEMORY_FILE, "r") as f:
@@ -719,7 +823,6 @@ def _load_ath_memory() -> dict:
 def _save_ath_memory(mem: dict) -> bool:
     """Save ATH override memory to local JSON file.
     Returns True on success, False on error."""
-    import json
     try:
         with open(_ATH_MEMORY_FILE, "w") as f:
             json.dump(mem, f, indent=2, ensure_ascii=False)
@@ -1128,10 +1231,15 @@ with st.sidebar:
     st.divider()
     _ath_mem_sidebar = st.session_state.get("_ath_memory") or {}
     _n_mem = len(_ath_mem_sidebar)
-    st.markdown(f"### 📚 ATH Memory &nbsp;<span style='font-size:11px;color:var(--muted);font-weight:400;'>({_n_mem} stocks)</span>", unsafe_allow_html=True)
+    st.markdown(
+        f"### 📚 ATH Memory &nbsp;"
+        f"<span style='font-size:11px;color:var(--muted);font-weight:400;'>({_n_mem} stocks)</span>",
+        unsafe_allow_html=True,
+    )
     if _n_mem > 0:
-        import json as _json_mod
-        _mem_bytes = _json_mod.dumps(_ath_mem_sidebar, indent=2, ensure_ascii=False).encode("utf-8")
+        _mem_bytes = json.dumps(_ath_mem_sidebar, indent=2, ensure_ascii=False).encode("utf-8")
+
+        # ── Download button ──────────────────────────────────
         st.download_button(
             label="💾 Download ath_memory.json",
             data=_mem_bytes,
@@ -1139,11 +1247,37 @@ with st.sidebar:
             mime="application/json",
             use_container_width=True,
         )
+
+        # ── Push to GitHub (PIN-protected) ───────────────────
+        with st.expander("☁️ GitHub pe push karo", expanded=False):
+            _ath_pin_inp = st.text_input(
+                "🔑 PIN", type="password",
+                key="ath_push_pin", placeholder="Streamlit secret PIN"
+            )
+            if st.button("📤 ath_memory.json → GitHub", use_container_width=True, key="ath_gh_push"):
+                if not _verify_pin(_ath_pin_inp):
+                    st.error("❌ Wrong PIN")
+                elif not _get_secret("GITHUB_PAT"):
+                    st.error("❌ GITHUB_PAT secret set nahi hai")
+                else:
+                    with st.spinner("☁️ GitHub pe push ho raha hai..."):
+                        _ok, _msg = _push_json_to_github(
+                            path="ath_memory.json",
+                            content_dict=_ath_mem_sidebar,
+                            commit_msg=f"🤖 ATH memory update ({_n_mem} stocks) — {datetime.date.today()}",
+                        )
+                    if _ok:
+                        st.success(_msg)
+                    else:
+                        st.error(_msg)
+
+        # ── Clear + Preview ──────────────────────────────────
         if st.button("🗑 Memory Clear karo", use_container_width=True, key="sb_clear_mem"):
             st.session_state["_ath_memory"] = {}
             st.session_state["_ath_memory_loaded"] = True
             _save_ath_memory({})
             st.rerun()
+
         with st.expander(f"📋 Memory preview ({_n_mem} stocks)"):
             for _t, _e in list(_ath_mem_sidebar.items())[:20]:
                 st.markdown(
@@ -1157,19 +1291,47 @@ with st.sidebar:
                 )
             if _n_mem > 20:
                 st.caption(f"... aur {_n_mem - 20} stocks (download karo full list)")
-        st.markdown(
-            "<div style='font-size:11px;color:var(--muted);margin-top:6px;line-height:1.7;"
-            "background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-sm);"
-            "padding:7px 10px;'>"
-            "📌 <b>Next steps:</b><br>"
-            "1️⃣ Upar button se download karo<br>"
-            "2️⃣ GitHub repo root mein <code>ath_memory.json</code> commit karo<br>"
-            "3️⃣ App restart pe bhi memory auto-load hogi"
-            "</div>",
-            unsafe_allow_html=True,
-        )
     else:
         st.caption("Abhi koi ATH review save nahi hua. Cross-source review karke 'Apply' karo.")
+
+    # ── GitHub Actions Trigger Panel ─────────────────────────────
+    st.divider()
+    st.markdown("### ⚡ GitHub Actions", unsafe_allow_html=True)
+    with st.expander("🔄 Cache rebuild trigger karo", expanded=False):
+        st.caption("PIN se protected — workflows manually trigger honge")
+        _ga_pin = st.text_input(
+            "🔑 PIN", type="password",
+            key="ga_trigger_pin", placeholder="Streamlit secret PIN"
+        )
+        _ga_pin_ok = _verify_pin(_ga_pin) if _ga_pin else False
+
+        _wf_map = {
+            "📦 YFinance":   _WF_YFINANCE,
+            "📡 Upstox":     _WF_UPSTOX,
+            "🤖 Angel One":  _WF_ANGEL,
+        }
+        for _lbl, _wf in _wf_map.items():
+            if st.button(
+                f"🔄 Trigger {_lbl}",
+                use_container_width=True,
+                key=f"trigger_{_wf}",
+                disabled=not _ga_pin_ok,
+            ):
+                if not _get_secret("GITHUB_PAT"):
+                    st.error("❌ GITHUB_PAT secret set nahi hai")
+                else:
+                    with st.spinner(f"GitHub se {_lbl} workflow trigger ho raha hai..."):
+                        _ok, _msg = _trigger_workflow(_wf)
+                    if _ok:
+                        st.success(_msg)
+                        st.caption("⏱ Build ~20-90 min lagega. GitHub Actions tab mein progress dekho.")
+                    else:
+                        st.error(_msg)
+
+        if not _ga_pin_ok and _ga_pin:
+            st.error("❌ Wrong PIN")
+        elif not _ga_pin:
+            st.caption("PIN daalo → buttons active honge")
 
     if st.button("🚪 Logout", use_container_width=True):
         for k in list(st.session_state.keys()):
