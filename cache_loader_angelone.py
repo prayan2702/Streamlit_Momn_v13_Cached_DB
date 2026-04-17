@@ -1,24 +1,30 @@
 """
 cache_loader_angelone.py
 ========================
-cache_loader_upstox.py ka Angel One version.
-GitHub raw URLs se Parquet files load karta hai — cache_angelone/ folder se.
+Streamlit app se call hota hai — Angel One pre-cached data loader.
+GitHub raw URLs se Parquet files load karta hai (cache_angelone/ folder).
+
+5-Day Rolling Cache Support:
+  - cache_index.json se available dates list karo
+  - cache_date=None → latest date auto-select
+  - cache_date="YYYY-MM-DD" → specific date load
 
 Folder map:
   YFinance cache  → cache/
   Upstox cache    → cache_upstox/
   Angel One cache → cache_angelone/   ← YE FILE
 
-Usage (Step 2 mein):
-    from cache_loader_angelone import (
-        load_cache, get_cache_meta,
-        get_cache_age_days, get_cache_status_html
-    )
-    meta = get_cache_meta()
-    close, high, volume = load_cache()
+ATH Logic + trailing NaN fix (unchanged from original).
+
+Usage:
+    from cache_loader_angelone import load_cache, get_cache_meta,
+                                      get_cache_age_days, get_cache_status_html,
+                                      list_available_dates
+    dates = list_available_dates()
+    close, high, volume = load_cache()            # latest
+    close, high, volume = load_cache("2026-04-14")   # specific
 """
 
-import json
 import requests
 import pandas as pd
 import streamlit as st
@@ -30,27 +36,56 @@ _GITHUB_CACHE = (
     "prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main/cache_angelone"
 )
 
-_META_URL   = f"{_GITHUB_CACHE}/cache_meta.json"
-_CLOSE_URL  = f"{_GITHUB_CACHE}/close.parquet"
-_HIGH_URL   = f"{_GITHUB_CACHE}/high.parquet"
-_VOL_URL    = f"{_GITHUB_CACHE}/volume.parquet"
-_ATH_URL    = f"{_GITHUB_CACHE}/ath.parquet"
+_INDEX_URL = f"{_GITHUB_CACHE}/cache_index.json"
 
 
-# ── Meta (~1 KB JSON, 30 min TTL) ─────────────────────────────
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_cache_meta() -> dict:
-    """cache_angelone/cache_meta.json load karo."""
+# ── Available dates ───────────────────────────────────────────
+@st.cache_data(ttl=900, show_spinner=False)
+def list_available_dates() -> list:
+    """
+    cache_angelone/cache_index.json se available dates list karo (oldest → latest).
+    ttl=900 (15 min).
+    """
     try:
-        r = requests.get(_META_URL, timeout=15)
+        r = requests.get(_INDEX_URL, timeout=10)
+        r.raise_for_status()
+        return sorted(r.json().get("dates", []))
+    except Exception:
+        return []
+
+
+def get_latest_date() -> str | None:
+    dates = list_available_dates()
+    return dates[-1] if dates else None
+
+
+def _resolve_date(cache_date: str | None) -> str | None:
+    dates = list_available_dates()
+    if not dates:
+        return None
+    if cache_date and cache_date in dates:
+        return cache_date
+    return dates[-1]
+
+
+# ── Meta ──────────────────────────────────────────────────────
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_cache_meta(cache_date: str | None = None) -> dict:
+    """cache_angelone/{date}/cache_meta.json load karo."""
+    d = _resolve_date(cache_date)
+    if not d:
+        return {"error": "No Angel One cache available"}
+    url = f"{_GITHUB_CACHE}/{d}/cache_meta.json"
+    try:
+        r = requests.get(url, timeout=15)
         r.raise_for_status()
         return r.json()
     except Exception as e:
         return {"error": str(e)}
 
 
-def get_cache_age_days() -> float:
-    meta = get_cache_meta()
+def get_cache_age_days(cache_date: str | None = None) -> float:
+    meta = get_cache_meta(cache_date)
     if not meta or "build_date" not in meta:
         return 999.0
     try:
@@ -60,33 +95,30 @@ def get_cache_age_days() -> float:
         return 999.0
 
 
-def is_cache_fresh(max_days: int = 3) -> bool:
-    return get_cache_age_days() <= max_days
+def is_cache_fresh(max_days: int = 3, cache_date: str | None = None) -> bool:
+    return get_cache_age_days(cache_date) <= max_days
 
 
-def get_cache_status_html() -> str:
-    """
-    Step 1 mein dikhane ke liye Angel One cache status card HTML.
-    Green = 0-1 din | Amber = 2-3 din | Red = 4+ din
-    """
-    meta = get_cache_meta()
-    age  = get_cache_age_days()
+def get_cache_status_html(cache_date: str | None = None) -> str:
+    """Angel One cache status HTML card for sidebar display."""
+    meta   = get_cache_meta(cache_date)
+    age    = get_cache_age_days(cache_date)
+    dates  = list_available_dates()
+    loaded = _resolve_date(cache_date) or "N/A"
 
     if "error" in meta:
         return f"""
         <div style="background:#fee2e2;border:1px solid #fca5a5;border-left:4px solid #dc2626;
                     border-radius:10px;padding:12px 16px;font-size:13px;color:#7f1d1d;margin:10px 0;">
           ❌ <b>Angel One Cache load failed:</b> {meta['error']}<br>
-          <span style="font-size:11px;">Cache abhi build nahi hua —
-          daily_cache_angelone.yml GitHub Actions workflow run karo.</span>
+          <span style="font-size:11px;">daily_cache_angelone.yml workflow run karo.</span>
         </div>"""
 
     if not meta or "build_date" not in meta:
         return """
         <div style="background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #d97706;
                     border-radius:10px;padding:12px 16px;font-size:13px;color:#92400e;margin:10px 0;">
-          ⚠️ <b>Angel One Cache not found yet.</b>
-          GitHub Actions daily_cache_angelone.yml pehli baar chalegi.
+          ⚠️ <b>Angel One Cache not found yet.</b> daily_cache_angelone.yml pehli baar chalegi.
         </div>"""
 
     if age <= 1:
@@ -105,47 +137,55 @@ def get_cache_status_html() -> str:
     failed_ct  = meta.get("symbols_failed", 0)
     chunks     = meta.get("chunks_per_symbol", "?")
     max_days_c = meta.get("max_days_per_chunk", 2000)
+    n_dates    = len(dates)
+    is_hist    = (cache_date and cache_date != dates[-1]) if dates else False
 
     return f"""
     <div style="background:{color};border:1px solid {bdr};border-left:4px solid {bdr};
                 border-radius:10px;padding:12px 16px;font-size:13px;color:{text};margin:10px 0;">
-      {icon} <b>Angel One Pre-cached Data</b> &nbsp;·&nbsp; {freshness}<br>
+      {icon} <b>Angel One Pre-cached</b> &nbsp;·&nbsp; {freshness}
+      {'&nbsp;·&nbsp; <b>📜 Historical</b>' if is_hist else ''}<br>
       <span style="font-size:11.5px;margin-top:4px;display:block;">
-        📅 Build date: <b>{build_dt}</b> &nbsp;·&nbsp;
+        📅 Loaded date: <b>{loaded}</b> &nbsp;·&nbsp;
         📋 Symbols: <b>{fetched:,}</b> &nbsp;·&nbsp;
         ❌ Failed: <b>{failed_ct}</b><br>
-        📡 Data: <b>{src}</b> &nbsp;·&nbsp;
-        🗂️ Chunks: <b>{chunks} × {max_days_c} days</b> &nbsp;·&nbsp;
+        📡 Source: <b>{src}</b> &nbsp;·&nbsp;
+        🗂️ Chunks: <b>{chunks} × {max_days_c} days</b><br>
         📋 NSE EQUITY_L.csv (+ GOLDBEES &amp; SILVERBEES)<br>
-        ⚡ "Pre-cached Angel One (Instant)" select karo → <b>&lt;10 sec</b> mein data ready
+        🗂️ Cached dates: <b>{n_dates}/5</b> available
+        &nbsp;·&nbsp; ⚡ Load time: <b>&lt;10 sec</b>
       </span>
     </div>"""
 
 
 # ── Main load function ─────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_cache():
+def load_cache(cache_date: str | None = None):
     """
-    GitHub se cache_angelone/ folder ke 4 Parquet files load karo:
-      close.parquet   → recent 40 months close prices (Angel One SmartAPI)
-      high.parquet    → recent 40 months high prices
-      volume.parquet  → recent 40 months close×volume
-      ath.parquet     → ALL TIME HIGH (2000 to today max)
+    GitHub se Angel One Parquet files load karo.
 
-    ATH ko high DataFrame mein inject karta hai taaki
-    calculations.py mein high.max() = correct ATH aaye.
+    Args:
+        cache_date: "YYYY-MM-DD" ya None (latest auto-select).
 
     Returns:
-      (close_df, high_with_ath_df, volume_df)
-      — directly build_dfStats() mein pass karo
+        (close_df, high_with_ath_df, volume_df)
 
-    Raises:
-      Exception agar koi file load nahi hua
+    Files loaded (from cache_angelone/{date}/ subfolder):
+        close.parquet   → recent 40 months close prices  (Angel One SmartAPI)
+        high.parquet    → recent 40 months high prices
+        volume.parquet  → recent 40 months close×volume
+        ath.parquet     → ALL TIME HIGH (2000 to today max)
     """
-    close  = pd.read_parquet(_CLOSE_URL)
-    high   = pd.read_parquet(_HIGH_URL)
-    volume = pd.read_parquet(_VOL_URL)
-    ath    = pd.read_parquet(_ATH_URL)
+    d = _resolve_date(cache_date)
+    if not d:
+        raise FileNotFoundError("No Angel One cache available. Run daily_cache_angelone.yml first.")
+
+    base = f"{_GITHUB_CACHE}/{d}"
+
+    close  = pd.read_parquet(f"{base}/close.parquet")
+    high   = pd.read_parquet(f"{base}/high.parquet")
+    volume = pd.read_parquet(f"{base}/volume.parquet")
+    ath    = pd.read_parquet(f"{base}/ath.parquet")
 
     # ── Timezone strip ─────────────────────────────────────────
     for df in (close, high, volume):
@@ -153,15 +193,14 @@ def load_cache():
             df.index = df.index.tz_localize(None)
 
     # ── ROOT CAUSE FIX: Trailing all-NaN rows ─────────────────
-    # Market holidays → last row NaN → iloc[-1] = NaN → AWAY_ATH blank
-    # Fix: dropna(how='all') then ffill — same logic as Upstox loader
+    # Market holidays → last row NaN → AWAY_ATH blank.
+    # Fix: dropna(how='all') + ffill.
     close  = close.sort_index().dropna(how="all").ffill()
     volume = volume.sort_index().dropna(how="all").ffill()
     high   = high.sort_index()
 
     # ── ATH row inject into high DataFrame ────────────────────
-    # calculations.py mein `ATH = high.max()` use hota hai.
-    # Hum 2000-01-01 timestamp pe ek synthetic row add karte hain.
+    # calculations.py mein `ATH = high.max()` — synthetic 2000-01-01 row.
     ath_series = ath["ATH"].reindex(high.columns)
     ath_row    = pd.DataFrame(
         [ath_series.values],

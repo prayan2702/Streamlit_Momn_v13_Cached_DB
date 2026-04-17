@@ -2,15 +2,20 @@
 cache_builder_angelone.py
 =========================
 Angel One SmartAPI V2 se full history cache build karta hai.
-GitHub Actions pe daily 11:30 PM IST (17:00 UTC) pe chalta hai.
+GitHub Actions pe daily 12:47 UTC = 6:17 PM IST pe chalta hai.
+
+── 5-DAY ROLLING CACHE ──────────────────────────────────────
+  cache_angelone/
+    cache_index.json         ← {"dates": [...], "latest": "YYYY-MM-DD"}
+    2026-04-14/
+      close.parquet, high.parquet, volume.parquet, ath.parquet, cache_meta.json
+    (max 5 dirs — 6th build pe oldest auto-pruned)
+──────────────────────────────────────────────────────────────
 
 ── BUG FIX: Angel One todate ────────────────────────────────
-  Angel One `todate = "2026-04-10 15:30"` inclusive hai aur
-  market close time explicitly specify karta hai — is liye ye
-  already correct tha. Lekin `get_date_ranges()` mein ab
-  upper bound = today + 1 use karte hain taaki last chunk mein
-  today ka data guaranteed mile (off-by-one se bachne ke liye).
-  Actual last candle timestamp 15:30 se control hota hai.
+  `todate = "YYYY-MM-DD 15:30"` — market close time explicitly
+  specify karta hai. get_date_ranges() mein upper bound = today+1
+  taaki last chunk mein today ka data guaranteed mile.
 ──────────────────────────────────────────────────────────────
 
 Key design:
@@ -18,8 +23,7 @@ Key design:
   • Full history from 2000-01-01 → ~5 API calls per symbol
   • Rate limit: 3 req/sec → sleep 0.34s between calls
   • ATH = concat(all chunks).high.max() → correct 2000-to-today ATH
-  • Recent 40M = slice from merged data → close/high/volume parquet
-  • Cache dir: cache_angelone/
+  • Recent 40M = slice from merged data
   • Session refresh: har SESSION_REFRESH_EVERY symbols pe auto-refresh
   • Consecutive failure guard: 10+ fail → session refresh
 
@@ -45,6 +49,8 @@ try:
 except ImportError:
     print("ERROR: SmartApi/pyotp not installed. pip install smartapi-python pyotp", flush=True)
     sys.exit(1)
+
+from cache_rolling import save_rolling_cache, MAX_CACHED_DAYS
 
 # ══════════════════════════════════════════════════════════════
 # CONFIG
@@ -213,17 +219,10 @@ def get_date_ranges(
 ) -> list[tuple[str, str]]:
     """
     2000-01-01 se aaj tak ke liye 2000-day chunks banao.
-
-    FIXED: upper bound = today + 1 day taaki last chunk's todate
-    mein today guaranteed include ho. Angel One ke liye `todate`
-    "2026-04-11 15:30" matlab hai sirf us din 15:30 tak ka data —
-    jo future date hai to Angel One automatically latest candle return karta hai.
+    FIXED: upper bound = today + 1 day taaki last chunk mein today guaranteed ho.
     """
     ranges  = []
     current = datetime.strptime(start_str, "%Y-%m-%d").date()
-
-    # ── FIX: use tomorrow as upper bound ─────────────────────
-    # Ensures today's date is always in the last chunk's to_date.
     upper_bound = date.today() + timedelta(days=1)
 
     while current <= upper_bound:
@@ -244,10 +243,7 @@ def _fetch_one_chunk(
     to_date   : str,
     retries   : int = 3,
 ) -> pd.DataFrame | None:
-    """
-    Ek 2000-day chunk ka daily candle data fetch karo.
-    todate format: "YYYY-MM-DD 15:30" (Angel One requirement).
-    """
+    """Ek 2000-day chunk ka daily candle data fetch karo."""
     historic_param = {
         "exchange":    "NSE",
         "symboltoken": token,
@@ -320,7 +316,7 @@ def fetch_all_sequential(
 
     for i, sym in enumerate(symbols):
 
-        # ── Proactive session refresh ────────────────────────
+        # ── Proactive session refresh ─────────────────────────
         if i > 0 and i % SESSION_REFRESH_EVERY == 0 and creds:
             log(f"  Proactive session refresh at [{i}/{total}]...")
             try:
@@ -353,7 +349,6 @@ def fetch_all_sequential(
                 try:
                     smart_api        = _refresh_session(creds)
                     consecutive_fail = 0
-                    # retry this symbol
                     chunks = []
                     for from_d, to_d in date_ranges:
                         try:
@@ -474,6 +469,7 @@ def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
 def build_cache():
     log("=" * 58)
     log("MOMN CACHE BUILDER — ANGEL ONE VERSION")
+    log(f"Rolling cache: max {MAX_CACHED_DAYS} days stored")
     log("=" * 58)
     CACHE_DIR.mkdir(exist_ok=True)
     t_total = time.monotonic()
@@ -488,7 +484,7 @@ def build_cache():
     # 3. Instrument map
     instrument_map = load_instrument_map()
 
-    # 4. Date ranges — last chunk's to_date = tomorrow (guaranteed today inclusion)
+    # 4. Date ranges
     today      = date.today()
     today_str  = today.strftime("%Y-%m-%d")
     end_date   = datetime.combine(today, datetime.min.time())
@@ -535,26 +531,15 @@ def build_cache():
     volume = volume.sort_index().dropna(how="all").ffill()
     high   = high.sort_index()
 
-    # 7. Data freshness check
+    # 7. Freshness check
     log("Verifying data freshness...")
     today_present      = verify_data_freshness(close, today)
     last_date_in_cache = close.index[-1].date() if not close.empty else None
 
-    # 8. Save Parquet
-    log("Saving Parquet files to cache_angelone/...")
-    close.to_parquet(CACHE_DIR  / "close.parquet")
-    high.to_parquet(CACHE_DIR   / "high.parquet")
-    volume.to_parquet(CACHE_DIR / "volume.parquet")
-    ath_df.to_parquet(CACHE_DIR / "ath.parquet")
-
-    for fname in ["close.parquet", "high.parquet", "volume.parquet", "ath.parquet"]:
-        mb = (CACHE_DIR / fname).stat().st_size / 1_048_576
-        log(f"  {fname}: {mb:.1f} MB")
-
-    # 9. Meta JSON
+    # 8. Build meta
     total_min = (time.monotonic() - t_total) / 60
     meta = {
-        "build_date"          : today.isoformat(),
+        "build_date"          : today_str,
         "build_time_utc"      : datetime.utcnow().strftime("%H:%M:%S"),
         "build_duration_min"  : round(total_min, 1),
         "symbols_total"       : len(symbols),
@@ -582,8 +567,11 @@ def build_cache():
         "volume_shape"        : list(volume.shape),
         "ath_count"           : len(ath_df),
     }
-    with open(CACHE_DIR / "cache_meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
+
+    # 9. Rolling dated cache save
+    available_dates = save_rolling_cache(
+        CACHE_DIR, today_str, close, high, volume, ath_df, meta, log
+    )
 
     log("=" * 58)
     log("✅ ANGEL ONE CACHE BUILD COMPLETE")
@@ -591,6 +579,7 @@ def build_cache():
     log(f"   API calls     : ~{meta['total_api_calls']:,}")
     log(f"   Last date     : {last_date_in_cache}")
     log(f"   Today present : {'✅ YES' if today_present else '⚠️  NO (holiday/weekend?)'}")
+    log(f"   Cached dates  : {available_dates}")
     log(f"   Time          : {total_min:.1f} min")
     log("=" * 58)
 

@@ -1027,6 +1027,42 @@ with st.sidebar:
     st.session_state.ranking_method = RANKING_MAP[rm_display]
 
     st.session_state.data_source = st.selectbox("📡 Data Source", API_OPTIONS, index=0)
+
+    # ── 5-Day Rolling Cache Date Selector ──────────────────
+    _ds = st.session_state.data_source
+    _avail_dates = []
+    try:
+        if "Upstox" in _ds and _CACHE_UPSTOX_AVAILABLE:
+            from cache_loader_upstox import list_available_dates as _ld_dates
+            _avail_dates = _ld_dates()
+        elif "Angel" in _ds and _CACHE_ANGEL_AVAILABLE:
+            from cache_loader_angelone import list_available_dates as _ld_dates
+            _avail_dates = _ld_dates()
+        elif _CACHE_AVAILABLE:
+            from cache_loader import list_available_dates as _ld_dates
+            _avail_dates = _ld_dates()
+    except Exception:
+        _avail_dates = []
+
+    if _avail_dates and "Pre-cached" in _ds:
+        _date_opts   = list(reversed(_avail_dates))  # latest first
+        _prev_sel    = st.session_state.get("cache_selected_date", _date_opts[0])
+        _default_idx = _date_opts.index(_prev_sel) if _prev_sel in _date_opts else 0
+        _sel_date    = st.selectbox(
+            "📅 Cache Date",
+            options=_date_opts,
+            index=_default_idx,
+            help=f"5 cached dates available. Latest = {_date_opts[0]}",
+            key="cache_date_selectbox",
+        )
+        st.session_state["cache_selected_date"] = _sel_date
+        if _sel_date == _date_opts[0]:
+            st.caption("✅ Latest cache loaded")
+        else:
+            st.caption(f"⚠️ Historical cache: {_sel_date}")
+    else:
+        st.session_state["cache_selected_date"] = None
+
     st.session_state.lookback_date = st.date_input(
         "📅 Lookback Date", value=st.session_state.lookback_date,
         max_value=datetime.date.today()
@@ -1413,11 +1449,14 @@ if st.session_state.current_step == 1:
 
     # ── Cache status (Pre-cached options ke liye info) ────────
     if _CACHE_AVAILABLE:
-        st.markdown(get_cache_status_html(), unsafe_allow_html=True)
+        _cd = st.session_state.get("cache_selected_date", None)
+        st.markdown(get_cache_status_html(cache_date=_cd), unsafe_allow_html=True)
     if _CACHE_UPSTOX_AVAILABLE:
-        st.markdown(get_cache_status_html_upstox(), unsafe_allow_html=True)
+        _cd = st.session_state.get("cache_selected_date", None)
+        st.markdown(get_cache_status_html_upstox(cache_date=_cd), unsafe_allow_html=True)
     if _CACHE_ANGEL_AVAILABLE:
-        st.markdown(get_cache_status_html_angel(), unsafe_allow_html=True)
+        _cd = st.session_state.get("cache_selected_date", None)
+        st.markdown(get_cache_status_html_angel(cache_date=_cd), unsafe_allow_html=True)
     if _CACHE_FYERS_AVAILABLE:
         st.markdown(get_cache_status_html_fyers(), unsafe_allow_html=True)
 
@@ -1604,15 +1643,18 @@ elif st.session_state.current_step == 2:
                     _age_fn    = get_cache_age_days
                     _cache_lbl = "YFinance"
 
-                status_tx.markdown(f"⚡ **{_cache_lbl} pre-cached data GitHub se load ho raha hai...**")
+                _cache_date = st.session_state.get("cache_selected_date", None)
+                status_tx.markdown(
+                    f"⚡ **{_cache_lbl} cache ({_cache_date or 'latest'}) load ho raha hai...**"
+                )
                 prog_bar.progress(0.1)
                 try:
-                    close, high, volume = _loader()
+                    close, high, volume = _loader(cache_date=_cache_date)
                     prog_bar.progress(0.85)
                     status_tx.markdown("✅ **Cache loaded!** Calculations shuru ho rahi hain...")
 
                     # ── Meta & failed symbols (Issues 3 & 4) ─────
-                    meta = _meta_fn()
+                    meta = _meta_fn(cache_date=_cache_date)
 
                     # Issue 3: meta se ALL failed symbols lo (not just volume blank)
                     failed_from_meta = meta.get("failed_symbols", [])

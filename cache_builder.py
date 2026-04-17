@@ -1,22 +1,23 @@
 """
 cache_builder.py
 ================
-GitHub Actions pe daily chalta hai (roz 7:30 PM IST / 14:00 UTC).
+GitHub Actions pe daily chalta hai (roz 12:00 UTC = 5:30 PM IST, Mon-Fri).
 YFinance se data fetch karta hai aur cache/ folder mein save karta hai.
 
-Kya karta hai:
-  1. NSE EQUITY_L.csv se symbols load karo (+ GOLDBEES + SILVERBEES)
-  2. yfinance.download(start=2000-01-01) — full history ek hi call mein
-  3. ATH = high.max() — sirf ek number per symbol (tiny file)
-  4. Recent 40 months close/high/volume — Parquet files
-  5. cache_meta.json — build info (last_date_in_cache + today_data_present fields)
+── 5-DAY ROLLING CACHE ──────────────────────────────────────
+  cache/
+    cache_index.json         ← {"dates": [...], "latest": "YYYY-MM-DD"}
+    2026-04-14/
+      close.parquet, high.parquet, volume.parquet, ath.parquet, cache_meta.json
+    2026-04-15/  ...
+    (max 5 dirs — 6th build pe oldest auto-pruned)
+
+  Streamlit: latest date by default. User manually bhi select kar sakta hai.
+──────────────────────────────────────────────────────────────
 
 ── BUG FIX: yfinance end-date ────────────────────────────────
-  yfinance `end` parameter EXCLUSIVE hai (Python range jaisa).
-  end = "2026-04-10"  →  data sirf 2026-04-09 tak milta hai  ❌
-  end = "2026-04-11"  →  data 2026-04-10 tak milta hai       ✅
-  Isliye: end_date_yf = today + 1 day use karo.
-  Metadata mein `data_end` = today (actual last trading day) dikhata hai.
+  yfinance `end` parameter EXCLUSIVE hai.
+  end = today+1 use karo taaki today ka data included ho.
 ──────────────────────────────────────────────────────────────
 """
 
@@ -31,6 +32,8 @@ import pandas as pd
 import requests
 import yfinance as yf
 from dateutil.relativedelta import relativedelta
+
+from cache_rolling import save_rolling_cache, MAX_CACHED_DAYS
 
 # ── Config ────────────────────────────────────────────────────
 GITHUB_BASE   = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
@@ -52,6 +55,7 @@ NSE_HEADERS = {
     "Accept-Language": "en-US,en;q=0.5",
     "Referer":         "https://www.nseindia.com/",
 }
+
 
 # ── Helpers ───────────────────────────────────────────────────
 def log(msg: str):
@@ -99,9 +103,7 @@ def load_symbols() -> list:
 def fetch_all_chunks(symbols: list, start_full: datetime, end_date_yf: datetime, start_recent: datetime):
     """
     Chunked yfinance download.
-
     end_date_yf = today + 1 day  (yfinance end is EXCLUSIVE)
-    Actual data will come up to today (last trading day).
     """
     total        = len(symbols)
     n_chunks     = (total + CHUNK_SIZE - 1) // CHUNK_SIZE
@@ -127,7 +129,7 @@ def fetch_all_chunks(symbols: list, start_full: datetime, end_date_yf: datetime,
             raw = yf.download(
                 chunk,
                 start=start_full,
-                end=end_date_yf,        # ← FIXED: today+1 so today's data is included
+                end=end_date_yf,        # FIXED: today+1 so today's data included
                 progress=False,
                 auto_adjust=True,
                 threads=True,
@@ -186,10 +188,6 @@ def build_ath_df(ath_dict: dict) -> pd.DataFrame:
 
 
 def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
-    """
-    Cache mein today ka data hai ya nahi — check karo aur log karo.
-    Returns True if today's data is present.
-    """
     if close.empty:
         log("  ⚠️  close DataFrame empty — cannot verify freshness")
         return False
@@ -209,23 +207,23 @@ def verify_data_freshness(close: pd.DataFrame, today: date) -> bool:
 # ── Main ──────────────────────────────────────────────────────
 def build_cache():
     log("=" * 58)
-    log("MOMN CACHE BUILDER (YFinance) — Starting")
+    log("MOMN CACHE BUILDER (YFinance)")
+    log(f"Rolling cache: max {MAX_CACHED_DAYS} days stored")
     log("=" * 58)
 
     CACHE_DIR.mkdir(exist_ok=True)
     t_total = time.monotonic()
 
-    today      = date.today()
-    start_full = datetime(2000, 1, 1)
+    today        = date.today()
+    today_str    = today.isoformat()
+    start_full   = datetime(2000, 1, 1)
 
-    # ── KEY FIX: yfinance end is EXCLUSIVE ────────────────────
-    # end = today         →  data only up to YESTERDAY  ❌
-    # end = today + 1     →  data includes TODAY         ✅
+    # yfinance end is EXCLUSIVE → use today+1
     end_date_yf  = datetime.combine(today + timedelta(days=1), datetime.min.time())
     start_recent = datetime.combine(today, datetime.min.time()) - relativedelta(months=RECENT_MONTHS)
 
     log(f"Today              : {today}")
-    log(f"yfinance end (excl): {end_date_yf.date()}  (includes data up to {today})")
+    log(f"yfinance end (excl): {end_date_yf.date()}  (data includes {today})")
     log(f"Recent window start: {start_recent.date()}")
 
     # 1. Symbols
@@ -252,26 +250,15 @@ def build_cache():
         log("ERROR: close DataFrame is empty!")
         sys.exit(1)
 
-    # 4. Data freshness check
+    # 4. Freshness check
     log("Verifying data freshness...")
-    today_present = verify_data_freshness(close, today)
+    today_present      = verify_data_freshness(close, today)
     last_date_in_cache = close.index[-1].date() if not close.empty else None
 
-    # 5. Save Parquet
-    log("Saving Parquet files...")
-    close.to_parquet(CACHE_DIR / "close.parquet")
-    high.to_parquet(CACHE_DIR  / "high.parquet")
-    volume.to_parquet(CACHE_DIR/ "volume.parquet")
-    ath_df.to_parquet(CACHE_DIR/ "ath.parquet")
-
-    for fname in ["close.parquet", "high.parquet", "volume.parquet", "ath.parquet"]:
-        size_mb = (CACHE_DIR / fname).stat().st_size / (1024 * 1024)
-        log(f"  {fname}: {size_mb:.1f} MB")
-
-    # 6. Meta JSON
+    # 5. Build meta
     total_time_min = (time.monotonic() - t_total) / 60
     meta = {
-        "build_date"             : today.isoformat(),
+        "build_date"             : today_str,
         "build_time_utc"         : datetime.utcnow().strftime("%H:%M:%S"),
         "build_duration_min"     : round(total_time_min, 1),
         "symbols_total"          : len(symbols),
@@ -280,7 +267,7 @@ def build_cache():
         "failed_symbols"         : sorted(failed)[:50],
         "data_start_full"        : "2000-01-01",
         "data_start_recent"      : start_recent.strftime("%Y-%m-%d"),
-        "data_end"               : today.isoformat(),
+        "data_end"               : today_str,
         "last_date_in_cache"     : str(last_date_in_cache),
         "today_data_present"     : today_present,
         "recent_months"          : RECENT_MONTHS,
@@ -294,8 +281,10 @@ def build_cache():
         "ath_count"              : len(ath_df),
     }
 
-    with open(CACHE_DIR / "cache_meta.json", "w") as f:
-        json.dump(meta, f, indent=2)
+    # 6. Rolling dated cache save (prunes old dirs automatically)
+    available_dates = save_rolling_cache(
+        CACHE_DIR, today_str, close, high, volume, ath_df, meta, log
+    )
 
     log("=" * 58)
     log("✅ CACHE BUILD COMPLETE")
@@ -303,6 +292,7 @@ def build_cache():
     log(f"   Failed        : {meta['symbols_failed']} symbols")
     log(f"   Last date     : {last_date_in_cache}")
     log(f"   Today present : {'✅ YES' if today_present else '⚠️  NO (holiday/weekend?)'}")
+    log(f"   Cached dates  : {available_dates}")
     log(f"   Time          : {total_time_min:.1f} minutes")
     log("=" * 58)
 
