@@ -18,8 +18,8 @@ name: Daily Cache Build — Angel One
 
 on:
   schedule:
-    - cron: "47 12 * * 1-5"   # Mon-Fri 12:47 UTC = 6:17 PM IST (odd time to avoid delay)
-                               # 2 hrs after Upstox (15:00 UTC) — avoids push conflict
+    - cron: "47 10 * * 1-5"   # Mon-Fri 10:47 UTC = 4:17 PM IST (odd time to avoid delay)
+                              
   workflow_dispatch:
 
 env:
