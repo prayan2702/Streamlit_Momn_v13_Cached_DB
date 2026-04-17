@@ -2,10 +2,10 @@ name: Daily Cache Builder (YFinance)
 
 on:
   schedule:
-    # Roz 12:00 UTC = 5:30 PM IST, Monday-Friday
+    # Roz 10:15 UTC = 3:45 PM IST, Monday-Friday
     # Market 3:30 PM IST close — cache 2 ghante baad build hota hai
     # yfinance end = today+1 (exclusive) — today ka data included hoga
-    - cron: '0 12 * * 1-5'
+    - cron: '15 10 * * 1-5'
 
   workflow_dispatch:
 
