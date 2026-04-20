@@ -735,6 +735,10 @@ APPS_SCRIPT_URL = (
     "AKfycbwUNaPd82fIyQXBrPguLBZBv4tLA94Y_Uw4g-8_W77qRvmpQgJvK6_huvWcjVy0XRkc/exec"
 )
 GITHUB_BASE = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
+DASHBOARD_API_URL = (
+    "https://script.google.com/macros/s/"
+    "AKfycbwecEMb7rhlvdkcYTq_ext1MfMtRwIv5givDI2h-Ke39icmHzqfzLCLnxpzYBx5bm5c9A/exec"
+)
 
 # ── Credentials: st.secrets se lo (NEVER hardcode in source code) ──────────
 # Streamlit Cloud → App Settings → Secrets mein add karo:
@@ -2927,6 +2931,309 @@ elif st.session_state.current_step == 3:
             st.success("Updated!")
 
     portfolio = st.session_state.reb_portfolio or []
+
+    # ══════════════════════════════════════════════════════════════
+    # REGIME PANEL — Market Regime & Multi-Asset Allocation
+    # Inserted here so dfStats is available (screener already run)
+    # ══════════════════════════════════════════════════════════════
+
+    # ── Dashboard API helpers (cached 30 min) ─────────────────────
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _fetch_dashboard_data_cached(api_url):
+        import requests as _req
+        try:
+            r = _req.get(api_url + "?action=all", timeout=15,
+                         headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                j = r.json()
+                if j.get("ok"):
+                    return j.get("data", {})
+        except Exception:
+            pass
+        return {}
+
+    def _extract_nav_series_from_dash(dash_data):
+        rows = dash_data.get("benchmarking", {}).get("rows", [])
+        return [r["momnPF"] for r in rows if r.get("momnPF") and r["momnPF"] > 0]
+
+    def _extract_vix_from_dash(dash_data):
+        for entry in dash_data.get("indexData", {}).get("table", []):
+            nm = str(entry.get("name","")).upper().replace(" ","").replace("_","")
+            if "INDIAVIX" in nm or nm == "VIX":
+                return entry.get("cmp")
+        return None
+
+    def _extract_weekly_nav_ret(dash_data):
+        navs = _extract_nav_series_from_dash(dash_data)
+        if len(navs) >= 6:
+            return round((navs[-1] / navs[-6] - 1) * 100, 2)
+        return None
+
+    import datetime as _dt_regime, math as _math_regime
+    from calculations import get_regime_score, get_next_rebalance_dates, get_weekly_deployment_plan
+    import streamlit.components.v1 as _stc_regime
+
+    st.markdown('<div class="section-hdr">🌡️ Market Regime & Multi-Asset Allocation</div>',
+                unsafe_allow_html=True)
+
+    # ── Fetch dashboard data ──────────────────────────────────────
+    _dash_data    = {}
+    _nav_series   = []
+    _vix_curr     = None
+    _weekly_nav_r = None
+
+    _dash_col1, _dash_col2 = st.columns([3, 1])
+    with _dash_col2:
+        _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
+                               help="Portfolio Dashboard se latest NAV data fetch karo")
+    if _fetch_nav:
+        st.cache_data.clear()
+
+    with st.spinner("📡 Portfolio Dashboard se NAV fetch ho raha hai..."):
+        _dash_data  = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
+    _nav_series   = _extract_nav_series_from_dash(_dash_data)
+    _vix_curr     = _extract_vix_from_dash(_dash_data)
+    _weekly_nav_r = _extract_weekly_nav_ret(_dash_data)
+
+    # ── Regime score ──────────────────────────────────────────────
+    _dfS_rg = st.session_state.get("dfStats")
+    if _dfS_rg is not None:
+        _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
+    else:
+        _rg = {"score":2,"label":"Mild Bull","equity":0.70,"gold":0.20,"cash":0.10,
+               "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
+               "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
+
+    _sc   = _rg["score"];  _lbl  = _rg["label"]
+    _eq   = _rg["equity"]; _gd   = _rg["gold"];  _cs   = _rg["cash"]
+    _sigs = _rg["signals"]
+    _brd  = _rg["breadth_pct"]; _roc3 = _rg["median_roc3m"]
+    _nav_c= _rg.get("nav_current"); _nav_d= _rg.get("nav_dma200")
+
+    _COL  = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
+             1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}
+    _fc,_bc,_em = _COL[_sc]
+
+    # ── Next dates banner ─────────────────────────────────────────
+    _dates_rg    = get_next_rebalance_dates()
+    _nxt_fri     = _dates_rg["next_friday"]
+    _nxt_rb      = _dates_rg["next_monthly_rb"]
+    _days_fri    = (_nxt_fri - _dt_regime.date.today()).days
+
+    st.markdown(f"""
+    <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+      <div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;
+                  padding:7px 14px;font-size:12px;color:#38bdf8;font-family:'DM Mono',monospace;">
+        📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
+        <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
+      </div>
+      <div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;
+                  padding:7px 14px;font-size:12px;color:#00d09e;font-family:'DM Mono',monospace;">
+        📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
+      </div>
+      {'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:7px 14px;font-size:12px;color:#f59e0b;font-family:DM Mono,monospace;">⚡ India VIX: <b>' + str(round(_vix_curr,1)) + '</b>' + (' 🔴 HIGH' if _vix_curr>20 else '') + '</div>' if _vix_curr else '<div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: Dashboard fetch karo</div>'}
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Gauge + Signals ───────────────────────────────────────────
+    _ang   = _math_regime.pi - (_math_regime.pi * _sc / 3)
+    _nx    = round(90 + 60 * _math_regime.cos(_ang), 1)
+    _ny    = round(90 - 60 * _math_regime.sin(_ang), 1)
+    _s1ok  = _sigs.get("s1_equity_curve", 1)
+    _s2ok  = _sigs.get("s2_breadth", 0)
+    _s3ok  = _sigs.get("s3_momentum", 0)
+    _s1c   = "#00d09e" if _s1ok else "#f87171"; _s1bg = "#0a2a1f" if _s1ok else "#2d0909"
+    _s2c   = "#00d09e" if _s2ok else "#f87171"; _s2bg = "#0a2a1f" if _s2ok else "#2d0909"
+    _s3c   = "#00d09e" if _s3ok else "#f87171"; _s3bg = "#0a2a1f" if _s3ok else "#2d0909"
+    _nav_txt = f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA")
+
+    _gauge_html = f"""<style>
+body{{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;}}
+.gw{{display:flex;align-items:center;gap:20px;padding:4px 0;}}
+.gl{{text-align:center;min-width:180px;}}
+.sg{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;flex:1;}}
+.sc{{border-radius:8px;padding:9px 10px;text-align:center;border:1px solid;}}
+.st{{font-size:10px;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px;opacity:.8;}}
+.sv{{font-size:12px;font-weight:700;margin-top:2px;}}
+</style>
+<div class="gw">
+<div class="gl">
+<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Current Regime</div>
+<svg width="180" height="100" viewBox="0 0 180 100">
+  <path d="M15 90 A75 75 0 0 1 165 90" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round"/>
+  <path d="M15 90 A75 75 0 0 1 52 28"  fill="none" stroke="#f87171" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
+  <path d="M52 28 A75 75 0 0 1 90 15"  fill="none" stroke="#f59e0b" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
+  <path d="M90 15 A75 75 0 0 1 128 28" fill="none" stroke="#38bdf8" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
+  <path d="M128 28 A75 75 0 0 1 165 90" fill="none" stroke="#00d09e" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
+  <line x1="90" y1="90" x2="{_nx}" y2="{_ny}" stroke="{_fc}" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="90" cy="90" r="5" fill="{_fc}"/>
+  <text x="90" y="78" text-anchor="middle" font-size="18" font-weight="800" fill="{_fc}">{_sc}</text>
+  <text x="10"  y="100" text-anchor="middle" font-size="9" fill="#f87171">Bear</text>
+  <text x="55"  y="24"  text-anchor="middle" font-size="9" fill="#f59e0b">Neutral</text>
+  <text x="125" y="24"  text-anchor="middle" font-size="9" fill="#38bdf8">Bull</text>
+  <text x="170" y="100" text-anchor="middle" font-size="9" fill="#00d09e">Strong</text>
+</svg>
+<div style="font-size:22px;font-weight:800;color:{_fc};line-height:1">{_em} {_lbl}</div>
+<div style="font-size:11px;color:{_fc};opacity:.8">{_dt_regime.date.today().strftime('%d-%b-%Y')} · Score {_sc}/3</div>
+</div>
+<div class="sg">
+  <div class="sc" style="background:{_s1bg};border-color:{_s1c}">
+    <div class="st" style="color:{_s1c}">S1 Equity Curve</div>
+    <div style="font-size:20px">{"✅" if _s1ok else "❌"}</div>
+    <div style="font-size:10px;color:{_s1c};opacity:.8">NAV &gt; 200DMA</div>
+    <div class="sv" style="color:{_s1c}">{_nav_txt}</div>
+  </div>
+  <div class="sc" style="background:{_s2bg};border-color:{_s2c}">
+    <div class="st" style="color:{_s2c}">S2 Breadth</div>
+    <div style="font-size:20px">{"✅" if _s2ok else "❌"}</div>
+    <div style="font-size:10px;color:{_s2c};opacity:.8">Stocks &gt; 200DMA &gt; 50%</div>
+    <div class="sv" style="color:{_s2c}">{_brd}% above DMA</div>
+  </div>
+  <div class="sc" style="background:{_s3bg};border-color:{_s3c}">
+    <div class="st" style="color:{_s3c}">S3 Momentum</div>
+    <div style="font-size:20px">{"✅" if _s3ok else "❌"}</div>
+    <div style="font-size:10px;color:{_s3c};opacity:.8">Median 3M ROC &gt; 0%</div>
+    <div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median</div>
+  </div>
+</div>
+</div>"""
+    _stc_regime.html(_gauge_html, height=155)
+
+    st.markdown("---")
+
+    # ── Portfolio value + prev score ──────────────────────────────
+    _pv1, _pv2 = st.columns(2)
+    with _pv1:
+        _total_pf = st.number_input("💼 Total Portfolio Value ₹ (Equity + Gold + Cash)",
+                                     min_value=0, value=int(st.session_state.get("regime_pf_val",1000000)),
+                                     step=10000, key="regime_pf_val")
+    with _pv2:
+        _prev_sc  = st.number_input("📅 Pichle Mahine Ka Score (0-3)", min_value=0, max_value=3,
+                                     value=int(st.session_state.get("regime_prev_score", _sc)),
+                                     step=1, key="regime_prev_score")
+
+    # ── Allocation cards ──────────────────────────────────────────
+    _a1,_a2,_a3 = st.columns(3)
+    for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
+        ("📈 Equity",_eq,"#38bdf8","#0c2233"),
+        ("🥇 GOLDBEES",_gd,"#f59e0b","#2d1f05"),
+        ("💵 Liquid Fund",_cs,"#94a3b8","#1e293b")]):
+        with col:
+            st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
+                padding:12px;text-align:center;margin-bottom:8px;">
+              <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
+              <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
+              <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
+            </div>""", unsafe_allow_html=True)
+
+    # ── Shift message ─────────────────────────────────────────────
+    _sc_diff = _sc - _prev_sc
+    if _sc_diff == 0:
+        _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±5% check karo.","#00d09e","#0a2a1f"
+    elif abs(_sc_diff) == 1:
+        _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — ek mahine mein complete karo.","#38bdf8","#0c2233"
+    else:
+        _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — 2 mahine mein gradually. Weekly plan neeche dekho.","#f59e0b","#2d1f05"
+    st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
+                border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
+      {_smsg}</div>""", unsafe_allow_html=True)
+
+    # ── GOLDBEES + Liquid actions ─────────────────────────────────
+    _gb_col, _lf_col = st.columns(2)
+    with _gb_col:
+        st.markdown("**🥇 GOLDBEES Action**")
+        _gc1, _gc2 = st.columns(2)
+        with _gc1:
+            _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0, value=0, step=1000, key="goldbees_curr_val")
+            _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0, value=0.0, step=0.5, key="goldbees_cmp")
+        with _gc2:
+            if _total_pf > 0:
+                _gd_tgt = _total_pf * _gd
+                _gd_dif = _gd_tgt - _gb_curr
+                _gdok   = abs(_gd_dif) / _total_pf < 0.05
+                _gdc    = "#00d09e" if _gdok else ("#f59e0b" if abs(_gd_dif/_total_pf) < 0.15 else "#f87171")
+                _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
+                _gact   = "✅ Hold" if _gdok else (f"🔺 BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif>0 else f"🔻 SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
+                st.markdown(f"""<div style="background:#0f172a;border:1px solid {_gdc};border-radius:8px;
+                    padding:12px;text-align:center;margin-top:28px;">
+                  <div style="font-size:11px;color:{_gdc};margin-bottom:4px">Current ₹{_gb_curr:,.0f} → Target ₹{_gd_tgt:,.0f}</div>
+                  <div style="font-size:14px;font-weight:700;color:{_gdc}">{_gact}</div>
+                </div>""", unsafe_allow_html=True)
+    with _lf_col:
+        st.markdown("**💵 Liquid Fund Action**")
+        _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0, value=0, step=1000, key="liquid_curr_val")
+        if _total_pf > 0:
+            _cs_tgt = _total_pf * _cs
+            _cs_dif = _cs_tgt - _lf_curr
+            _csok   = abs(_cs_dif) / _total_pf < 0.05
+            _csc    = "#00d09e" if _csok else "#94a3b8"
+            _cact   = "✅ Hold" if _csok else (f"🔺 ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif>0 else f"🔻 REDEEM ₹{abs(_cs_dif):,.0f}")
+            st.markdown(f"""<div style="background:#0f172a;border:1px solid {_csc};border-radius:8px;
+                padding:12px;text-align:center;margin-top:28px;">
+              <div style="font-size:11px;color:{_csc};margin-bottom:4px">Current ₹{_lf_curr:,.0f} → Target ₹{_cs_tgt:,.0f}</div>
+              <div style="font-size:14px;font-weight:700;color:{_csc}">{_cact}</div>
+            </div>""", unsafe_allow_html=True)
+
+    # ── Equity budget ─────────────────────────────────────────────
+    st.markdown(f"""<div style="background:#0c1f3a;border:1px solid #38bdf8;border-left:4px solid #38bdf8;
+                border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
+      <b style="color:#38bdf8">📈 Equity Budget:</b>
+      <span style="color:#e2e8f0;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
+        <b style="font-size:16px;color:#38bdf8"> ₹{_total_pf*_eq:,.0f}</b>
+      </span>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Weekly Deployment Plan ────────────────────────────────────
+    if _sc_diff != 0 and _total_pf > 0:
+        st.markdown("### 📅 Weekly Deployment Plan")
+        _plan = get_weekly_deployment_plan(
+            prev_score=_prev_sc, curr_score=_sc, total_pf=_total_pf,
+            goldbees_curr=_gb_curr if "_gb_curr" in dir() else 0,
+            liquid_curr=_lf_curr if "_lf_curr" in dir() else 0,
+            weekly_nav_ret=_weekly_nav_r, vix_curr=_vix_curr
+        )
+        if _plan["paused"]:
+            st.error(f"⏸ Week 1 PAUSED — VIX {_vix_curr:.1f} > 30 AND Weekly return {_weekly_nav_r:.1f}% < -5%. Next Friday check karo.")
+        elif _plan["is_recovery"]:
+            st.info(f"🔺 Recovery mode — {_plan['n_weeks']} weeks. Faster deploy.")
+        else:
+            st.info(f"🔻 Defensive mode — {_plan['n_weeks']} weeks. Gradual reduce.")
+        st.markdown(f"""<div style="background:#0f172a;border:1px solid #475569;border-left:3px solid #f59e0b;
+                    border-radius:6px;padding:8px 14px;font-size:12px;color:#94a3b8;margin-bottom:8px;">
+          {_plan["accelerate_msg"]}</div>""", unsafe_allow_html=True)
+        _fri_lst = _dates_rg["upcoming_fridays"]
+        _wk_rows = []
+        for wd in _plan["weeks"]:
+            fri_lbl = _fri_lst[wd["week"]-1].strftime("%d %b") if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}"
+            _wk_rows.append({"Check":fri_lbl,"Eq%":f"{wd['eq_pct']}%","Gold%":f"{wd['gd_pct']}%",
+                             "Cash%":f"{wd['cs_pct']}%","Eq ₹":f"₹{wd['eq_val']:,.0f}",
+                             "Gold ₹":f"₹{wd['gd_val']:,.0f}","Cash ₹":f"₹{wd['cs_val']:,.0f}","Action":wd["action"]})
+        st.dataframe(pd.DataFrame(_wk_rows), use_container_width=True, hide_index=True)
+        st.markdown("---")
+
+    # ── Weekly Switch Alerts ──────────────────────────────────────
+    _w_alerts = []
+    if _weekly_nav_r is not None and _weekly_nav_r < -5.0:
+        _w_alerts.append(f"📉 Weekly NAV return = **{_weekly_nav_r:.1f}%** (< -5%)")
+    if _vix_curr is not None and _vix_curr > 30:
+        _w_alerts.append(f"😱 India VIX = **{_vix_curr:.1f}** (> 30)")
+    _dfF_check = st.session_state.get("dfFiltered")
+    if _dfF_check is not None and len(_dfF_check) < 30:
+        _w_alerts.append(f"📊 Qualifying stocks = **{len(_dfF_check)}** (< 30)")
+    if _w_alerts:
+        st.markdown("### ⚡ Weekly Switch Alert")
+        for _wa in _w_alerts: st.warning(_wa)
+        if len(_w_alerts) >= 2:
+            st.error("🚨 **Weekly Switch TRIGGERED** — Weekly rotation mode activate karo (5 weeks).")
+        else:
+            st.info("⚠️ Single trigger — monitor karo. Both VIX>30 AND weekly<-5% chahiye for switch.")
+
+    st.divider()
+    # ══════════════════════════════════════════════════════════════
+    # END REGIME PANEL — Existing rebalance code continues below
+    # ══════════════════════════════════════════════════════════════
 
     # ── Compute rebalance ─────────────────────────────────────
     if portfolio and st.session_state.dfFiltered is not None:

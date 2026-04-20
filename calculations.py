@@ -248,3 +248,183 @@ def apply_filters(dfStats, filter_params: dict = None):
 
     dfStats['final_momentum'] = mask
     return dfStats[mask].sort_values('Rank', ascending=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REGIME-TAA FUNCTIONS  (added for Multi-Asset Overlay)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_regime_score(dfStats, equity_nav_series=None):
+    """
+    3-signal market regime score.
+
+    S1 — Equity Curve Trend : MOMN PF NAV > 200DMA (from Portfolio Dashboard)
+    S2 — Market Breadth     : % stocks with Close > 200DMA > 50%
+    S3 — Universe Momentum  : Median stock 3M ROC > 0%
+
+    equity_nav_series : list/Series of daily NAV values (momnPF from benchmarking.rows)
+                        If None or empty → S1 defaults to 1 (conservative fallback)
+
+    Returns dict: score, label, equity, gold, cash, signals, breadth_pct,
+                  median_roc3m, nav_current, nav_dma200, nav_series_len
+    """
+    if len(dfStats) == 0:
+        return _regime_default()
+
+    # ── S2: Market Breadth ────────────────────────────────────────
+    valid_dma   = dfStats[dfStats['dma200d'] > 0]
+    above_dma   = (valid_dma['Close'] > valid_dma['dma200d']).sum()
+    breadth_pct = round(above_dma / len(valid_dma) * 100, 1) if len(valid_dma) > 0 else 0.0
+    s2 = 1 if breadth_pct > 50.0 else 0
+
+    # ── S3: Median 3M ROC ─────────────────────────────────────────
+    median_roc3m = round(float(dfStats['roc3M'].median()), 2)
+    s3 = 1 if median_roc3m > 0.0 else 0
+
+    # ── S1: Equity Curve vs 200DMA ────────────────────────────────
+    nav_current = nav_dma200 = None
+    nav_series_len = 0
+    s1 = 1   # safe fallback
+
+    if equity_nav_series is not None and len(equity_nav_series) >= 5:
+        nav_s = pd.Series(equity_nav_series).dropna()
+        nav_series_len = len(nav_s)
+        nav_current    = round(float(nav_s.iloc[-1]), 4)
+        window         = min(200, nav_series_len)
+        nav_dma200     = round(float(nav_s.rolling(window).mean().iloc[-1]), 4)
+        s1 = 1 if nav_current > nav_dma200 else 0
+
+    score = s1 + s2 + s3
+    alloc = {
+        3: {'label': 'Strong Bull', 'equity': 0.90, 'gold': 0.10, 'cash': 0.00},
+        2: {'label': 'Mild Bull',   'equity': 0.70, 'gold': 0.20, 'cash': 0.10},
+        1: {'label': 'Neutral',     'equity': 0.40, 'gold': 0.30, 'cash': 0.30},
+        0: {'label': 'Bear',        'equity': 0.20, 'gold': 0.40, 'cash': 0.40},
+    }[score]
+
+    return {
+        'score'           : score,
+        'breadth_pct'     : breadth_pct,
+        'median_roc3m'    : median_roc3m,
+        'stocks_above_dma': int(above_dma),
+        'total_stocks'    : int(len(valid_dma)),
+        'nav_current'     : nav_current,
+        'nav_dma200'      : nav_dma200,
+        'nav_series_len'  : nav_series_len,
+        'signals'         : {'s1_equity_curve': s1, 's2_breadth': s2, 's3_momentum': s3},
+        **alloc,
+    }
+
+
+def _regime_default():
+    return {
+        'score': 2, 'label': 'Mild Bull', 'equity': 0.70, 'gold': 0.20, 'cash': 0.10,
+        'breadth_pct': 0.0, 'median_roc3m': 0.0, 'stocks_above_dma': 0, 'total_stocks': 0,
+        'nav_current': None, 'nav_dma200': None, 'nav_series_len': 0,
+        'signals': {'s1_equity_curve': 1, 's2_breadth': 0, 's3_momentum': 0},
+    }
+
+
+def get_next_rebalance_dates(n_weeks=8):
+    """
+    Returns next Friday (weekly check) and next month's 1st trading day (monthly RB).
+    """
+    import datetime
+    today = datetime.date.today()
+    days_to_friday = (4 - today.weekday()) % 7 or 7
+    fridays = []
+    nxt = today + datetime.timedelta(days=days_to_friday)
+    for _ in range(n_weeks):
+        fridays.append(nxt)
+        nxt += datetime.timedelta(days=7)
+    if today.month == 12:
+        first_next = datetime.date(today.year + 1, 1, 1)
+    else:
+        first_next = datetime.date(today.year, today.month + 1, 1)
+    while first_next.weekday() >= 5:
+        first_next += datetime.timedelta(days=1)
+    return {
+        'next_friday'      : fridays[0],
+        'upcoming_fridays' : fridays[:4],
+        'next_monthly_rb'  : first_next,
+    }
+
+
+def get_weekly_deployment_plan(prev_score, curr_score, total_pf,
+                                goldbees_curr=0, liquid_curr=0,
+                                weekly_nav_ret=None, vix_curr=None):
+    """
+    Week-by-week deployment plan when regime changes.
+
+    Recovery (score up)  → 3 weeks. Faster deploy to avoid missing rally.
+    Defensive (score dn) → 4 weeks. Slower to avoid panic selling.
+
+    Pause condition : weekly_nav_ret < -5% AND vix_curr > 30
+    Accelerate rule : if score increases 2 consecutive Fridays → complete in 1 week
+
+    Returns dict with weeks list, paused flag, accelerate_msg
+    """
+    _alloc = {
+        3: (0.90, 0.10, 0.00), 2: (0.70, 0.20, 0.10),
+        1: (0.40, 0.30, 0.30), 0: (0.20, 0.40, 0.40),
+    }
+    prev_alloc = _alloc.get(prev_score, (0.70, 0.20, 0.10))
+    curr_alloc = _alloc.get(curr_score, (0.70, 0.20, 0.10))
+    delta_e = curr_alloc[0] - prev_alloc[0]
+    delta_g = curr_alloc[1] - prev_alloc[1]
+    delta_c = curr_alloc[2] - prev_alloc[2]
+
+    is_recovery  = delta_e > 0
+    is_defensive = delta_e < 0
+    n_weeks      = 3 if is_recovery else 4
+
+    pause = bool(weekly_nav_ret is not None and weekly_nav_ret < -5.0
+                 and vix_curr is not None and vix_curr > 30)
+
+    weeks = []
+    for wk in range(1, n_weeks + 1):
+        frac     = wk / n_weeks
+        target_e = round(prev_alloc[0] + delta_e * frac, 3)
+        target_g = round(prev_alloc[1] + delta_g * frac, 3)
+        target_c = round(prev_alloc[2] + delta_c * frac, 3)
+
+        if pause and wk == 1:
+            action = "⏸ HOLD — VIX>30 & weekly return<-5%. Next Friday dobara check karo."
+        elif is_recovery and wk == 1:
+            action = "🔺 Tranche 1 deploy — Liquid Fund se equity khareeedo."
+        elif is_recovery and wk == n_weeks:
+            action = "🔺 Final tranche — equity deployment complete. Target reached."
+        elif is_recovery:
+            action = f"🔺 Tranche {wk} — equity mein aur add karo."
+        elif is_defensive and wk == 1:
+            action = "🔻 Weakest ranked stocks exit karo → GOLDBEES + Liquid mein shift."
+        elif is_defensive and wk == n_weeks:
+            action = "🔻 Final defensive shift — target allocation complete."
+        else:
+            action = f"🔻 Defensive shift tranche {wk} — equity reduce, buffer badhaao."
+
+        weeks.append({
+            'week'   : wk,
+            'eq_pct' : round(target_e * 100, 1),
+            'gd_pct' : round(target_g * 100, 1),
+            'cs_pct' : round(target_c * 100, 1),
+            'eq_val' : round(total_pf * target_e),
+            'gd_val' : round(total_pf * target_g),
+            'cs_val' : round(total_pf * target_c),
+            'action' : action,
+            'paused' : pause and wk == 1,
+        })
+
+    accel_msg = (
+        "⚡ Accelerate: Agar agle hafte bhi score badhta hai → remaining deployment ek hi hafte mein complete karo."
+        if is_recovery else
+        "🛡️ Hold rule: Agar agle hafte score wapas badhta hai → deployment pause karo, fresh score se reassess karo."
+    )
+
+    return {
+        'prev_score': prev_score, 'curr_score': curr_score,
+        'is_recovery': is_recovery, 'is_defensive': is_defensive,
+        'n_weeks': n_weeks, 'weeks': weeks, 'paused': pause,
+        'accelerate_msg': accel_msg,
+        'vix_curr': vix_curr, 'weekly_nav_ret': weekly_nav_ret,
+    }
