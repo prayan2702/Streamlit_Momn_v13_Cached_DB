@@ -3037,8 +3037,8 @@ elif st.session_state.current_step == 3:
 
     # ── Gauge + Signals ───────────────────────────────────────────
     _ang   = _math_regime.pi - (_math_regime.pi * _sc / 3)
-    _nx    = round(90 + 60 * _math_regime.cos(_ang), 1)
-    _ny    = round(90 - 60 * _math_regime.sin(_ang), 1)
+    _nx    = round(100 + 72 * _math_regime.cos(_ang), 1)
+    _ny    = round(105 - 72 * _math_regime.sin(_ang), 1)
     _s1ok  = _sigs.get("s1_equity_curve", 1)
     _s2ok  = _sigs.get("s2_breadth", 0)
     _s3ok  = _sigs.get("s3_momentum", 0)
@@ -3047,57 +3047,149 @@ elif st.session_state.current_step == 3:
     _s3c   = "#00d09e" if _s3ok else "#f87171"; _s3bg = "#0a2a1f" if _s3ok else "#2d0909"
     _nav_txt = f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA")
 
-    _gauge_html = f"""<style>
-body{{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-serif;}}
-.gw{{display:flex;align-items:center;gap:20px;padding:4px 0;}}
-.gl{{text-align:center;min-width:180px;}}
-.sg{{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;flex:1;}}
-.sc{{border-radius:8px;padding:9px 10px;text-align:center;border:1px solid;}}
-.st{{font-size:10px;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px;opacity:.8;}}
-.sv{{font-size:12px;font-weight:700;margin-top:2px;}}
+    # ── Regime gauge + signals — redesigned for clarity ─────────
+    _GAUGE_HEIGHT = 370
+    _gauge_html = f"""
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: transparent; font-family: 'Segoe UI', system-ui, sans-serif; }}
+  .wrap {{ display: flex; gap: 16px; padding: 4px 0; align-items: flex-start; }}
+
+  /* ── Gauge card ── */
+  .gauge-card {{
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 16px 20px 12px;
+    min-width: 220px;
+    text-align: center;
+    flex-shrink: 0;
+  }}
+  .gauge-label {{ font-size: 10px; color: #64748b; text-transform: uppercase;
+                  letter-spacing: 1px; margin-bottom: 8px; font-weight: 600; }}
+  .gauge-score {{ font-size: 42px; font-weight: 900; line-height: 1;
+                  color: {_fc}; margin-top: -8px; }}
+  .gauge-name  {{ font-size: 18px; font-weight: 700; color: {_fc}; margin-top: 4px; }}
+  .gauge-meta  {{ font-size: 10px; color: #475569; margin-top: 4px; }}
+
+  /* ── Gauge legend ── */
+  .legend {{ display: flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+             margin-top: 10px; }}
+  .leg-item {{ display: flex; align-items: center; gap: 4px; font-size: 10px; color: #94a3b8; }}
+  .leg-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
+
+  /* ── Signal cards ── */
+  .signals {{ display: flex; flex-direction: column; gap: 10px; flex: 1; }}
+  .sig {{
+    border-radius: 10px;
+    padding: 12px 16px;
+    border: 1px solid;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }}
+  .sig-icon {{ font-size: 26px; flex-shrink: 0; line-height: 1; }}
+  .sig-body {{ flex: 1; }}
+  .sig-title {{ font-size: 11px; font-weight: 700; letter-spacing: .5px;
+                text-transform: uppercase; margin-bottom: 3px; }}
+  .sig-cond  {{ font-size: 12px; opacity: .75; margin-bottom: 2px; }}
+  .sig-val   {{ font-size: 14px; font-weight: 700; }}
+  .sig-badge {{ flex-shrink: 0; padding: 3px 10px; border-radius: 20px;
+                font-size: 11px; font-weight: 700; }}
 </style>
-<div class="gw">
-<div class="gl">
-<div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Current Regime</div>
-<svg width="180" height="100" viewBox="0 0 180 100">
-  <path d="M15 90 A75 75 0 0 1 165 90" fill="none" stroke="#1e293b" stroke-width="18" stroke-linecap="round"/>
-  <path d="M15 90 A75 75 0 0 1 52 28"  fill="none" stroke="#f87171" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
-  <path d="M52 28 A75 75 0 0 1 90 15"  fill="none" stroke="#f59e0b" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
-  <path d="M90 15 A75 75 0 0 1 128 28" fill="none" stroke="#38bdf8" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
-  <path d="M128 28 A75 75 0 0 1 165 90" fill="none" stroke="#00d09e" stroke-width="16" stroke-linecap="butt" opacity=".9"/>
-  <line x1="90" y1="90" x2="{_nx}" y2="{_ny}" stroke="{_fc}" stroke-width="3" stroke-linecap="round"/>
-  <circle cx="90" cy="90" r="5" fill="{_fc}"/>
-  <text x="90" y="78" text-anchor="middle" font-size="18" font-weight="800" fill="{_fc}">{_sc}</text>
-  <text x="10"  y="100" text-anchor="middle" font-size="9" fill="#f87171">Bear</text>
-  <text x="55"  y="24"  text-anchor="middle" font-size="9" fill="#f59e0b">Neutral</text>
-  <text x="125" y="24"  text-anchor="middle" font-size="9" fill="#38bdf8">Bull</text>
-  <text x="170" y="100" text-anchor="middle" font-size="9" fill="#00d09e">Strong</text>
-</svg>
-<div style="font-size:22px;font-weight:800;color:{_fc};line-height:1">{_em} {_lbl}</div>
-<div style="font-size:11px;color:{_fc};opacity:.8">{_dt_regime.date.today().strftime('%d-%b-%Y')} · Score {_sc}/3</div>
+
+<div class="wrap">
+
+  <!-- Gauge -->
+  <div class="gauge-card">
+    <div class="gauge-label">Market Regime</div>
+    <svg width="200" height="120" viewBox="0 0 200 120" style="overflow:visible">
+      <!-- Track -->
+      <path d="M20 105 A80 80 0 0 1 180 105" fill="none" stroke="#1e293b" stroke-width="22" stroke-linecap="round"/>
+      <!-- Segment: Bear (0) — red -->
+      <path d="M20 105 A80 80 0 0 1 53 35"  fill="none" stroke="#ef4444" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Segment: Neutral (1) — amber -->
+      <path d="M53 35 A80 80 0 0 1 100 18"  fill="none" stroke="#f59e0b" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Segment: Mild Bull (2) — sky -->
+      <path d="M100 18 A80 80 0 0 1 147 35" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Segment: Strong Bull (3) — emerald -->
+      <path d="M147 35 A80 80 0 0 1 180 105" fill="none" stroke="#10b981" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Segment labels — positioned clearly outside arc -->
+      <text x="8"   y="112" text-anchor="middle" font-size="10" font-weight="600" fill="#ef4444">Bear</text>
+      <text x="42"  y="30"  text-anchor="middle" font-size="10" font-weight="600" fill="#f59e0b">Neutral</text>
+      <text x="100" y="10"  text-anchor="middle" font-size="10" font-weight="600" fill="#38bdf8">Mild Bull</text>
+      <text x="158" y="30"  text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Strong</text>
+      <text x="192" y="112" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Bull</text>
+      <!-- Score divider ticks -->
+      <line x1="52"  y1="24"  x2="56"  y2="34"  stroke="#0f172a" stroke-width="3"/>
+      <line x1="100" y1="18"  x2="100" y2="29"   stroke="#0f172a" stroke-width="3"/>
+      <line x1="148" y1="24"  x2="144" y2="34"  stroke="#0f172a" stroke-width="3"/>
+      <!-- Needle -->
+      <line x1="100" y1="105"
+            x2="{_nx:.0f}" y2="{_ny:.0f}"
+            stroke="white" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="100" cy="105" r="6" fill="{_fc}" stroke="white" stroke-width="2"/>
+      <!-- Center score -->
+      <text x="100" y="92" text-anchor="middle" font-size="26" font-weight="900" fill="{_fc}">{_sc}/3</text>
+    </svg>
+    <div class="gauge-name">{_em} {_lbl}</div>
+    <div class="gauge-meta">{_dt_regime.date.today().strftime('%d %b %Y')} &nbsp;·&nbsp; Score {_sc} of 3</div>
+
+    <!-- Legend -->
+    <div class="legend">
+      <div class="leg-item"><div class="leg-dot" style="background:#ef4444"></div>Bear (0)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#f59e0b"></div>Neutral (1)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#38bdf8"></div>Mild Bull (2)</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#10b981"></div>Strong Bull (3)</div>
+    </div>
+  </div>
+
+  <!-- Signal Cards -->
+  <div class="signals">
+
+    <!-- S1 -->
+    <div class="sig" style="background:{_s1bg};border-color:{_s1c}">
+      <div class="sig-icon">{"✅" if _s1ok else "❌"}</div>
+      <div class="sig-body">
+        <div class="sig-title" style="color:{_s1c}">S1 — Equity Curve Trend</div>
+        <div class="sig-cond"  style="color:{_s1c}">NAV &gt; 200-Day Moving Average</div>
+        <div class="sig-val"   style="color:{_s1c}">{_nav_txt}</div>
+      </div>
+      <div class="sig-badge" style="background:{_s1c}22;color:{_s1c};border:1px solid {_s1c}55">
+        {"PASS" if _s1ok else "FAIL"}
+      </div>
+    </div>
+
+    <!-- S2 -->
+    <div class="sig" style="background:{_s2bg};border-color:{_s2c}">
+      <div class="sig-icon">{"✅" if _s2ok else "❌"}</div>
+      <div class="sig-body">
+        <div class="sig-title" style="color:{_s2c}">S2 — Market Breadth</div>
+        <div class="sig-cond"  style="color:{_s2c}">% Stocks above 200DMA &gt; 50%</div>
+        <div class="sig-val"   style="color:{_s2c}">{_brd}% stocks above 200DMA</div>
+      </div>
+      <div class="sig-badge" style="background:{_s2c}22;color:{_s2c};border:1px solid {_s2c}55">
+        {"PASS" if _s2ok else "FAIL"}
+      </div>
+    </div>
+
+    <!-- S3 -->
+    <div class="sig" style="background:{_s3bg};border-color:{_s3c}">
+      <div class="sig-icon">{"✅" if _s3ok else "❌"}</div>
+      <div class="sig-body">
+        <div class="sig-title" style="color:{_s3c}">S3 — Universe Momentum</div>
+        <div class="sig-cond"  style="color:{_s3c}">Median 3M ROC &gt; 0%</div>
+        <div class="sig-val"   style="color:{_s3c}">{_roc3:+.1f}% median 3M return</div>
+      </div>
+      <div class="sig-badge" style="background:{_s3c}22;color:{_s3c};border:1px solid {_s3c}55">
+        {"PASS" if _s3ok else "FAIL"}
+      </div>
+    </div>
+
+  </div>
 </div>
-<div class="sg">
-  <div class="sc" style="background:{_s1bg};border-color:{_s1c}">
-    <div class="st" style="color:{_s1c}">S1 Equity Curve</div>
-    <div style="font-size:20px">{"✅" if _s1ok else "❌"}</div>
-    <div style="font-size:10px;color:{_s1c};opacity:.8">NAV &gt; 200DMA</div>
-    <div class="sv" style="color:{_s1c}">{_nav_txt}</div>
-  </div>
-  <div class="sc" style="background:{_s2bg};border-color:{_s2c}">
-    <div class="st" style="color:{_s2c}">S2 Breadth</div>
-    <div style="font-size:20px">{"✅" if _s2ok else "❌"}</div>
-    <div style="font-size:10px;color:{_s2c};opacity:.8">Stocks &gt; 200DMA &gt; 50%</div>
-    <div class="sv" style="color:{_s2c}">{_brd}% above DMA</div>
-  </div>
-  <div class="sc" style="background:{_s3bg};border-color:{_s3c}">
-    <div class="st" style="color:{_s3c}">S3 Momentum</div>
-    <div style="font-size:20px">{"✅" if _s3ok else "❌"}</div>
-    <div style="font-size:10px;color:{_s3c};opacity:.8">Median 3M ROC &gt; 0%</div>
-    <div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median</div>
-  </div>
-</div>
-</div>"""
-    _stc_regime.html(_gauge_html, height=155)
+"""
+    _stc_regime.html(_gauge_html, height=_GAUGE_HEIGHT)
 
     st.markdown("---")
 
@@ -3138,40 +3230,71 @@ body{{margin:0;padding:0;background:transparent;font-family:'Segoe UI',sans-seri
                 border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
       {_smsg}</div>""", unsafe_allow_html=True)
 
-    # ── GOLDBEES + Liquid actions ─────────────────────────────────
-    _gb_col, _lf_col = st.columns(2)
-    with _gb_col:
-        st.markdown("**🥇 GOLDBEES Action**")
-        _gc1, _gc2 = st.columns(2)
-        with _gc1:
-            _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0, value=0, step=1000, key="goldbees_curr_val")
-            _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0, value=0.0, step=0.5, key="goldbees_cmp")
-        with _gc2:
-            if _total_pf > 0:
-                _gd_tgt = _total_pf * _gd
-                _gd_dif = _gd_tgt - _gb_curr
-                _gdok   = abs(_gd_dif) / _total_pf < 0.05
-                _gdc    = "#00d09e" if _gdok else ("#f59e0b" if abs(_gd_dif/_total_pf) < 0.15 else "#f87171")
-                _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
-                _gact   = "✅ Hold" if _gdok else (f"🔺 BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif>0 else f"🔻 SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
-                st.markdown(f"""<div style="background:#0f172a;border:1px solid {_gdc};border-radius:8px;
-                    padding:12px;text-align:center;margin-top:28px;">
-                  <div style="font-size:11px;color:{_gdc};margin-bottom:4px">Current ₹{_gb_curr:,.0f} → Target ₹{_gd_tgt:,.0f}</div>
-                  <div style="font-size:14px;font-weight:700;color:{_gdc}">{_gact}</div>
-                </div>""", unsafe_allow_html=True)
-    with _lf_col:
-        st.markdown("**💵 Liquid Fund Action**")
-        _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0, value=0, step=1000, key="liquid_curr_val")
+    # ── GOLDBEES + Liquid actions — aligned layout ───────────────
+    # Section header
+    st.markdown("""<div style="font-size:13px;font-weight:700;color:#e2e8f0;
+                    margin-bottom:10px;padding-left:2px;">
+        🏦 Asset Actions
+    </div>""", unsafe_allow_html=True)
+
+    _act_col1, _act_col2 = st.columns(2)
+
+    # ─── GOLDBEES ───────────────────────────────────────────────────
+    with _act_col1:
+        st.markdown("""<div style="font-size:12px;font-weight:700;color:#f59e0b;
+                        letter-spacing:.3px;margin-bottom:8px;">
+            🥇 GOLDBEES Action
+        </div>""", unsafe_allow_html=True)
+        _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
+                                    value=0, step=1000, key="goldbees_curr_val",
+                                    label_visibility="visible")
+        _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0,
+                                    value=0.0, step=0.5, key="goldbees_cmp",
+                                    label_visibility="visible")
+        if _total_pf > 0:
+            _gd_tgt = _total_pf * _gd
+            _gd_dif = _gd_tgt - _gb_curr
+            _gdok   = abs(_gd_dif) / _total_pf < 0.05
+            _gdc    = "#00d09e" if _gdok else ("#f59e0b" if abs(_gd_dif/_total_pf) < 0.15 else "#f87171")
+            _gd_bg  = "#0a2a1f" if _gdok else ("#2d1f05" if abs(_gd_dif/_total_pf) < 0.15 else "#2d0909")
+            _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
+            _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
+            _gact_txt  = "Hold (within ±5%)" if _gdok else (f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
+            st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
+                    border-radius:10px;padding:14px 16px;margin-top:6px;">
+              <div style="font-size:11px;color:{_gdc};opacity:.8;margin-bottom:6px">
+                Current ₹{_gb_curr:,.0f} &nbsp;→&nbsp; Target ₹{_gd_tgt:,.0f}
+              </div>
+              <div style="font-size:16px;font-weight:800;color:{_gdc}">
+                {_gact_icon} {_gact_txt}
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ─── LIQUID FUND ─────────────────────────────────────────────────
+    with _act_col2:
+        st.markdown("""<div style="font-size:12px;font-weight:700;color:#94a3b8;
+                        letter-spacing:.3px;margin-bottom:8px;">
+            💵 Liquid Fund Action
+        </div>""", unsafe_allow_html=True)
+        _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
+                                    value=0, step=1000, key="liquid_curr_val",
+                                    label_visibility="visible")
         if _total_pf > 0:
             _cs_tgt = _total_pf * _cs
             _cs_dif = _cs_tgt - _lf_curr
             _csok   = abs(_cs_dif) / _total_pf < 0.05
-            _csc    = "#00d09e" if _csok else "#94a3b8"
-            _cact   = "✅ Hold" if _csok else (f"🔺 ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif>0 else f"🔻 REDEEM ₹{abs(_cs_dif):,.0f}")
-            st.markdown(f"""<div style="background:#0f172a;border:1px solid {_csc};border-radius:8px;
-                padding:12px;text-align:center;margin-top:28px;">
-              <div style="font-size:11px;color:{_csc};margin-bottom:4px">Current ₹{_lf_curr:,.0f} → Target ₹{_cs_tgt:,.0f}</div>
-              <div style="font-size:14px;font-weight:700;color:{_csc}">{_cact}</div>
+            _csc    = "#00d09e" if _csok else ("#38bdf8" if _cs_dif > 0 else "#f59e0b")
+            _cs_bg  = "#0a2a1f" if _csok else ("#0c2233" if _cs_dif > 0 else "#2d1f05")
+            _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
+            _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
+            st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
+                    border-radius:10px;padding:14px 16px;margin-top:28px;">
+              <div style="font-size:11px;color:{_csc};opacity:.8;margin-bottom:6px">
+                Current ₹{_lf_curr:,.0f} &nbsp;→&nbsp; Target ₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)
+              </div>
+              <div style="font-size:16px;font-weight:800;color:{_csc}">
+                {_cs_icon} {_cs_txt}
+              </div>
             </div>""", unsafe_allow_html=True)
 
     # ── Equity budget ─────────────────────────────────────────────
