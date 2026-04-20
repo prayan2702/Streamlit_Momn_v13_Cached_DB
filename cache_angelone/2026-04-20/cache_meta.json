@@ -1,0 +1,70 @@
+{
+  "build_date": "2026-04-20",
+  "build_time_utc": "15:26:01",
+  "build_duration_min": 209.3,
+  "symbols_total": 2192,
+  "symbols_fetched": 2185,
+  "symbols_failed": 7,
+  "not_in_master": 0,
+  "failed_symbols": [
+    "NEAGI.NS",
+    "SAPPL.NS",
+    "SAYAJIHOTL.NS",
+    "SONAL.NS",
+    "TECHNVISN.NS",
+    "THAKDEV.NS",
+    "ZFSTEERING.NS"
+  ],
+  "data_start_full": "2000-01-01",
+  "data_start_recent": "2022-12-20",
+  "data_end": "2026-04-20",
+  "last_date_in_cache": "2026-04-20",
+  "today_data_present": true,
+  "recent_months": 40,
+  "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
+  "symbol_source": "NSE EQUITY_L.csv (direct)",
+  "extra_symbols": [
+    "GOLDBEES.NS",
+    "SILVERBEES.NS"
+  ],
+  "chunks_per_symbol": 5,
+  "max_days_per_chunk": 2000,
+  "date_ranges": [
+    [
+      "2000-01-01",
+      "2005-06-22"
+    ],
+    [
+      "2005-06-23",
+      "2010-12-13"
+    ],
+    [
+      "2010-12-14",
+      "2016-06-04"
+    ],
+    [
+      "2016-06-05",
+      "2021-11-25"
+    ],
+    [
+      "2021-11-26",
+      "2026-04-21"
+    ]
+  ],
+  "last_chunk_todate": "2026-04-21 15:30",
+  "total_api_calls": 10925,
+  "rate_limit": "3 req/sec",
+  "close_shape": [
+    825,
+    2185
+  ],
+  "high_shape": [
+    825,
+    2185
+  ],
+  "volume_shape": [
+    825,
+    2185
+  ],
+  "ath_count": 2185
+}
