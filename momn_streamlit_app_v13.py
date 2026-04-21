@@ -374,11 +374,119 @@ p, span, div, label, .stMarkdown, .stText { color: #e2e8f0; }
 .stRadio > label, .stCheckbox > label { color: #e2e8f0 !important; }
 /* Divider */
 hr { border-color: #1e293b !important; }
-/* Button defaults */
+
+/* ── Dataframe / Table — dark override ── */
+[data-testid="stDataFrame"] > div,
+[data-testid="stDataFrame"] iframe,
+.stDataFrame, .dataframe-container { background: #111827 !important; }
+/* Override Streamlit's white glimmer table */
+[data-testid="stDataFrame"] [data-testid="StyledDataFrameDataCell"],
+[data-testid="stDataFrame"] [data-testid="StyledDataFrameIndexCell"],
+[data-testid="stDataFrame"] table,
+[data-testid="stDataFrame"] thead,
+[data-testid="stDataFrame"] tbody,
+[data-testid="stDataFrame"] tr,
+[data-testid="stDataFrame"] td,
+[data-testid="stDataFrame"] th {
+    background-color: #111827 !important;
+    color: #e2e8f0 !important;
+    border-color: #1e293b !important;
+}
+[data-testid="stDataFrame"] thead th {
+    background-color: #0c1624 !important;
+    color: #94a3b8 !important;
+}
+[data-testid="stDataFrame"] tbody tr:nth-child(even) td {
+    background-color: #0f1e30 !important;
+}
+[data-testid="stDataFrame"] tbody tr:hover td {
+    background-color: #1e293b !important;
+}
+
+/* ── st.table also ── */
+[data-testid="stTable"] table,
+[data-testid="stTable"] thead,
+[data-testid="stTable"] tbody,
+[data-testid="stTable"] tr,
+[data-testid="stTable"] td,
+[data-testid="stTable"] th {
+    background: #111827 !important;
+    color: #e2e8f0 !important;
+    border-color: #1e293b !important;
+}
+
+/* ── Cache status cards — dark ── */
+.stMarkdown div[style*="background: #d4edda"],
+.stMarkdown div[style*="background:#d4edda"],
+.stMarkdown div[style*="background:#dcfce7"],
+.stMarkdown div[style*="background: #dcfce7"] {
+    background: #052e16 !important;
+    border-color: #166534 !important;
+    color: #4ade80 !important;
+}
+
+/* ── Tabs dark ── */
+[data-testid="stTabs"] [role="tablist"] {
+    background: #111827 !important;
+    border-bottom: 1px solid #1e293b !important;
+}
+[data-testid="stTabs"] [role="tab"] {
+    color: #64748b !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+}
+[data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    color: #22d3ee !important;
+    border-bottom: 2px solid #22d3ee !important;
+    background: transparent !important;
+}
+[data-testid="stTabs"] [role="tabpanel"] {
+    background: #0f172a !important;
+    padding-top: 1rem;
+}
+
+/* ── Info/Warning/Error boxes — darker ── */
+[data-testid="stAlert"] { 
+    background: #1e293b !important;
+    border-color: #334155 !important;
+}
+[data-testid="stAlert"][data-baseweb="notification"] {
+    color: #e2e8f0 !important;
+}
+
+/* ── Text area (clipboard) ── */
+.stTextArea textarea {
+    background: #1e293b !important;
+    color: #94a3b8 !important;
+    border-color: #334155 !important;
+    font-size: 12px !important;
+}
+
+/* ── Checkbox ── */
+.stCheckbox > label > span { color: #94a3b8 !important; }
+
+/* ── Caption text ── */
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: #64748b !important;
+}
+
+/* ── Success/Info/Warning adjustments ── */
+div[data-testid="stAlert"] p { color: inherit !important; }
+
+/* ── White pills/chips in green/success boxes — fix ── */
+.stMarkdown span[style*="background:white"],
+.stMarkdown span[style*="background: white"] {
+    background: #1e293b !important;
+    color: #94a3b8 !important;
+    border-color: #334155 !important;
+}
+
+/* ── Button defaults ── */
 .stButton > button {
     background: #1e293b !important;
     color: #e2e8f0 !important;
     border: 1px solid #334155 !important;
+    font-size: 13px !important;
 }
 .stButton > button:hover {
     background: #334155 !important;
@@ -388,6 +496,18 @@ hr { border-color: #1e293b !important; }
     background: #1d4ed8 !important;
     color: white !important;
     border-color: #2563eb !important;
+}
+.stButton > button[kind="secondary"] {
+    background: #1e293b !important;
+    color: #94a3b8 !important;
+}
+
+/* ── Download button ── */
+.stDownloadButton > button {
+    background: #1d4ed8 !important;
+    color: white !important;
+    border-color: #2563eb !important;
+    font-weight: 600 !important;
 }
 
 html, body, [class*="css"] {
@@ -551,7 +671,7 @@ html, body, [class*="css"] {
 .metric-card.amber  { border-left-color: var(--amber); }
 .metric-label {
     font-size: 10px;
-    color: var(--muted);
+    color: #94a3b8;
     text-transform: uppercase;
     letter-spacing: .6px;
     font-weight: 600;
@@ -575,11 +695,11 @@ html, body, [class*="css"] {
 .section-hdr {
     font-size: 14px;
     font-weight: 700;
-    color: var(--text-main);
-    border-left: 4px solid var(--teal);
+    color: #e2e8f0;
+    border-left: 4px solid #22d3ee;
     padding: 6px 0 6px 12px;
     margin: 1.4rem 0 .9rem;
-    background: linear-gradient(90deg, rgba(14,165,233,.06) 0%, transparent 60%);
+    background: linear-gradient(90deg, rgba(34,211,238,.08) 0%, transparent 60%);
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
@@ -596,9 +716,10 @@ html, body, [class*="css"] {
     gap: 12px;
     margin: 12px 0;
 }
-.nse-link-box a { color: var(--blue); font-weight: 700; font-size: 13px; text-decoration: none; }
-.nse-link-box a:hover { text-decoration: underline; }
-.nse-link-box .hint { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.nse-link-box a { color: #60a5fa; font-weight: 700; font-size: 13px; text-decoration: none; }
+.nse-link-box a:hover { text-decoration: underline; color: #93c5fd; }
+.nse-link-box .hint { font-size: 11px; color: #94a3b8; margin-top: 3px; }
+.nse-link-box b { color: #e2e8f0; }
 
 /* ════════════════════════════
    CHIPS (SELL / BUY / HOLD)
@@ -614,19 +735,19 @@ html, body, [class*="css"] {
     border: 1px solid transparent;
 }
 .chip-sell {
-    background: var(--red-bg);
-    color: var(--red);
-    border-color: var(--red-bdr);
+    background: #2d0909;
+    color: #f87171;
+    border-color: #7f1d1d;
 }
 .chip-buy {
-    background: var(--green-bg);
-    color: var(--green);
-    border-color: var(--green-bdr);
+    background: #052e16;
+    color: #22c55e;
+    border-color: #166534;
 }
 .chip-hold {
-    background: #f1f5f9;
-    color: var(--text-sub);
-    border-color: #cbd5e1;
+    background: #1e293b;
+    color: #94a3b8;
+    border-color: #334155;
 }
 
 /* ════════════════════════════
@@ -647,13 +768,13 @@ html, body, [class*="css"] {
     flex: 1;
     min-width: 100px;
     padding: 12px 16px;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid #1e293b;
     text-align: center;
 }
 .reb-stat:last-child { border-right: none; }
 .reb-stat .label {
     font-size: 9.5px;
-    color: var(--muted);
+    color: #64748b;
     text-transform: uppercase;
     letter-spacing: .6px;
     font-weight: 600;
@@ -685,7 +806,7 @@ html, body, [class*="css"] {
 }
 .workflow-box .step-tag {
     display: inline-block;
-    background: var(--blue);
+    background: #1d4ed8;
     color: #fff;
     border-radius: 12px;
     padding: 1px 8px;
@@ -703,10 +824,10 @@ html, body, [class*="css"] {
     padding: 40px 16px;
 }
 .login-card {
-    background: var(--bg-white);
-    border: 1px solid var(--border);
+    background: #111827;
+    border: 1px solid #1e293b;
     border-radius: 18px;
-    box-shadow: 0 8px 32px rgba(0,0,0,.10);
+    box-shadow: 0 8px 32px rgba(0,0,0,.4);
     padding: 40px 44px;
     width: 100%;
     text-align: center;
@@ -721,13 +842,13 @@ html, body, [class*="css"] {
     text-align: center;
     font-size: 22px;
     font-weight: 800;
-    color: var(--text-main);
+    color: #f1f5f9;
     margin-bottom: 4px;
 }
 .login-sub {
     text-align: center;
     font-size: 12.5px;
-    color: var(--muted);
+    color: #94a3b8;
     margin-bottom: 28px;
 }
 
@@ -1541,14 +1662,14 @@ with _tab_regime:
             _rt_s2c="#00d09e" if _rt_s2ok else "#f87171"; _rt_s2bg="#0a2a1f" if _rt_s2ok else "#2d0909"
             _rt_s3c="#00d09e" if _rt_s3ok else "#f87171"; _rt_s3bg="#0a2a1f" if _rt_s3ok else "#2d0909"
             # Banner
-            st.markdown(f"""<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-              <div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;padding:6px 12px;font-size:12px;color:#38bdf8;font-family:'DM Mono',monospace;">
-                📅 <b>Next Friday:</b> {_rt_nf.strftime('%d %b %Y')} ({_rt_df}d)</div>
-              <div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;padding:6px 12px;font-size:12px;color:#00d09e;font-family:'DM Mono',monospace;">
-                📆 <b>Monthly RB:</b> {_rt_nr.strftime('%d %b %Y')}</div>
-              {'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:6px 12px;font-size:12px;color:#f59e0b;">VIX: <b>' + str(round(_rt_vx,1)) + ('</b> 🔴' if _rt_vx>20 else '</b>') + '</div>' if _rt_vx else ''}
-              <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:6px 12px;font-size:11px;color:#64748b;">📦 {_rt_src}</div>
-            </div>""", unsafe_allow_html=True)
+            _rt_vix_div = (f'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:6px 12px;font-size:12px;color:#f59e0b;font-family:DM Mono,monospace;">VIX: <b>{round(_rt_vx,1)}</b>' + (' 🔴' if _rt_vx and _rt_vx>20 else '') + '</div>') if _rt_vx else ''
+            st.markdown(f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+                f'<div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;padding:6px 12px;font-size:12px;color:#38bdf8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>'
+                f'<div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;padding:6px 12px;font-size:12px;color:#00d09e;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>'
+                f'{_rt_vix_div}'
+                f'<div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:6px 12px;font-size:11px;color:#64748b;">📦 {_rt_src}</div>'
+                '</div>',
+                unsafe_allow_html=True)
             # Gauge
             _rt_ang = _math_rt.pi - (_math_rt.pi * _rt_sc / 3)
             _rt_nx  = round(110 + 82*_math_rt.cos(_rt_ang),1)
@@ -1796,12 +1917,12 @@ if st.session_state.current_step == 1:
             if not st.session_state.symbols:
                 st.info("💡 Symbol list load nahi hua — GitHub fallback (NSE_EQ_ALL.csv) screener run pe use hoga.")
                 st.markdown("""
-                <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
-                            padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
+                <div style="background:#2d1a03;border:1px solid #f59e0b;border-radius:10px;
+                            padding:10px 16px;font-size:12.5px;color:#fbbf24;margin-top:6px;">
                 ➕ <b>Auto-included:</b> &nbsp;
-                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
+                <span style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:2px 10px;font-weight:700;color:#fbbf24;">🥇 GOLDBEES</span>
                 &nbsp;
-                <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
+                <span style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:2px 10px;font-weight:700;color:#fbbf24;">🥈 SILVERBEES</span>
                 &nbsp; — har universe ke saath automatically add honge
                 </div>
                 """, unsafe_allow_html=True)
@@ -1810,12 +1931,12 @@ if st.session_state.current_step == 1:
     else:
         st.info(f"📡 **{chosen_u}** ki symbol list screener run pe GitHub se auto-load hogi. CSV upload ki zaroorat nahi hai.")
         st.markdown("""
-        <div style="background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius-md);
-                    padding:10px 16px;font-size:12.5px;color:#92400e;margin-top:6px;">
+        <div style="background:#2d1a03;border:1px solid #f59e0b;border-radius:10px;
+                    padding:10px 16px;font-size:12.5px;color:#fbbf24;margin-top:6px;">
         ➕ <b>Auto-included:</b> &nbsp;
-        <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥇 GOLDBEES</span>
+        <span style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:2px 10px;font-weight:700;color:#fbbf24;">🥇 GOLDBEES</span>
         &nbsp;
-        <span style="background:white;border:1px solid #fcd34d;border-radius:12px;padding:2px 10px;font-weight:700;">🥈 SILVERBEES</span>
+        <span style="background:#1e293b;border:1px solid #f59e0b;border-radius:12px;padding:2px 10px;font-weight:700;color:#fbbf24;">🥈 SILVERBEES</span>
         &nbsp; — har universe ke saath automatically add honge
         </div>
         """, unsafe_allow_html=True)
@@ -3208,37 +3329,35 @@ elif st.session_state.current_step == 3:
         _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
                                help="Portfolio Dashboard se latest NAV data fetch karo")
 
-    if _fetch_nav or not _dash_loaded:
-        # Clear cache on manual refresh
-        if _fetch_nav:
-            _fetch_dashboard_data_cached.clear()
-        _status_ph = st.empty()
-        _status_ph.info("📡 Portfolio Dashboard se NAV + VIX fetch ho raha hai...")
-        try:
-            _dash_data    = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
-            _nav_s_new    = _extract_nav_series_from_dash(_dash_data)
-            _vix_new      = _extract_vix_from_dash(_dash_data)
-            _wret_new     = _extract_weekly_nav_ret(_dash_data)
-            # Only update session if we got real data
-            if _nav_s_new:
-                _nav_series   = _nav_s_new
-                _vix_curr     = _vix_new
-                _weekly_nav_r = _wret_new
-                st.session_state["_regime_nav_series"]  = _nav_series
-                st.session_state["_regime_vix"]         = _vix_curr
-                st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
-                st.session_state["_regime_dash_loaded"] = True
-                _status_ph.success(f"✅ NAV loaded ({len(_nav_series)} data points)"
-                                   + (f" | VIX: {_vix_curr:.1f}" if _vix_curr else ""))
-            else:
-                _status_ph.warning("⚠️ Dashboard API ne data nahi diya. Phir try karo ya skip karo — S1 signal fallback (1) use hoga.")
-        except Exception as _e_fetch:
-            _status_ph.warning(f"⚠️ Fetch failed: {_e_fetch}. S1 signal fallback use hoga.")
+    # Only fetch when button clicked OR cache is truly empty (not just unloaded)
+    if _fetch_nav:
+        _fetch_dashboard_data_cached.clear()
+        with st.spinner("📡 NAV + VIX fetch ho raha hai..."):
+            try:
+                _dash_data = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
+                _nav_s_new = _extract_nav_series_from_dash(_dash_data)
+                _vix_new   = _extract_vix_from_dash(_dash_data)
+                _wret_new  = _extract_weekly_nav_ret(_dash_data)
+                if _nav_s_new:
+                    _nav_series   = _nav_s_new
+                    _vix_curr     = _vix_new
+                    _weekly_nav_r = _wret_new
+                    st.session_state["_regime_nav_series"]  = _nav_series
+                    st.session_state["_regime_vix"]         = _vix_curr
+                    st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
+                    st.session_state["_regime_dash_loaded"] = True
+                    st.success(f"✅ NAV loaded ({len(_nav_series)} pts)" + (f" | VIX: {_vix_curr:.1f}" if _vix_curr else ""))
+                else:
+                    st.warning("⚠️ Dashboard API ne data nahi diya — S1 signal fallback (1) use hoga.")
+            except Exception as _ef:
+                st.warning(f"⚠️ NAV fetch failed: {_ef}")
+    elif not _dash_loaded:
+        # First time Step 3 opens — show a small hint, don't auto-fetch (avoids error flash)
+        st.info("📡 NAV data ke liye 'Refresh NAV' button dabao (S1 signal ke liye zaroori hai)")
     else:
-        # Data already in session — show compact status
-        _lbl_n = f"{len(_nav_series)} pts" if _nav_series else "No data"
+        # Already loaded — show compact status silently
         _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
-        st.caption(f"📊 Cached: NAV {_lbl_n} | {_lbl_v} — Refresh karne ke liye button dabao")
+        st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh for update")
 
     # ── Regime score ──────────────────────────────────────────────
     _dfS_rg = st.session_state.get("dfStats")
@@ -3276,7 +3395,7 @@ elif st.session_state.current_step == 3:
                   padding:7px 14px;font-size:12px;color:#00d09e;font-family:'DM Mono',monospace;">
         📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
       </div>
-      {'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:7px 14px;font-size:12px;color:#f59e0b;font-family:DM Mono,monospace;">⚡ India VIX: <b>' + str(round(_vix_curr,1)) + '</b>' + (' 🔴 HIGH' if _vix_curr>20 else '') + '</div>' if _vix_curr else '<div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: Dashboard fetch karo</div>'}
+      {('&#x26A1; VIX: <b>' + str(round(_vix_curr,1)) + ('</b> &#x1F534; HIGH' if _vix_curr>20 else '</b>')) if _vix_curr else 'VIX: Fetch karo'}
     </div>
     """, unsafe_allow_html=True)
 
@@ -4052,13 +4171,13 @@ elif st.session_state.current_step == 4:
 
         st.success(f"✅ Excel ready: `{excel_file}`")
         st.markdown(f"""
-        <div style="background:var(--green-bg);border:1px solid var(--green-bdr);border-radius:var(--radius-md);
-                    padding:10px 16px;font-size:12px;color:#15803d;margin:4px 0 12px 0;">
+        <div style="background:#052e16;border:1px solid #166534;border-radius:10px;
+                    padding:10px 16px;font-size:12px;color:#4ade80;margin:4px 0 12px 0;">
         📄 <b>4 Sheets:</b> &nbsp;
-        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Unfiltered Stocks</span>
-        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Filtered Stocks</span>
-        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Failed Downloads</span>
-        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Portfolio Rebalancing</span>
+        <span style="background:#0a3a1e;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid #166534;color:#86efac;">Unfiltered Stocks</span>
+        <span style="background:#0a3a1e;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid #166534;color:#86efac;">Filtered Stocks</span>
+        <span style="background:#0a3a1e;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid #166534;color:#86efac;">Failed Downloads</span>
+        <span style="background:#0a3a1e;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid #166534;color:#86efac;">Portfolio Rebalancing</span>
         </div>
         """, unsafe_allow_html=True)
 
