@@ -323,7 +323,9 @@ st.markdown("""
     --radius-lg:  14px;
     --shadow-sm:  0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
     --shadow-md:  0 4px 12px rgba(0,0,0,.10), 0 2px 4px rgba(0,0,0,.06);
-} ════════════════════════════
+}
+
+/* ════════════════════════════
    APP HEADER
    ════════════════════════════ */
 .app-header {
@@ -607,7 +609,7 @@ st.markdown("""
     margin: 10px 0;
     font-size: 13px;
     line-height: 2;
-    color: #e2e8f0;
+    color: var(--text-main);
 }
 .workflow-box .step-tag {
     display: inline-block;
@@ -1467,12 +1469,12 @@ with _tab_regime:
             _rt_s2c="#00d09e" if _rt_s2ok else "#f87171"; _rt_s2bg="#0a2a1f" if _rt_s2ok else "#2d0909"
             _rt_s3c="#00d09e" if _rt_s3ok else "#f87171"; _rt_s3bg="#0a2a1f" if _rt_s3ok else "#2d0909"
             # Banner
-            _rt_vix_div = (f'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:6px 12px;font-size:12px;color:#f59e0b;font-family:DM Mono,monospace;">VIX: <b>{round(_rt_vx,1)}</b>' + (' 🔴' if _rt_vx and _rt_vx>20 else '') + '</div>') if _rt_vx else ''
+            _rt_vix_div = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 12px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>{round(_rt_vx,1)}</b>' + (' 🔴' if _rt_vx and _rt_vx>20 else '') + '</div>') if _rt_vx else ''
             st.markdown(f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
-                f'<div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;padding:6px 12px;font-size:12px;color:#38bdf8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>'
-                f'<div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;padding:6px 12px;font-size:12px;color:#00d09e;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>'
+                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:6px 12px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>'
+                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 12px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>'
                 f'{_rt_vix_div}'
-                f'<div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:6px 12px;font-size:11px;color:#64748b;">📦 {_rt_src}</div>'
+                f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>'
                 '</div>',
                 unsafe_allow_html=True)
             # Gauge
@@ -1493,7 +1495,7 @@ with _tab_regime:
             _stc_rt.html(_rt_g, height=370)
             st.markdown("---")
             _rta1,_rta2,_rta3 = st.columns(3)
-            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#38bdf8","#0c2233"),("🥇 GOLDBEES",_rt_gd,"#f59e0b","#2d1f05"),("💵 Liquid",_rt_cs,"#94a3b8","#1e293b")]):
+            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#2563eb","#dbeafe"),("🥇 GOLDBEES",_rt_gd,"#b45309","#fef3c7"),("💵 Liquid",_rt_cs,"#475569","#f1f5f9")]):
                 with _rtcol:
                     st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div><div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div></div>""",unsafe_allow_html=True)
             st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_dt_rt.date.today().strftime('%d %b %Y')}")
@@ -2809,8 +2811,8 @@ Source choose karo aur Close top-up karo — ya skip karke cached data se hi cal
                           }}
                           .cpybtn:hover {{ border-color:#64748b; color:#94a3b8; }}
                         </style>
-                        <div style="background:#1e293b;border-radius:8px;padding:10px 14px;
-                                    border-left:3px solid {_badge_color};">
+                        <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;
+                                    border:1px solid {_badge_color};border-left:3px solid {_badge_color};">
                           <span style="color:#f1f5f9;font-weight:700;font-size:15px;">
                             #{_rank} &nbsp; {_tick}
                           </span>
@@ -3191,13 +3193,13 @@ elif st.session_state.current_step == 3:
 
     st.markdown(f"""
     <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-      <div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;
-                  padding:7px 14px;font-size:12px;color:#38bdf8;font-family:'DM Mono',monospace;">
+      <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;
+                  padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:'DM Mono',monospace;">
         📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
         <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
       </div>
-      <div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;
-                  padding:7px 14px;font-size:12px;color:#00d09e;font-family:'DM Mono',monospace;">
+      <div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
+                  padding:7px 14px;font-size:12px;color:#15803d;font-family:'DM Mono',monospace;">
         📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
       </div>
       {('&#x26A1; VIX: <b>' + str(round(_vix_curr,1)) + ('</b> &#x1F534; HIGH' if _vix_curr>20 else '</b>')) if _vix_curr else 'VIX: Fetch karo'}
@@ -3393,9 +3395,9 @@ elif st.session_state.current_step == 3:
     # ── Allocation cards ──────────────────────────────────────────
     _a1,_a2,_a3 = st.columns(3)
     for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
-        ("📈 Equity",_eq,"#38bdf8","#0c2233"),
-        ("🥇 GOLDBEES",_gd,"#f59e0b","#2d1f05"),
-        ("💵 Liquid Fund",_cs,"#94a3b8","#1e293b")]):
+        ("📈 Equity",_eq,"#2563eb","#dbeafe"),
+        ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
+        ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
         with col:
             st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
                 padding:12px;text-align:center;margin-bottom:8px;">
@@ -3407,19 +3409,21 @@ elif st.session_state.current_step == 3:
     # ── Shift message ─────────────────────────────────────────────
     _sc_diff = _sc - _prev_sc
     if _sc_diff == 0:
-        _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±5% check karo.","#00d09e","#0a2a1f"
+        _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±5% check karo.","#15803d","#dcfce7"
     elif abs(_sc_diff) == 1:
-        _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — ek mahine mein complete karo.","#38bdf8","#0c2233"
+        _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — ek mahine mein complete karo.","#1d4ed8","#dbeafe"
     else:
-        _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — 2 mahine mein gradually. Weekly plan neeche dekho.","#f59e0b","#2d1f05"
+        _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — 2 mahine mein gradually. Weekly plan neeche dekho.","#b45309","#fef3c7"
     st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
                 border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
       {_smsg}</div>""", unsafe_allow_html=True)
 
     # ── GOLDBEES + Liquid actions — aligned layout ───────────────
     # Section header
-    st.markdown("""<div style="font-size:13px;font-weight:700;color:#e2e8f0;
-                    margin-bottom:10px;padding-left:2px;">
+    st.markdown("""<div style="font-size:14px;font-weight:700;color:#0f172a;
+                    border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
+                    background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
+                    border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
         🏦 Asset Actions
     </div>""", unsafe_allow_html=True)
 
@@ -3427,7 +3431,7 @@ elif st.session_state.current_step == 3:
 
     # ─── GOLDBEES ───────────────────────────────────────────────────
     with _act_col1:
-        st.markdown('<div style="font-size:13px;font-weight:700;color:#f59e0b;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #2d1f05">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:13px;font-weight:700;color:#b45309;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fcd34d">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
         _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
                                     value=0, step=1000, key="goldbees_curr_val",
                                     label_visibility="visible")
@@ -3438,8 +3442,8 @@ elif st.session_state.current_step == 3:
             _gd_tgt = _total_pf * _gd
             _gd_dif = _gd_tgt - _gb_curr
             _gdok   = abs(_gd_dif) / _total_pf < 0.05
-            _gdc    = "#00d09e" if _gdok else ("#f59e0b" if abs(_gd_dif/_total_pf) < 0.15 else "#f87171")
-            _gd_bg  = "#0a2a1f" if _gdok else ("#2d1f05" if abs(_gd_dif/_total_pf) < 0.15 else "#2d0909")
+            _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
+            _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
             _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
             _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
             _gact_txt  = "Hold (within ±5%)" if _gdok else (f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
@@ -3458,7 +3462,7 @@ elif st.session_state.current_step == 3:
 
     # ─── LIQUID FUND ─────────────────────────────────────────────────
     with _act_col2:
-        st.markdown('<div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #1e293b">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:13px;font-weight:700;color:#475569;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #cbd5e1">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
         _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
                                     value=0, step=1000, key="liquid_curr_val",
                                     label_visibility="visible")
@@ -3466,8 +3470,8 @@ elif st.session_state.current_step == 3:
             _cs_tgt = _total_pf * _cs
             _cs_dif = _cs_tgt - _lf_curr
             _csok   = abs(_cs_dif) / _total_pf < 0.05
-            _csc    = "#00d09e" if _csok else ("#38bdf8" if _cs_dif > 0 else "#f59e0b")
-            _cs_bg  = "#0a2a1f" if _csok else ("#0c2233" if _cs_dif > 0 else "#2d1f05")
+            _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
+            _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
             _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
             _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
             st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
@@ -3484,11 +3488,11 @@ elif st.session_state.current_step == 3:
             </div>""", unsafe_allow_html=True)
 
     # ── Equity budget ─────────────────────────────────────────────
-    st.markdown(f"""<div style="background:#0c1f3a;border:1px solid #38bdf8;border-left:4px solid #38bdf8;
+    st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
                 border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
-      <b style="color:#38bdf8">📈 Equity Budget:</b>
-      <span style="color:#e2e8f0;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
-        <b style="font-size:16px;color:#38bdf8"> ₹{_total_pf*_eq:,.0f}</b>
+      <b style="color:#1d4ed8">📈 Equity Budget:</b>
+      <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
+        <b style="font-size:16px;color:#1d4ed8"> ₹{_total_pf*_eq:,.0f}</b>
       </span>
     </div>""", unsafe_allow_html=True)
 
@@ -3509,8 +3513,8 @@ elif st.session_state.current_step == 3:
             st.info(f"🔺 Recovery mode — {_plan['n_weeks']} weeks. Faster deploy.")
         else:
             st.info(f"🔻 Defensive mode — {_plan['n_weeks']} weeks. Gradual reduce.")
-        st.markdown(f"""<div style="background:#0f172a;border:1px solid #475569;border-left:3px solid #f59e0b;
-                    border-radius:6px;padding:8px 14px;font-size:12px;color:#94a3b8;margin-bottom:8px;">
+        st.markdown(f"""<div style="background:#fef3c7;border:1px solid #fcd34d;border-left:3px solid #b45309;
+                    border-radius:6px;padding:8px 14px;font-size:12px;color:#78350f;margin-bottom:8px;">
           {_plan["accelerate_msg"]}</div>""", unsafe_allow_html=True)
         _fri_lst = _dates_rg["upcoming_fridays"]
         _prev_eq = _plan["weeks"][0]["eq_pct"]  # will compare against previous week
