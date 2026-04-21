@@ -291,38 +291,103 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
 
-/* ── Design Tokens ── */
+/* ── Design Tokens — Dark Mode Default ── */
 :root {
     --navy:       #0d1b2a;
     --navy-mid:   #1a2e45;
     --navy-light: #1e3a5f;
     --slate:      #334155;
-    --muted:      #64748b;
-    --border:     #e2e8f0;
-    --bg:         #f8fafc;
-    --bg-white:   #ffffff;
-    --teal:       #0ea5e9;
-    --teal-dark:  #0284c7;
-    --green:      #16a34a;
-    --green-bg:   #dcfce7;
-    --green-bdr:  #86efac;
-    --red:        #dc2626;
-    --red-bg:     #fee2e2;
-    --red-bdr:    #fca5a5;
-    --blue:       #2563eb;
-    --blue-bg:    #dbeafe;
-    --blue-bdr:   #93c5fd;
-    --violet:     #7c3aed;
-    --violet-bg:  #ede9fe;
-    --amber:      #d97706;
-    --amber-bg:   #fef3c7;
-    --text-main:  #0f172a;
-    --text-sub:   #475569;
+    --muted:      #94a3b8;
+    --border:     #1e2d3d;
+    --bg:         #0f172a;
+    --bg-white:   #111827;
+    --teal:       #22d3ee;
+    --teal-dark:  #0891b2;
+    --green:      #22c55e;
+    --green-bg:   #052e16;
+    --green-bdr:  #166534;
+    --red:        #f87171;
+    --red-bg:     #2d0909;
+    --red-bdr:    #7f1d1d;
+    --blue:       #60a5fa;
+    --blue-bg:    #0c1d3a;
+    --blue-bdr:   #1e40af;
+    --violet:     #a78bfa;
+    --violet-bg:  #1e1040;
+    --amber:      #fbbf24;
+    --amber-bg:   #2d1a03;
+    --text-main:  #f1f5f9;
+    --text-sub:   #94a3b8;
     --radius-sm:  6px;
     --radius-md:  10px;
     --radius-lg:  14px;
-    --shadow-sm:  0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
-    --shadow-md:  0 4px 12px rgba(0,0,0,.10), 0 2px 4px rgba(0,0,0,.06);
+    --shadow-sm:  0 1px 3px rgba(0,0,0,.3), 0 1px 2px rgba(0,0,0,.2);
+    --shadow-md:  0 4px 12px rgba(0,0,0,.4), 0 2px 4px rgba(0,0,0,.2);
+}
+
+/* ── Force dark background globally ── */
+html, body, [data-testid="stAppViewContainer"],
+[data-testid="stMain"], [data-testid="block-container"],
+.main .block-container, section.main {
+    background-color: #0f172a !important;
+    color: #f1f5f9 !important;
+}
+[data-testid="stSidebar"], [data-testid="stSidebar"] > div {
+    background-color: #0a1020 !important;
+}
+/* Streamlit default text overrides */
+p, span, div, label, .stMarkdown, .stText { color: #e2e8f0; }
+.stSelectbox label, .stNumberInput label, .stSlider label,
+.stCheckbox label, .stRadio label, .stTextInput label,
+.stTextArea label, .stDateInput label, .stFileUploader label {
+    color: #94a3b8 !important;
+    font-size: 13px !important;
+}
+/* Input backgrounds */
+.stSelectbox > div > div,
+.stNumberInput > div > div,
+.stTextInput > div > div,
+.stTextArea > div > div,
+.stDateInput > div > div {
+    background: #1e293b !important;
+    border-color: #334155 !important;
+    color: #f1f5f9 !important;
+}
+/* Dataframe */
+[data-testid="stDataFrame"], .dataframe { 
+    background: #111827 !important;
+    color: #e2e8f0 !important;
+}
+/* Expander */
+[data-testid="stExpander"] {
+    background: #111827 !important;
+    border-color: #1e293b !important;
+}
+[data-testid="stExpander"] summary { color: #94a3b8 !important; }
+/* Tabs */
+[data-testid="stTabs"] button { color: #94a3b8 !important; }
+[data-testid="stTabs"] button[aria-selected="true"] { 
+    color: #22d3ee !important;
+    border-bottom-color: #22d3ee !important;
+}
+/* Radio / checkbox */
+.stRadio > label, .stCheckbox > label { color: #e2e8f0 !important; }
+/* Divider */
+hr { border-color: #1e293b !important; }
+/* Button defaults */
+.stButton > button {
+    background: #1e293b !important;
+    color: #e2e8f0 !important;
+    border: 1px solid #334155 !important;
+}
+.stButton > button:hover {
+    background: #334155 !important;
+    border-color: #475569 !important;
+}
+.stButton > button[kind="primary"] {
+    background: #1d4ed8 !important;
+    color: white !important;
+    border-color: #2563eb !important;
 }
 
 html, body, [class*="css"] {
@@ -421,15 +486,15 @@ html, body, [class*="css"] {
     transition: all .2s;
 }
 .step-item.done {
-    background: var(--green-bg);
-    color: #15803d;
-    border: 1px solid var(--green-bdr);
+    background: #052e16;
+    color: #22c55e;
+    border: 1px solid #166534;
 }
 .step-item.active {
-    background: linear-gradient(135deg, #dbeafe 0%, #ede9fe 100%);
-    color: var(--blue);
-    border: 1.5px solid var(--blue-bdr);
-    box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+    background: #0c1d35;
+    color: #60a5fa;
+    border: 1.5px solid #1e40af;
+    box-shadow: 0 0 0 3px rgba(37,99,235,.2);
 }
 .step-item.pending {
     color: #94a3b8;
@@ -466,9 +531,9 @@ html, body, [class*="css"] {
    ════════════════════════════ */
 .metric-row  { display: flex; gap: 12px; flex-wrap: wrap; margin: 14px 0; }
 .metric-card {
-    background: var(--bg-white);
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--slate);
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-left: 4px solid #334155;
     border-radius: var(--radius-md);
     padding: 12px 18px;
     min-width: 140px;
@@ -522,8 +587,8 @@ html, body, [class*="css"] {
    NSE LINK BOX
    ════════════════════════════ */
 .nse-link-box {
-    background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
-    border: 1px solid var(--blue-bdr);
+    background: #0c1d35;
+    border: 1px solid #1e3a5f;
     border-radius: var(--radius-md);
     padding: 14px 18px;
     display: flex;
@@ -571,8 +636,8 @@ html, body, [class*="css"] {
     display: flex;
     gap: 0;
     flex-wrap: wrap;
-    background: var(--bg-white);
-    border: 1px solid var(--border);
+    background: #111827;
+    border: 1px solid #1e293b;
     border-radius: var(--radius-md);
     overflow: hidden;
     margin: 12px 0;
@@ -608,14 +673,15 @@ html, body, [class*="css"] {
    WORKFLOW INFO BOX
    ════════════════════════════ */
 .workflow-box {
-    background: linear-gradient(135deg, #f0f9ff 0%, #f0fdf4 100%);
-    border: 1px solid var(--blue-bdr);
-    border-left: 4px solid var(--blue);
+    background: #0c1d35;
+    border: 1px solid #1e3a5f;
+    border-left: 4px solid #60a5fa;
     border-radius: var(--radius-md);
     padding: 14px 18px;
     margin: 10px 0;
     font-size: 13px;
     line-height: 2;
+    color: #e2e8f0;
 }
 .workflow-box .step-tag {
     display: inline-block;
@@ -1359,8 +1425,160 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Step progress bar ──────────────────────────────────────────
-st.markdown(step_html(st.session_state.current_step), unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════
+# TOP-LEVEL TABS
+# ══════════════════════════════════════════════════════════════════
+import math as _math_rt, datetime as _dt_rt
+
+_tab_screener, _tab_regime = st.tabs(["📊 Screener & Rebalancer", "🌡️ Market Regime"])
+
+# ════════════════════════════════════════════════════
+# REGIME TAB — auto-loads best cache, shows gauge
+# ════════════════════════════════════════════════════
+with _tab_regime:
+    try:
+        from calculations import get_regime_score, get_next_rebalance_dates
+        import streamlit.components.v1 as _stc_rt
+        _rt_calcs_ok = True
+    except ImportError:
+        st.warning("⚠️ calculations.py nahi mili.")
+        _rt_calcs_ok = False
+
+    if _rt_calcs_ok:
+        @st.cache_data(ttl=3600, show_spinner=False)
+        def _load_best_cache_regime():
+            try:
+                if _CACHE_UPSTOX_AVAILABLE:
+                    from cache_loader_upstox import load_cache as _lc
+                    c,h,v = _lc(); return c,h,v,"Upstox"
+            except Exception: pass
+            try:
+                if _CACHE_ANGEL_AVAILABLE:
+                    from cache_loader_angelone import load_cache as _lc2
+                    c,h,v = _lc2(); return c,h,v,"Angel One"
+            except Exception: pass
+            try:
+                if _CACHE_AVAILABLE:
+                    from cache_loader import load_cache as _lc3
+                    c,h,v = _lc3(); return c,h,v,"YFinance"
+            except Exception: pass
+            return None,None,None,"None"
+
+        @st.cache_data(ttl=1800, show_spinner=False)
+        def _fetch_dash_rt(api_url):
+            import requests as _r2
+            try:
+                resp = _r2.get(api_url+"?action=all",timeout=15,headers={"User-Agent":"Mozilla/5.0"})
+                if resp.status_code==200:
+                    j=resp.json()
+                    if j.get("ok"): return j.get("data",{})
+            except Exception: pass
+            return {}
+
+        _rt_hc1,_rt_hc2 = st.columns([5,1])
+        with _rt_hc2:
+            if st.button("🔄 Refresh",key="rt_refresh_btn"):
+                _load_best_cache_regime.clear(); _fetch_dash_rt.clear()
+                for k in ["_rt_dfS","_rt_src","_rt_navs","_rt_vx","_rt_wret"]:
+                    st.session_state.pop(k,None)
+                st.rerun()
+
+        if st.session_state.get("_rt_dfS") is None:
+            with st.spinner("⚡ Best cache loading (Upstox → Angel One → YFinance)..."):
+                _rt_cl,_rt_hi,_rt_vo,_rt_src_l = _load_best_cache_regime()
+            if _rt_cl is not None:
+                try:
+                    from calculations import build_dfStats as _bds_rt
+                    from dateutil.relativedelta import relativedelta as _rdelta
+                    import datetime as _dtb2
+                    _rt_end_d = _rt_cl.index[-1].date() if hasattr(_rt_cl.index[-1],'date') else _dt_rt.date.today()
+                    _rt_ed_dt = _dtb2.datetime.combine(_rt_end_d,_dtb2.time())
+                    _rt_dts   = {'startDate':_dtb2.datetime(2000,1,1),'endDate':_rt_ed_dt,
+                                 'date12M':_rt_ed_dt-_rdelta(months=12),'date9M':_rt_ed_dt-_rdelta(months=9),
+                                 'date6M':_rt_ed_dt-_rdelta(months=6),'date3M':_rt_ed_dt-_rdelta(months=3),
+                                 'date1M':_rt_ed_dt-_rdelta(months=1)}
+                    _rt_dfS_obj = _bds_rt(_rt_cl,_rt_hi,_rt_vo,_rt_dts,"avgZScore12_6_3")
+                    st.session_state["_rt_dfS"]  = _rt_dfS_obj
+                    st.session_state["_rt_src"]  = _rt_src_l
+                    st.success(f"✅ {_rt_src_l} cache loaded · {len(_rt_dfS_obj):,} stocks · {_rt_end_d}")
+                except Exception as _e_rt2:
+                    st.error(f"Calculation error: {_e_rt2}")
+            else:
+                st.warning("⚠️ Koi cache available nahi. Screener tab mein pehle run karo.")
+
+        if st.session_state.get("_rt_navs") is None:
+            with st.spinner("📡 NAV + VIX fetch..."):
+                _rtd = _fetch_dash_rt(DASHBOARD_API_URL)
+                _rtn = [r["momnPF"] for r in _rtd.get("benchmarking",{}).get("rows",[]) if r.get("momnPF",0)>0]
+                _rtv = next((e.get("cmp") for e in _rtd.get("indexData",{}).get("table",[])
+                              if "VIX" in str(e.get("name","")).upper()),None)
+                _rtw = round((_rtn[-1]/_rtn[-6]-1)*100,2) if len(_rtn)>=6 else None
+                st.session_state["_rt_navs"] = _rtn if _rtn else []
+                st.session_state["_rt_vx"]   = _rtv
+                st.session_state["_rt_wret"] = _rtw
+
+        _rt_dfS  = st.session_state.get("_rt_dfS")
+        _rt_navs = st.session_state.get("_rt_navs",[])
+        _rt_vx   = st.session_state.get("_rt_vx")
+        _rt_wret = st.session_state.get("_rt_wret")
+        _rt_src  = st.session_state.get("_rt_src","—")
+
+        if _rt_dfS is not None:
+            _rt_rg   = get_regime_score(_rt_dfS, equity_nav_series=_rt_navs or None)
+            _rt_dts2 = get_next_rebalance_dates()
+            _rt_sc   = _rt_rg["score"];  _rt_lbl  = _rt_rg["label"]
+            _rt_eq   = _rt_rg["equity"]; _rt_gd   = _rt_rg["gold"]; _rt_cs = _rt_rg["cash"]
+            _rt_sigs = _rt_rg["signals"]
+            _rt_brd  = _rt_rg["breadth_pct"]; _rt_roc = _rt_rg["median_roc3m"]
+            _rt_nc   = _rt_rg.get("nav_current"); _rt_nd  = _rt_rg.get("nav_dma200")
+            _rt_fc,_rt_bc,_rt_em = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
+                                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}[_rt_sc]
+            _rt_nf   = _rt_dts2["next_friday"]; _rt_nr = _rt_dts2["next_monthly_rb"]
+            _rt_df   = (_rt_nf - _dt_rt.date.today()).days
+            _rt_ntxt = f"NAV {_rt_nc:.2f} vs DMA {_rt_nd:.2f}" if _rt_nc and _rt_nd else ("Refresh karo" if not _rt_navs else "NAV < 200DMA")
+            _rt_s1ok = _rt_sigs.get("s1_equity_curve",1); _rt_s2ok = _rt_sigs.get("s2_breadth",0); _rt_s3ok = _rt_sigs.get("s3_momentum",0)
+            _rt_s1c="#00d09e" if _rt_s1ok else "#f87171"; _rt_s1bg="#0a2a1f" if _rt_s1ok else "#2d0909"
+            _rt_s2c="#00d09e" if _rt_s2ok else "#f87171"; _rt_s2bg="#0a2a1f" if _rt_s2ok else "#2d0909"
+            _rt_s3c="#00d09e" if _rt_s3ok else "#f87171"; _rt_s3bg="#0a2a1f" if _rt_s3ok else "#2d0909"
+            # Banner
+            st.markdown(f"""<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+              <div style="background:#0c2233;border:1px solid #38bdf8;border-radius:8px;padding:6px 12px;font-size:12px;color:#38bdf8;font-family:'DM Mono',monospace;">
+                📅 <b>Next Friday:</b> {_rt_nf.strftime('%d %b %Y')} ({_rt_df}d)</div>
+              <div style="background:#0a2a1f;border:1px solid #00d09e;border-radius:8px;padding:6px 12px;font-size:12px;color:#00d09e;font-family:'DM Mono',monospace;">
+                📆 <b>Monthly RB:</b> {_rt_nr.strftime('%d %b %Y')}</div>
+              {'<div style="background:#2d1f05;border:1px solid #f59e0b;border-radius:8px;padding:6px 12px;font-size:12px;color:#f59e0b;">VIX: <b>' + str(round(_rt_vx,1)) + ('</b> 🔴' if _rt_vx>20 else '</b>') + '</div>' if _rt_vx else ''}
+              <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:6px 12px;font-size:11px;color:#64748b;">📦 {_rt_src}</div>
+            </div>""", unsafe_allow_html=True)
+            # Gauge
+            _rt_ang = _math_rt.pi - (_math_rt.pi * _rt_sc / 3)
+            _rt_nx  = round(110 + 82*_math_rt.cos(_rt_ang),1)
+            _rt_ny  = round(130 - 82*_math_rt.sin(_rt_ang),1)
+            _rt_g = f"""<style>*{{box-sizing:border-box;margin:0;padding:0;}}body{{background:transparent;font-family:'Segoe UI',system-ui,sans-serif;}}.wrap{{display:flex;gap:16px;align-items:flex-start;}}.gc{{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:16px 20px 12px;min-width:230px;text-align:center;flex-shrink:0;}}.gl{{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;}}.gn{{font-size:18px;font-weight:700;color:{_rt_fc};margin-top:4px;}}.gm{{font-size:10px;color:#475569;margin-top:4px;}}.leg{{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:10px;}}.li{{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}}.ld{{width:8px;height:8px;border-radius:50%;flex-shrink:0;}}.sigs{{display:flex;flex-direction:column;gap:10px;flex:1;}}.sig{{border-radius:10px;padding:12px 16px;border:1px solid;display:flex;align-items:center;gap:14px;}}.si{{font-size:26px;flex-shrink:0;line-height:1;}}.sb{{flex:1;}}.st{{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:3px;}}.sc{{font-size:12px;opacity:.75;margin-bottom:2px;}}.sv{{font-size:14px;font-weight:700;}}.sbg{{flex-shrink:0;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;}}</style>
+<div class="wrap"><div class="gc"><div class="gl">Market Regime</div>
+<svg width="220" height="150" viewBox="0 0 220 150"><path d="M20 130 A90 90 0 0 1 200 130" fill="none" stroke="#1e293b" stroke-width="22" stroke-linecap="round"/><path d="M20 130 A90 90 0 0 1 56.3 43.6" fill="none" stroke="#ef4444" stroke-width="20" stroke-linecap="butt"/><path d="M56.3 43.6 A90 90 0 0 1 110 40" fill="none" stroke="#f59e0b" stroke-width="20" stroke-linecap="butt"/><path d="M110 40 A90 90 0 0 1 163.7 43.6" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="butt"/><path d="M163.7 43.6 A90 90 0 0 1 200 130" fill="none" stroke="#10b981" stroke-width="20" stroke-linecap="butt"/><line x1="53" y1="32" x2="59" y2="49" stroke="#0a1020" stroke-width="2.5"/><line x1="110" y1="28" x2="110" y2="46" stroke="#0a1020" stroke-width="2.5"/><line x1="167" y1="32" x2="161" y2="49" stroke="#0a1020" stroke-width="2.5"/><text x="5" y="133" text-anchor="start" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#ef4444">Bear</text><text x="28" y="34" text-anchor="start" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#f59e0b">Neutral</text><text x="110" y="16" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#38bdf8">Mild Bull</text><text x="192" y="34" text-anchor="end" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#10b981">Strong</text><text x="215" y="133" text-anchor="end" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#10b981">Bull</text>
+<line x1="110" y1="130" x2="{_rt_nx:.0f}" y2="{_rt_ny:.0f}" stroke="white" stroke-width="3" stroke-linecap="round"/><circle cx="110" cy="130" r="7" fill="{_rt_fc}" stroke="#0a1020" stroke-width="2"/><text x="110" y="114" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI,sans-serif" font-size="32" font-weight="900" fill="{_rt_fc}">{_rt_sc}</text></svg>
+<div class="gn">{_rt_em} {_rt_lbl}</div><div class="gm">{_dt_rt.date.today().strftime('%d %b %Y')} · Score {_rt_sc}/3</div>
+<div class="leg"><div class="li"><div class="ld" style="background:#ef4444"></div>Bear</div><div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral</div><div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull</div><div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull</div></div>
+</div><div class="sigs">
+<div class="sig" style="background:{_rt_s1bg};border-color:{_rt_s1c}"><div class="si">{"✅" if _rt_s1ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s1c}">S1 — Equity Curve Trend</div><div class="sc" style="color:{_rt_s1c}">NAV &gt; 200DMA</div><div class="sv" style="color:{_rt_s1c}">{_rt_ntxt}</div></div><div class="sbg" style="background:{_rt_s1c}22;color:{_rt_s1c};border:1px solid {_rt_s1c}55">{"PASS" if _rt_s1ok else "FAIL"}</div></div>
+<div class="sig" style="background:{_rt_s2bg};border-color:{_rt_s2c}"><div class="si">{"✅" if _rt_s2ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s2c}">S2 — Market Breadth</div><div class="sc" style="color:{_rt_s2c}">% Stocks above 200DMA &gt; 50%</div><div class="sv" style="color:{_rt_s2c}">{_rt_brd}% above DMA</div></div><div class="sbg" style="background:{_rt_s2c}22;color:{_rt_s2c};border:1px solid {_rt_s2c}55">{"PASS" if _rt_s2ok else "FAIL"}</div></div>
+<div class="sig" style="background:{_rt_s3bg};border-color:{_rt_s3c}"><div class="si">{"✅" if _rt_s3ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s3c}">S3 — Universe Momentum</div><div class="sc" style="color:{_rt_s3c}">Median 3M ROC &gt; 0%</div><div class="sv" style="color:{_rt_s3c}">{_rt_roc:+.1f}% median</div></div><div class="sbg" style="background:{_rt_s3c}22;color:{_rt_s3c};border:1px solid {_rt_s3c}55">{"PASS" if _rt_s3ok else "FAIL"}</div></div>
+</div></div>"""
+            _stc_rt.html(_rt_g, height=370)
+            st.markdown("---")
+            _rta1,_rta2,_rta3 = st.columns(3)
+            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#38bdf8","#0c2233"),("🥇 GOLDBEES",_rt_gd,"#f59e0b","#2d1f05"),("💵 Liquid",_rt_cs,"#94a3b8","#1e293b")]):
+                with _rtcol:
+                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div><div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div></div>""",unsafe_allow_html=True)
+            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_dt_rt.date.today().strftime('%d %b %Y')}")
+
+# ════════════════════════════════════════════════════════════════════
+# SCREENER TAB — all step content
+# ════════════════════════════════════════════════════════════════════
+with _tab_screener:
+
+    # ── Step progress bar ──────────────────────────────────────────
+    st.markdown(step_html(st.session_state.current_step), unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════
 # STEP 1 — UNIVERSE SETUP
@@ -2976,24 +3194,51 @@ elif st.session_state.current_step == 3:
     st.markdown('<div class="section-hdr">🌡️ Market Regime & Multi-Asset Allocation</div>',
                 unsafe_allow_html=True)
 
-    # ── Fetch dashboard data ──────────────────────────────────────
+    # ── Fetch dashboard data — persistent session cache ──────────
+    # Strategy: persist in session_state so data survives reruns.
+    # Refresh button forces a fresh fetch and updates session cache.
     _dash_data    = {}
-    _nav_series   = []
-    _vix_curr     = None
-    _weekly_nav_r = None
+    _nav_series   = st.session_state.get("_regime_nav_series", [])
+    _vix_curr     = st.session_state.get("_regime_vix", None)
+    _weekly_nav_r = st.session_state.get("_regime_weekly_ret", None)
+    _dash_loaded  = st.session_state.get("_regime_dash_loaded", False)
 
     _dash_col1, _dash_col2 = st.columns([3, 1])
     with _dash_col2:
         _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
                                help="Portfolio Dashboard se latest NAV data fetch karo")
-    if _fetch_nav:
-        st.cache_data.clear()
 
-    with st.spinner("📡 Portfolio Dashboard se NAV fetch ho raha hai..."):
-        _dash_data  = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
-    _nav_series   = _extract_nav_series_from_dash(_dash_data)
-    _vix_curr     = _extract_vix_from_dash(_dash_data)
-    _weekly_nav_r = _extract_weekly_nav_ret(_dash_data)
+    if _fetch_nav or not _dash_loaded:
+        # Clear cache on manual refresh
+        if _fetch_nav:
+            _fetch_dashboard_data_cached.clear()
+        _status_ph = st.empty()
+        _status_ph.info("📡 Portfolio Dashboard se NAV + VIX fetch ho raha hai...")
+        try:
+            _dash_data    = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
+            _nav_s_new    = _extract_nav_series_from_dash(_dash_data)
+            _vix_new      = _extract_vix_from_dash(_dash_data)
+            _wret_new     = _extract_weekly_nav_ret(_dash_data)
+            # Only update session if we got real data
+            if _nav_s_new:
+                _nav_series   = _nav_s_new
+                _vix_curr     = _vix_new
+                _weekly_nav_r = _wret_new
+                st.session_state["_regime_nav_series"]  = _nav_series
+                st.session_state["_regime_vix"]         = _vix_curr
+                st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
+                st.session_state["_regime_dash_loaded"] = True
+                _status_ph.success(f"✅ NAV loaded ({len(_nav_series)} data points)"
+                                   + (f" | VIX: {_vix_curr:.1f}" if _vix_curr else ""))
+            else:
+                _status_ph.warning("⚠️ Dashboard API ne data nahi diya. Phir try karo ya skip karo — S1 signal fallback (1) use hoga.")
+        except Exception as _e_fetch:
+            _status_ph.warning(f"⚠️ Fetch failed: {_e_fetch}. S1 signal fallback use hoga.")
+    else:
+        # Data already in session — show compact status
+        _lbl_n = f"{len(_nav_series)} pts" if _nav_series else "No data"
+        _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
+        st.caption(f"📊 Cached: NAV {_lbl_n} | {_lbl_v} — Refresh karne ke liye button dabao")
 
     # ── Regime score ──────────────────────────────────────────────
     _dfS_rg = st.session_state.get("dfStats")
@@ -3037,8 +3282,8 @@ elif st.session_state.current_step == 3:
 
     # ── Gauge + Signals ───────────────────────────────────────────
     _ang   = _math_regime.pi - (_math_regime.pi * _sc / 3)
-    _nx    = round(100 + 72 * _math_regime.cos(_ang), 1)
-    _ny    = round(105 - 72 * _math_regime.sin(_ang), 1)
+    _nx    = round(110 + 82 * _math_regime.cos(_ang), 1)
+    _ny    = round(130 - 82 * _math_regime.sin(_ang), 1)
     _s1ok  = _sigs.get("s1_equity_curve", 1)
     _s2ok  = _sigs.get("s2_breadth", 0)
     _s3ok  = _sigs.get("s3_momentum", 0)
@@ -3103,34 +3348,51 @@ elif st.session_state.current_step == 3:
   <!-- Gauge -->
   <div class="gauge-card">
     <div class="gauge-label">Market Regime</div>
-    <svg width="200" height="120" viewBox="0 0 200 120" style="overflow:visible">
-      <!-- Track -->
-      <path d="M20 105 A80 80 0 0 1 180 105" fill="none" stroke="#1e293b" stroke-width="22" stroke-linecap="round"/>
-      <!-- Segment: Bear (0) — red -->
-      <path d="M20 105 A80 80 0 0 1 53 35"  fill="none" stroke="#ef4444" stroke-width="20" stroke-linecap="butt"/>
-      <!-- Segment: Neutral (1) — amber -->
-      <path d="M53 35 A80 80 0 0 1 100 18"  fill="none" stroke="#f59e0b" stroke-width="20" stroke-linecap="butt"/>
-      <!-- Segment: Mild Bull (2) — sky -->
-      <path d="M100 18 A80 80 0 0 1 147 35" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="butt"/>
-      <!-- Segment: Strong Bull (3) — emerald -->
-      <path d="M147 35 A80 80 0 0 1 180 105" fill="none" stroke="#10b981" stroke-width="20" stroke-linecap="butt"/>
-      <!-- Segment labels — positioned clearly outside arc -->
-      <text x="8"   y="112" text-anchor="middle" font-size="10" font-weight="600" fill="#ef4444">Bear</text>
-      <text x="42"  y="30"  text-anchor="middle" font-size="10" font-weight="600" fill="#f59e0b">Neutral</text>
-      <text x="100" y="10"  text-anchor="middle" font-size="10" font-weight="600" fill="#38bdf8">Mild Bull</text>
-      <text x="158" y="30"  text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Strong</text>
-      <text x="192" y="112" text-anchor="middle" font-size="10" font-weight="600" fill="#10b981">Bull</text>
-      <!-- Score divider ticks -->
-      <line x1="52"  y1="24"  x2="56"  y2="34"  stroke="#0f172a" stroke-width="3"/>
-      <line x1="100" y1="18"  x2="100" y2="29"   stroke="#0f172a" stroke-width="3"/>
-      <line x1="148" y1="24"  x2="144" y2="34"  stroke="#0f172a" stroke-width="3"/>
-      <!-- Needle -->
-      <line x1="100" y1="105"
+    <svg width="220" height="150" viewBox="0 0 220 150">
+      <!-- Gauge center: cx=110, cy=130, radius=90 -->
+      <!-- Track background -->
+      <path d="M20 130 A90 90 0 0 1 200 130"
+            fill="none" stroke="#1e293b" stroke-width="22" stroke-linecap="round"/>
+      <!-- Bear segment: 180° to 135° (score 0, far left) -->
+      <path d="M20 130 A90 90 0 0 1 56.3 43.6"
+            fill="none" stroke="#ef4444" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Neutral segment: 135° to 90° (score 1) -->
+      <path d="M56.3 43.6 A90 90 0 0 1 110 40"
+            fill="none" stroke="#f59e0b" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Mild Bull segment: 90° to 45° (score 2) -->
+      <path d="M110 40 A90 90 0 0 1 163.7 43.6"
+            fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Strong Bull segment: 45° to 0° (score 3, far right) -->
+      <path d="M163.7 43.6 A90 90 0 0 1 200 130"
+            fill="none" stroke="#10b981" stroke-width="20" stroke-linecap="butt"/>
+      <!-- Divider ticks between segments -->
+      <line x1="53"  y1="32"  x2="59"  y2="49"  stroke="#0a1020" stroke-width="2.5"/>
+      <line x1="110" y1="28"  x2="110" y2="46"   stroke="#0a1020" stroke-width="2.5"/>
+      <line x1="167" y1="32"  x2="161" y2="49"  stroke="#0a1020" stroke-width="2.5"/>
+      <!-- Labels outside arc — all clearly readable -->
+      <!-- Bear: left edge -->
+      <text x="5"   y="133" text-anchor="start"  font-family="Segoe UI,sans-serif"
+            font-size="11" font-weight="700" fill="#ef4444">Bear</text>
+      <!-- Neutral: upper-left -->
+      <text x="28"  y="34"  text-anchor="start"  font-family="Segoe UI,sans-serif"
+            font-size="11" font-weight="700" fill="#f59e0b">Neutral</text>
+      <!-- Mild Bull: top center -->
+      <text x="110" y="16"  text-anchor="middle" font-family="Segoe UI,sans-serif"
+            font-size="11" font-weight="700" fill="#38bdf8">Mild Bull</text>
+      <!-- Strong Bull: upper-right -->
+      <text x="192" y="34"  text-anchor="end"    font-family="Segoe UI,sans-serif"
+            font-size="11" font-weight="700" fill="#10b981">Strong</text>
+      <text x="215" y="133" text-anchor="end"    font-family="Segoe UI,sans-serif"
+            font-size="11" font-weight="700" fill="#10b981">Bull</text>
+      <!-- Needle from center -->
+      <line x1="110" y1="130"
             x2="{_nx:.0f}" y2="{_ny:.0f}"
             stroke="white" stroke-width="3" stroke-linecap="round"/>
-      <circle cx="100" cy="105" r="6" fill="{_fc}" stroke="white" stroke-width="2"/>
-      <!-- Center score -->
-      <text x="100" y="92" text-anchor="middle" font-size="26" font-weight="900" fill="{_fc}">{_sc}/3</text>
+      <circle cx="110" cy="130" r="7" fill="{_fc}" stroke="#0a1020" stroke-width="2"/>
+      <!-- Score in center -->
+      <text x="110" y="114" text-anchor="middle" dominant-baseline="central"
+            font-family="Segoe UI,sans-serif"
+            font-size="32" font-weight="900" fill="{_fc}">{_sc}</text>
     </svg>
     <div class="gauge-name">{_em} {_lbl}</div>
     <div class="gauge-meta">{_dt_regime.date.today().strftime('%d %b %Y')} &nbsp;·&nbsp; Score {_sc} of 3</div>
@@ -3241,10 +3503,7 @@ elif st.session_state.current_step == 3:
 
     # ─── GOLDBEES ───────────────────────────────────────────────────
     with _act_col1:
-        st.markdown("""<div style="font-size:12px;font-weight:700;color:#f59e0b;
-                        letter-spacing:.3px;margin-bottom:8px;">
-            🥇 GOLDBEES Action
-        </div>""", unsafe_allow_html=True)
+        st.markdown('<div style="font-size:13px;font-weight:700;color:#f59e0b;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #2d1f05">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
         _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
                                     value=0, step=1000, key="goldbees_curr_val",
                                     label_visibility="visible")
@@ -3261,21 +3520,21 @@ elif st.session_state.current_step == 3:
             _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
             _gact_txt  = "Hold (within ±5%)" if _gdok else (f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
             st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
-                    border-radius:10px;padding:14px 16px;margin-top:6px;">
-              <div style="font-size:11px;color:{_gdc};opacity:.8;margin-bottom:6px">
-                Current ₹{_gb_curr:,.0f} &nbsp;→&nbsp; Target ₹{_gd_tgt:,.0f}
+                    border-radius:10px;padding:13px 15px;margin-top:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;
+                          margin-bottom:8px;font-size:11px;color:{_gdc};opacity:.75">
+                <span>Current: <b style="color:{_gdc};opacity:1">₹{_gb_curr:,.0f}</b></span>
+                <span style="font-size:14px;color:{_gdc};opacity:.5">→</span>
+                <span>Target: <b style="color:{_gdc};opacity:1">₹{_gd_tgt:,.0f}</b></span>
               </div>
-              <div style="font-size:16px;font-weight:800;color:{_gdc}">
+              <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
                 {_gact_icon} {_gact_txt}
               </div>
             </div>""", unsafe_allow_html=True)
 
     # ─── LIQUID FUND ─────────────────────────────────────────────────
     with _act_col2:
-        st.markdown("""<div style="font-size:12px;font-weight:700;color:#94a3b8;
-                        letter-spacing:.3px;margin-bottom:8px;">
-            💵 Liquid Fund Action
-        </div>""", unsafe_allow_html=True)
+        st.markdown('<div style="font-size:13px;font-weight:700;color:#94a3b8;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #1e293b">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
         _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
                                     value=0, step=1000, key="liquid_curr_val",
                                     label_visibility="visible")
@@ -3288,11 +3547,14 @@ elif st.session_state.current_step == 3:
             _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
             _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
             st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                    border-radius:10px;padding:14px 16px;margin-top:28px;">
-              <div style="font-size:11px;color:{_csc};opacity:.8;margin-bottom:6px">
-                Current ₹{_lf_curr:,.0f} &nbsp;→&nbsp; Target ₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)
+                    border-radius:10px;padding:13px 15px;margin-top:6px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;
+                          margin-bottom:8px;font-size:11px;color:{_csc};opacity:.75">
+                <span>Current: <b style="color:{_csc};opacity:1">₹{_lf_curr:,.0f}</b></span>
+                <span style="font-size:14px;color:{_csc};opacity:.5">→</span>
+                <span>Target: <b style="color:{_csc};opacity:1">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
               </div>
-              <div style="font-size:16px;font-weight:800;color:{_csc}">
+              <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
                 {_cs_icon} {_cs_txt}
               </div>
             </div>""", unsafe_allow_html=True)
@@ -3327,12 +3589,33 @@ elif st.session_state.current_step == 3:
                     border-radius:6px;padding:8px 14px;font-size:12px;color:#94a3b8;margin-bottom:8px;">
           {_plan["accelerate_msg"]}</div>""", unsafe_allow_html=True)
         _fri_lst = _dates_rg["upcoming_fridays"]
+        _prev_eq = _plan["weeks"][0]["eq_pct"]  # will compare against previous week
+        _prev_gd = _plan["weeks"][0]["gd_pct"]
+        _prev_cs = _plan["weeks"][0]["cs_pct"]
+        # Starting point = prev_score allocation
+        _alloc_start = {3:(90,10,0),2:(70,20,10),1:(40,30,30),0:(20,40,40)}
+        _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(70,20,10))
+
         _wk_rows = []
-        for wd in _plan["weeks"]:
+        for _wi, wd in enumerate(_plan["weeks"]):
             fri_lbl = _fri_lst[wd["week"]-1].strftime("%d %b") if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}"
-            _wk_rows.append({"Check":fri_lbl,"Eq%":f"{wd['eq_pct']}%","Gold%":f"{wd['gd_pct']}%",
-                             "Cash%":f"{wd['cs_pct']}%","Eq ₹":f"₹{wd['eq_val']:,.0f}",
-                             "Gold ₹":f"₹{wd['gd_val']:,.0f}","Cash ₹":f"₹{wd['cs_val']:,.0f}","Action":wd["action"]})
+            # Compare vs starting allocation (not previous week)
+            _de = wd["eq_pct"] - _st_e
+            _dg = wd["gd_pct"] - _st_g
+            _dc = wd["cs_pct"] - _st_c
+            # Arrow indicators
+            def _arrow(delta): return "" if abs(delta)<0.1 else ("▲ " if delta>0 else "▼ ")
+            def _sign(v): return f"+{v:.1f}" if v>0 else f"{v:.1f}" if v<0 else "0"
+            _wk_rows.append({
+                "Check" : fri_lbl,
+                "Eq %"  : f"{_arrow(_de)}{wd['eq_pct']}% ({_sign(_de)}pp)",
+                "Gold %": f"{_arrow(_dg)}{wd['gd_pct']}% ({_sign(_dg)}pp)",
+                "Cash %": f"{_arrow(_dc)}{wd['cs_pct']}% ({_sign(_dc)}pp)",
+                "Eq ₹"  : f"₹{wd['eq_val']:,.0f}",
+                "Gold ₹" : f"₹{wd['gd_val']:,.0f}",
+                "Cash ₹" : f"₹{wd['cs_val']:,.0f}",
+                "Action" : wd["action"],
+            })
         st.dataframe(pd.DataFrame(_wk_rows), use_container_width=True, hide_index=True)
         st.markdown("---")
 
