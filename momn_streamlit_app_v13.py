@@ -1358,12 +1358,126 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════════
 import math as _math_rt, datetime as _dt_rt
 
+# ── Fast NAV + VIX helpers ─────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)  # 5 min cache
+def _fetch_vix_yf():
+    """India VIX from yfinance — fast, no auth needed."""
+    try:
+        import yfinance as _yf
+        _tk = _yf.Ticker("^INDIAVIX")
+        _info = _tk.fast_info
+        _vix = getattr(_info, "lastPrice", None) or getattr(_info, "last_price", None)
+        if _vix and _vix > 0:
+            return round(float(_vix), 2)
+        # Fallback: download
+        _df = _yf.download("^INDIAVIX", period="2d", progress=False, auto_adjust=True)
+        if not _df.empty:
+            return round(float(_df["Close"].dropna().iloc[-1]), 2)
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(ttl=300, show_spinner=False)  # 5 min cache
+def _fetch_nav_from_sheet(sheet_csv_url):
+    """NAV series from Google Sheet public CSV — much faster than Apps Script."""
+    try:
+        import requests as _rq, io as _io
+        r = _rq.get(sheet_csv_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        if r.status_code == 200:
+            import pandas as _pd_nav
+            df = _pd_nav.read_csv(_io.StringIO(r.text))
+            # Try to find momnPF / NAV column
+            for col in df.columns:
+                if any(k in col.lower() for k in ["momnpf", "nav", "portfolio_nav", "pf_nav"]):
+                    series = _pd_nav.to_numeric(df[col], errors="coerce").dropna()
+                    series = series[series > 0].tolist()
+                    if series:
+                        return series
+            # If no matching column, try first numeric column > 50 (assuming NAV starts near 100)
+            for col in df.columns:
+                series = _pd_nav.to_numeric(df[col], errors="coerce").dropna()
+                valid = series[(series > 50) & (series < 10000)].tolist()
+                if len(valid) > 10:
+                    return valid
+    except Exception:
+        pass
+    return []
+
+# Google Sheet NAV CSV URL — update gid to your NAV sheet tab
+# Format: https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={GID}
+# Or use pub CSV URL from File > Share > Publish to web
+_NAV_SHEET_CSV = PORTFOLIO_CSV_URL  # reuse existing, or set specific NAV sheet URL
+
+def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
+    """MMI-style full circular gauge for regime score 0-3."""
+    import math as _gm
+    cx, cy, r = 130, 130, 95
+    def _polar(deg, rad=None):
+        rad = rad if rad is not None else r
+        return (cx + rad*_gm.cos(_gm.radians(deg)), cy + rad*_gm.sin(_gm.radians(deg)))
+    seg_colors = ["#ef4444","#f59e0b","#38bdf8","#10b981"]
+    seg_starts = [225.0,157.5,90.0,22.5]
+    seg_ends   = [157.5,90.0,22.5,-45.0]
+    seg_lbls   = ["Bear","Neutral","Mild Bull","Strong"]
+    seg_mids   = [191.25,123.75,56.25,-11.25]
+    def _ap(s,e,rv=None):
+        rv = rv if rv is not None else r
+        sx,sy=_polar(s,rv); ex,ey=_polar(e,rv)
+        return f"M {sx:.1f} {sy:.1f} A {rv} {rv} 0 0 0 {ex:.1f} {ey:.1f}"
+    segs=""
+    for st_a,en_a,col in zip(seg_starts,seg_ends,seg_colors):
+        segs+=f'<path d="{_ap(st_a,en_a)}" fill="none" stroke="{col}" stroke-width="16" stroke-linecap="butt"/>'
+    sc_i=min(sc,3)
+    segs+=f'<path d="{_ap(seg_starts[sc_i],seg_ends[sc_i])}" fill="none" stroke="{seg_colors[sc_i]}" stroke-width="22" stroke-linecap="butt"/>'
+    lbl_html=""
+    for la,lt,col in zip(seg_mids,seg_lbls,seg_colors):
+        lx,ly=_polar(la,118)
+        lbl_html+=f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI,sans-serif" font-size="10" font-weight="700" fill="{col}">{lt}</text>'
+    ticks=""
+    for ta in [157.5,90.0,22.5]:
+        tx1,ty1=_polar(ta,r-12); tx2,ty2=_polar(ta,r+2)
+        ticks+=f'<line x1="{tx1:.1f}" y1="{ty1:.1f}" x2="{tx2:.1f}" y2="{ty2:.1f}" stroke="white" stroke-width="2.5"/>'
+    nx,ny=_polar(seg_mids[sc_i],75)
+    src_d=f'<div style="font-size:10px;color:#64748b;">{src_lbl}</div>' if src_lbl else ""
+    dt_d=f'<div style="font-size:10px;color:#64748b;margin-top:2px;">{date_str} · Score {sc}/3</div>' if date_str else ""
+    return (
+        f'<style>*{{box-sizing:border-box;margin:0;padding:0;}}'
+        f'body{{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}}'
+        f'.gcard{{background:#111827;border:1px solid #1e293b;border-radius:14px;'
+        f'padding:18px 24px 14px;text-align:center;display:inline-block;min-width:280px;}}'
+        f'.gtitle{{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1.2px;'
+        f'font-weight:700;margin-bottom:6px;}}'
+        f'.gname{{font-size:20px;font-weight:800;color:{fc};margin-top:6px;}}'
+        f'.leg{{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}}'
+        f'.li{{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}}'
+        f'.ld{{width:8px;height:8px;border-radius:50%;flex-shrink:0;}}'
+        f'</style>'
+        f'<div class="gcard"><div class="gtitle">Market Regime</div>'
+        f'<svg width="260" height="200" viewBox="20 20 220 200">'
+        f'<path d="{_ap(225,-45,r+1)}" fill="none" stroke="#1e293b" stroke-width="20" stroke-linecap="round"/>'
+        f'{segs}{ticks}{lbl_html}'
+        f'<text x="{cx}" y="{cy-6}" text-anchor="middle" dominant-baseline="central" '
+        f'font-family="Segoe UI,sans-serif" font-size="38" font-weight="900" fill="{fc}">{sc}</text>'
+        f'<line x1="{cx}" y1="{cy}" x2="{nx:.1f}" y2="{ny:.1f}" '
+        f'stroke="{fc}" stroke-width="4" stroke-linecap="round"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="7" fill="{fc}" stroke="#111827" stroke-width="2"/>'
+        f'</svg>'
+        f'<div class="gname">{em} {lbl}</div>{dt_d}{src_d}'
+        f'<div class="leg">'
+        f'<div class="li"><div class="ld" style="background:#ef4444"></div>Bear (0)</div>'
+        f'<div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral (1)</div>'
+        f'<div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull (2)</div>'
+        f'<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull (3)</div>'
+        f'</div></div>'
+    )
+
 _tab_screener, _tab_regime = st.tabs(["📊 Screener & Rebalancer", "🌡️ Market Regime"])
 
 # ════════════════════════════════════════════════════
 # REGIME TAB — auto-loads best cache, shows gauge
 # ════════════════════════════════════════════════════
 with _tab_regime:
+    st.session_state["_curr_tab"] = "regime"
     try:
         from calculations import get_regime_score, get_next_rebalance_dates
         import streamlit.components.v1 as _stc_rt
@@ -1435,15 +1549,16 @@ with _tab_regime:
                 st.warning("⚠️ Koi cache available nahi. Screener tab mein pehle run karo.")
 
         if st.session_state.get("_rt_navs") is None:
-            with st.spinner("📡 NAV + VIX fetch..."):
-                _rtd = _fetch_dash_rt(DASHBOARD_API_URL)
-                _rtn = [r["momnPF"] for r in _rtd.get("benchmarking",{}).get("rows",[]) if r.get("momnPF",0)>0]
-                _rtv = next((e.get("cmp") for e in _rtd.get("indexData",{}).get("table",[])
-                              if "VIX" in str(e.get("name","")).upper()),None)
-                _rtw = round((_rtn[-1]/_rtn[-6]-1)*100,2) if len(_rtn)>=6 else None
-                st.session_state["_rt_navs"] = _rtn if _rtn else []
-                st.session_state["_rt_vx"]   = _rtv
-                st.session_state["_rt_wret"] = _rtw
+            # VIX from yfinance (fast, no auth)
+            _rtv = _fetch_vix_yf()
+            # NAV from Google Sheet CSV (fast direct fetch)
+            _rtn = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
+            _rtw = round((_rtn[-1]/_rtn[-6]-1)*100,2) if len(_rtn)>=6 else None
+            st.session_state["_rt_navs"] = _rtn
+            st.session_state["_rt_vx"]   = _rtv
+            st.session_state["_rt_wret"] = _rtw
+            if _rtv:
+                st.caption(f"⚡ VIX: {_rtv} | NAV: {len(_rtn)} pts")
 
         _rt_dfS  = st.session_state.get("_rt_dfS")
         _rt_navs = st.session_state.get("_rt_navs",[])
@@ -1477,41 +1592,74 @@ with _tab_regime:
                 f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>'
                 '</div>',
                 unsafe_allow_html=True)
-            # Gauge
-            _rt_ang = _math_rt.pi - (_math_rt.pi * _rt_sc / 3)
-            _rt_nx  = round(110 + 82*_math_rt.cos(_rt_ang),1)
-            _rt_ny  = round(130 - 82*_math_rt.sin(_rt_ang),1)
-            _rt_g = f"""<style>*{{box-sizing:border-box;margin:0;padding:0;}}body{{background:transparent;font-family:'Segoe UI',system-ui,sans-serif;}}.wrap{{display:flex;gap:16px;align-items:flex-start;}}.gc{{background:#111827;border:1px solid #1e293b;border-radius:12px;padding:16px 20px 12px;min-width:230px;text-align:center;flex-shrink:0;}}.gl{{font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600;}}.gn{{font-size:18px;font-weight:700;color:{_rt_fc};margin-top:4px;}}.gm{{font-size:10px;color:#475569;margin-top:4px;}}.leg{{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:10px;}}.li{{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}}.ld{{width:8px;height:8px;border-radius:50%;flex-shrink:0;}}.sigs{{display:flex;flex-direction:column;gap:10px;flex:1;}}.sig{{border-radius:10px;padding:12px 16px;border:1px solid;display:flex;align-items:center;gap:14px;}}.si{{font-size:26px;flex-shrink:0;line-height:1;}}.sb{{flex:1;}}.st{{font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;margin-bottom:3px;}}.sc{{font-size:12px;opacity:.75;margin-bottom:2px;}}.sv{{font-size:14px;font-weight:700;}}.sbg{{flex-shrink:0;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;}}</style>
-<div class="wrap"><div class="gc"><div class="gl">Market Regime</div>
-<svg width="220" height="150" viewBox="0 0 220 150"><path d="M20 130 A90 90 0 0 1 200 130" fill="none" stroke="#1e293b" stroke-width="22" stroke-linecap="round"/><path d="M20 130 A90 90 0 0 1 56.3 43.6" fill="none" stroke="#ef4444" stroke-width="20" stroke-linecap="butt"/><path d="M56.3 43.6 A90 90 0 0 1 110 40" fill="none" stroke="#f59e0b" stroke-width="20" stroke-linecap="butt"/><path d="M110 40 A90 90 0 0 1 163.7 43.6" fill="none" stroke="#38bdf8" stroke-width="20" stroke-linecap="butt"/><path d="M163.7 43.6 A90 90 0 0 1 200 130" fill="none" stroke="#10b981" stroke-width="20" stroke-linecap="butt"/><line x1="53" y1="32" x2="59" y2="49" stroke="#0a1020" stroke-width="2.5"/><line x1="110" y1="28" x2="110" y2="46" stroke="#0a1020" stroke-width="2.5"/><line x1="167" y1="32" x2="161" y2="49" stroke="#0a1020" stroke-width="2.5"/><text x="5" y="133" text-anchor="start" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#ef4444">Bear</text><text x="28" y="34" text-anchor="start" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#f59e0b">Neutral</text><text x="110" y="16" text-anchor="middle" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#38bdf8">Mild Bull</text><text x="192" y="34" text-anchor="end" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#10b981">Strong</text><text x="215" y="133" text-anchor="end" font-family="Segoe UI,sans-serif" font-size="11" font-weight="700" fill="#10b981">Bull</text>
-<line x1="110" y1="130" x2="{_rt_nx:.0f}" y2="{_rt_ny:.0f}" stroke="white" stroke-width="3" stroke-linecap="round"/><circle cx="110" cy="130" r="7" fill="{_rt_fc}" stroke="#0a1020" stroke-width="2"/><text x="110" y="114" text-anchor="middle" dominant-baseline="central" font-family="Segoe UI,sans-serif" font-size="32" font-weight="900" fill="{_rt_fc}">{_rt_sc}</text></svg>
-<div class="gn">{_rt_em} {_rt_lbl}</div><div class="gm">{_dt_rt.date.today().strftime('%d %b %Y')} · Score {_rt_sc}/3</div>
-<div class="leg"><div class="li"><div class="ld" style="background:#ef4444"></div>Bear</div><div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral</div><div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull</div><div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull</div></div>
-</div><div class="sigs">
-<div class="sig" style="background:{_rt_s1bg};border-color:{_rt_s1c}"><div class="si">{"✅" if _rt_s1ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s1c}">S1 — Equity Curve Trend</div><div class="sc" style="color:{_rt_s1c}">NAV &gt; 200DMA</div><div class="sv" style="color:{_rt_s1c}">{_rt_ntxt}</div></div><div class="sbg" style="background:{_rt_s1c}22;color:{_rt_s1c};border:1px solid {_rt_s1c}55">{"PASS" if _rt_s1ok else "FAIL"}</div></div>
-<div class="sig" style="background:{_rt_s2bg};border-color:{_rt_s2c}"><div class="si">{"✅" if _rt_s2ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s2c}">S2 — Market Breadth</div><div class="sc" style="color:{_rt_s2c}">% Stocks above 200DMA &gt; 50%</div><div class="sv" style="color:{_rt_s2c}">{_rt_brd}% above DMA</div></div><div class="sbg" style="background:{_rt_s2c}22;color:{_rt_s2c};border:1px solid {_rt_s2c}55">{"PASS" if _rt_s2ok else "FAIL"}</div></div>
-<div class="sig" style="background:{_rt_s3bg};border-color:{_rt_s3c}"><div class="si">{"✅" if _rt_s3ok else "❌"}</div><div class="sb"><div class="st" style="color:{_rt_s3c}">S3 — Universe Momentum</div><div class="sc" style="color:{_rt_s3c}">Median 3M ROC &gt; 0%</div><div class="sv" style="color:{_rt_s3c}">{_rt_roc:+.1f}% median</div></div><div class="sbg" style="background:{_rt_s3c}22;color:{_rt_s3c};border:1px solid {_rt_s3c}55">{"PASS" if _rt_s3ok else "FAIL"}</div></div>
-</div></div>"""
-            _stc_rt.html(_rt_g, height=370)
+            # ── MMI-style gauge + signal cards ────────────────
+            _rt_date_s = _dt_rt.date.today().strftime('%d %b %Y')
+            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s)
+            _rt_sig_html = (
+                f'<style>body{{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}}'
+                f'.sigs{{display:flex;flex-direction:column;gap:10px;}}'
+                f'.sig{{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}}'
+                f'.si{{font-size:24px;flex-shrink:0;}}'
+                f'.sb{{flex:1;}}'
+                f'.st{{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}}'
+                f'.sc{{font-size:12px;margin-bottom:4px;}}'
+                f'.sv{{font-size:15px;font-weight:800;}}'
+                f'.sbg{{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}}'
+                f'</style>'
+                f'<div class="sigs">'
+                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s1ok else "#fef2f2"};border-color:{"#86efac" if _rt_s1ok else "#fca5a5"}">'
+                f'<div class="si">{"✅" if _rt_s1ok else "❌"}</div>'
+                f'<div class="sb"><div class="st" style="color:{_rt_s1c}">S1 — Equity Curve Trend</div>'
+                f'<div class="sc" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
+                f'<div class="sv" style="color:{_rt_s1c}">{_rt_ntxt}</div></div>'
+                f'<div class="sbg" style="background:{_rt_s1c};color:white">{"PASS" if _rt_s1ok else "FAIL"}</div>'
+                f'</div>'
+                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s2ok else "#fef2f2"};border-color:{"#86efac" if _rt_s2ok else "#fca5a5"}">'
+                f'<div class="si">{"✅" if _rt_s2ok else "❌"}</div>'
+                f'<div class="sb"><div class="st" style="color:{_rt_s2c}">S2 — Market Breadth</div>'
+                f'<div class="sc" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
+                f'<div class="sv" style="color:{_rt_s2c}">{_rt_brd}% above DMA</div></div>'
+                f'<div class="sbg" style="background:{_rt_s2c};color:white">{"PASS" if _rt_s2ok else "FAIL"}</div>'
+                f'</div>'
+                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s3ok else "#fef2f2"};border-color:{"#86efac" if _rt_s3ok else "#fca5a5"}">'
+                f'<div class="si">{"✅" if _rt_s3ok else "❌"}</div>'
+                f'<div class="sb"><div class="st" style="color:{_rt_s3c}">S3 — Universe Momentum</div>'
+                f'<div class="sc" style="color:#374151">Median 3M ROC &gt; 0%</div>'
+                f'<div class="sv" style="color:{_rt_s3c}">{_rt_roc:+.1f}% median 3M return</div></div>'
+                f'<div class="sbg" style="background:{_rt_s3c};color:white">{"PASS" if _rt_s3ok else "FAIL"}</div>'
+                f'</div>'
+                f'</div>'
+            )
+            _g_col, _s_col = st.columns([1, 1.6])
+            with _g_col:
+                _stc_rt.html(_rt_gauge_html, height=380)
+            with _s_col:
+                _stc_rt.html(_rt_sig_html, height=380)
             st.markdown("---")
             _rta1,_rta2,_rta3 = st.columns(3)
-            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#2563eb","#dbeafe"),("🥇 GOLDBEES",_rt_gd,"#b45309","#fef3c7"),("💵 Liquid",_rt_cs,"#475569","#f1f5f9")]):
+            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#1d4ed8","#dbeafe"),("🥇 GOLDBEES",_rt_gd,"#b45309","#fef3c7"),("💵 Liquid",_rt_cs,"#374151","#f1f5f9")]):
                 with _rtcol:
-                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;padding:14px;text-align:center;"><div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div><div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div></div>""",unsafe_allow_html=True)
-            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_dt_rt.date.today().strftime('%d %b %Y')}")
+                    st.markdown(
+                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;'
+                        f'padding:14px;text-align:center;">'
+                        f'<div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div>'
+                        f'<div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>'
+                        f'</div>', unsafe_allow_html=True)
+            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_rt_date_s}")
 
 # ════════════════════════════════════════════════════════════════════
 # SCREENER TAB — all step content
 # ════════════════════════════════════════════════════════════════════
 with _tab_screener:
-
+    st.session_state["_curr_tab"] = "screener"
     # ── Step progress bar ──────────────────────────────────────────
     st.markdown(step_html(st.session_state.current_step), unsafe_allow_html=True)
+    _cur_step = st.session_state.current_step
 
 # ═══════════════════════════════════════════════════════════════
-# STEP 1 — UNIVERSE SETUP
+# STEP 1 — UNIVERSE SETUP  (runs only when screener tab active)
 # ═══════════════════════════════════════════════════════════════
-if st.session_state.current_step == 1:
+if st.session_state.current_step == 1 and st.session_state.get("_curr_tab","screener") == "screener":
     st.markdown('<div class="section-hdr">🌐 Step 1 — Universe Setup</div>', unsafe_allow_html=True)
 
     c1, c2 = st.columns([1, 2])
@@ -1795,7 +1943,7 @@ if st.session_state.current_step == 1:
 # ═══════════════════════════════════════════════════════════════
 # STEP 2 — RUN SCREENER
 # ═══════════════════════════════════════════════════════════════
-elif st.session_state.current_step == 2:
+elif st.session_state.current_step == 2 and st.session_state.get("_curr_tab","screener") == "screener":
     st.markdown('<div class="section-hdr">📊 Step 2 — Run Momentum Screener</div>', unsafe_allow_html=True)
 
     if not _CALCS_AVAILABLE:
@@ -2811,7 +2959,7 @@ Source choose karo aur Close top-up karo — ya skip karke cached data se hi cal
                           }}
                           .cpybtn:hover {{ border-color:#64748b; color:#94a3b8; }}
                         </style>
-                        <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;
+                        <div style="background:#1e293b;border-radius:8px;padding:10px 14px;
                                     border:1px solid {_badge_color};border-left:3px solid {_badge_color};">
                           <span style="color:#f1f5f9;font-weight:700;font-size:15px;">
                             #{_rank} &nbsp; {_tick}
@@ -2855,19 +3003,19 @@ Source choose karo aur Close top-up karo — ya skip karke cached data se hi cal
                           {_mem_hint_html}
                           <div style="display:flex;gap:24px;margin-top:8px;flex-wrap:wrap;">
                             <span style="color:#94a3b8;font-size:12px;">
-                              Close: <b style="color:#e2e8f0;">{_drow[_pri_cl_col]}</b> ({_pri_lbl[:3]})
-                              vs <b style="color:#e2e8f0;">{_drow[_sec_cl_col]}</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:#fbbf24;">&Delta; {_close_d:.1f}%</span>
+                              Close: <b style="color:#f1f5f9;">{_drow[_pri_cl_col]}</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#f1f5f9;">{_drow[_sec_cl_col]}</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:#fbbf24;font-weight:700;">&Delta; {_close_d:.1f}%</span>
                             </span>
                             <span style="color:#94a3b8;font-size:12px;">
-                              ATH: <b style="color:#e2e8f0;">{_drow[_pri_ath_col]:,.0f}</b> ({_pri_lbl[:3]})
-                              vs <b style="color:#e2e8f0;">{_drow[_sec_ath_col]:,.0f}</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:{_badge_color};">&Delta; {_ath_d:.1f}%</span>
+                              ATH: <b style="color:#f1f5f9;">{_drow[_pri_ath_col]:,.0f}</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#f1f5f9;">{_drow[_sec_ath_col]:,.0f}</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:{_badge_color};font-weight:700;">&Delta; {_ath_d:.1f}%</span>
                             </span>
                             <span style="color:#94a3b8;font-size:12px;">
-                              Away ATH: <b style="color:#e2e8f0;">{_drow[_pri_aw_col]:.1f}%</b> ({_pri_lbl[:3]})
-                              vs <b style="color:#e2e8f0;">{_drow[_sec_aw_col]:.1f}%</b> ({_sec_lbl[:3]})
-                              &nbsp;<span style="color:#a78bfa;">&Delta; {_away_d:.1f}pp</span>
+                              Away ATH: <b style="color:#f1f5f9;">{_drow[_pri_aw_col]:.1f}%</b> ({_pri_lbl[:3]})
+                              vs <b style="color:#f1f5f9;">{_drow[_sec_aw_col]:.1f}%</b> ({_sec_lbl[:3]})
+                              &nbsp;<span style="color:#a78bfa;font-weight:700;">&Delta; {_away_d:.1f}pp</span>
                             </span>
                           </div>
                         </div>"""
@@ -3021,7 +3169,7 @@ Source choose karo aur Close top-up karo — ya skip karke cached data se hi cal
 # ═══════════════════════════════════════════════════════════════
 # STEP 3 — PLAN REBALANCE
 # ═══════════════════════════════════════════════════════════════
-elif st.session_state.current_step == 3:
+elif st.session_state.current_step == 3 and st.session_state.get("_curr_tab","screener") == "screener":
     st.markdown('<div class="section-hdr">⚖️ Step 3 — Plan Rebalance</div>', unsafe_allow_html=True)
 
     if not st.session_state.screener_done:
@@ -3450,10 +3598,10 @@ elif st.session_state.current_step == 3:
             st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
                     border-radius:10px;padding:13px 15px;margin-top:6px;">
               <div style="display:flex;justify-content:space-between;align-items:center;
-                          margin-bottom:8px;font-size:11px;color:{_gdc};opacity:.75">
-                <span>Current: <b style="color:{_gdc};opacity:1">₹{_gb_curr:,.0f}</b></span>
-                <span style="font-size:14px;color:{_gdc};opacity:.5">→</span>
-                <span>Target: <b style="color:{_gdc};opacity:1">₹{_gd_tgt:,.0f}</b></span>
+                          margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
+                <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
+                <span style="font-size:16px;opacity:.4">→</span>
+                <span>Target: <b style="font-size:14px;">₹{_gd_tgt:,.0f}</b></span>
               </div>
               <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
                 {_gact_icon} {_gact_txt}
@@ -3475,12 +3623,12 @@ elif st.session_state.current_step == 3:
             _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
             _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
             st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                    border-radius:10px;padding:13px 15px;margin-top:6px;">
+                    border-radius:10px;padding:13px 15px;margin-top:78px;">
               <div style="display:flex;justify-content:space-between;align-items:center;
-                          margin-bottom:8px;font-size:11px;color:{_csc};opacity:.75">
-                <span>Current: <b style="color:{_csc};opacity:1">₹{_lf_curr:,.0f}</b></span>
-                <span style="font-size:14px;color:{_csc};opacity:.5">→</span>
-                <span>Target: <b style="color:{_csc};opacity:1">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
+                          margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
+                <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
+                <span style="font-size:16px;opacity:.4">→</span>
+                <span>Target: <b style="font-size:14px;">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
               </div>
               <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
                 {_cs_icon} {_cs_txt}
@@ -3909,7 +4057,7 @@ elif st.session_state.current_step == 3:
 # ═══════════════════════════════════════════════════════════════
 # STEP 4 — APPLY & EXPORT
 # ═══════════════════════════════════════════════════════════════
-elif st.session_state.current_step == 4:
+elif st.session_state.current_step == 4 and st.session_state.get("_curr_tab","screener") == "screener":
     st.markdown('<div class="section-hdr">💾 Step 4 — Apply & Export</div>', unsafe_allow_html=True)
 
     sell        = st.session_state.sell_list or []
