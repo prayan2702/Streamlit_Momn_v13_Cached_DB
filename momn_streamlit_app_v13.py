@@ -1596,7 +1596,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         '</style>'
         '<div class="gcard">'
         '<div class="gtitle">MARKET REGIME</div>'
-        '<svg width="310" height="175" viewBox="0 5 320 175">'
+        '<svg width="420" height="280" viewBox="0 5 320 175">'
         f'{bg_svg}'
         f'{segs_svg}'
         f'{ticks_svg}'
