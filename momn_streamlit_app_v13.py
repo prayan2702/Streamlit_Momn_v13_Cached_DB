@@ -503,7 +503,7 @@ st.markdown("""
 .section-hdr {
     font-size: 14px;
     font-weight: 700;
-    color: var(--text-color, var(--text-main));
+    color: var(--text-color);
     border-left: 4px solid var(--teal);
     padding: 6px 0 6px 12px;
     margin: 1.4rem 0 .9rem;
