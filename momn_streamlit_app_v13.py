@@ -487,7 +487,7 @@ st.markdown("""
 .metric-value {
     font-size: 22px;
     font-weight: 800;
-    color: var(--text-main);
+    color: var(--text-color, var(--text-main));
     margin-top: 4px;
     letter-spacing: -.3px;
 }
@@ -503,7 +503,7 @@ st.markdown("""
 .section-hdr {
     font-size: 14px;
     font-weight: 700;
-    color: var(--text-main);
+    color: var(--text-color, var(--text-main));
     border-left: 4px solid var(--teal);
     padding: 6px 0 6px 12px;
     margin: 1.4rem 0 .9rem;
@@ -692,6 +692,91 @@ st.markdown("""
    ════════════════════════════ */
 section[data-testid="stSidebar"] .block-container {
     padding-top: 1rem;
+}
+
+/* ════════════════════════════
+   DARK MODE OVERRIDES
+   Streamlit dark mode sets --text-color to a light value automatically.
+   We use that variable + explicit dark selector for full coverage.
+   ════════════════════════════ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --text-main: #f1f5f9;
+        --text-sub:  #cbd5e1;
+        --muted:     #94a3b8;
+        --border:    #1e293b;
+        --bg:        #0f172a;
+        --bg-white:  #1e293b;
+    }
+}
+
+/* Streamlit injects data-theme="dark" on <html> when dark mode is active */
+[data-theme="dark"] :root,
+[data-theme="dark"] {
+    --text-main: #f1f5f9;
+    --text-sub:  #cbd5e1;
+    --muted:     #94a3b8;
+    --border:    #1e293b;
+    --bg:        #0f172a;
+    --bg-white:  #1e293b;
+}
+
+/* Explicit dark-mode rules targeting Streamlit's stApp class */
+[data-theme="dark"] .section-hdr {
+    color: #f1f5f9 !important;
+    background: linear-gradient(90deg, rgba(14,165,233,.10) 0%, transparent 60%);
+}
+
+@media (prefers-color-scheme: dark) {
+    .section-hdr {
+        color: #f1f5f9 !important;
+        background: linear-gradient(90deg, rgba(14,165,233,.10) 0%, transparent 60%);
+    }
+}
+
+[data-theme="dark"] .step-item.pending,
+[data-theme="dark"] .metric-label,
+[data-theme="dark"] .reb-stat .label {
+    color: #94a3b8;
+}
+
+[data-theme="dark"] .metric-value:not([class*=" "]):not(.green):not(.red):not(.blue):not(.violet):not(.amber),
+[data-theme="dark"] .metric-value {
+    color: var(--text-color, #f1f5f9);
+}
+
+[data-theme="dark"] .step-bar,
+[data-theme="dark"] .metric-card,
+[data-theme="dark"] .reb-strip {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .workflow-box {
+    background: linear-gradient(135deg, #0c1e35 0%, #0a1f14 100%);
+    border-color: #1e40af;
+    color: #e2e8f0;
+}
+
+[data-theme="dark"] .nse-link-box {
+    background: linear-gradient(135deg, #0c1e35 0%, #0a1f14 100%);
+    border-color: #1e40af;
+}
+
+[data-theme="dark"] .chip-hold {
+    background: #1e293b;
+    color: #94a3b8;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .login-card {
+    background: #1e293b;
+    border-color: #334155;
+}
+
+[data-theme="dark"] .login-title,
+[data-theme="dark"] .login-sub {
+    color: #e2e8f0;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -1413,22 +1498,21 @@ def _fetch_nav_from_sheet(sheet_csv_url):
 _NAV_SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSAf1ZhBXcMmi_QSxHnU6LI9PLKGbgEu16-FNKBjELhTk2x6qwLuuG7jAFx-mIn_ezNn45uL1G00MD1/pub?gid=612197947&single=true&output=csv"
 
 def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
-    """MMI-style semicircle speedometer gauge — Bear(left) to Strong Bull(right)."""
+    """MMI-style semicircle speedometer gauge — properly centered."""
     import math as _gm
-    # Geometry: pivot at bottom-center, arc goes over the top (180° semicircle)
-    cx, cy   = 150, 158   # needle pivot / center of arc circle
-    r_outer  = 112        # arc outer radius
-    r_inner  = 82         # arc inner radius  (track stroke-width = outer - inner = 30)
-    r_needle = 95         # needle length
-    r_lbl    = 145        # label placement radius (outside arc)
+    # Geometry — center at (155,155), semicircle arc spans 180° (left→top→right)
+    cx, cy   = 155, 155   # needle pivot / arc center
+    r_arc    = 108        # radius of arc midline
+    r_inner  = 88         # inner radius of track
+    r_outer  = 128        # outer radius of track (track width ≈ 40px)
+    r_needle = 98         # needle tip length
 
     def _pt(angle_deg, radius):
-        """Math angle → SVG (x, y). 0°=right, 90°=up, 180°=left."""
+        """Math angle (0=right,90=up,180=left) → SVG (x,y)."""
         rad = _gm.radians(angle_deg)
         return (cx + radius * _gm.cos(rad), cy - radius * _gm.sin(rad))
 
-    # Segment boundary angles (math convention)
-    # 4 equal 45° segments: Bear 180→135, Neutral 135→90, MildBull 90→45, StrongBull 45→0
+    # Segment boundary angles: Bear 180→135, Neutral 135→90, MildBull 90→45, StrongBull 45→0
     seg_defs = [
         (180, 135, "#ef4444"),
         (135,  90, "#f59e0b"),
@@ -1436,74 +1520,88 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         ( 45,   0, "#10b981"),
     ]
     seg_mid_angles   = [157.5, 112.5, 67.5, 22.5]
-    seg_label_texts  = ["Bear", "Neutral", "Mild Bull", "Strong"]
-    seg_label_angles = [172, 130, 52, 10]   # where label dots are placed
+    active_idx       = min(sc, 3)
 
-    active_idx = min(sc, 3)
+    # ── Background track (grey ring)
+    bx0, by0 = _pt(180, r_arc)
+    bx1, by1 = _pt(  0, r_arc)
+    bg_svg = (f'<path d="M {bx0:.1f} {by0:.1f} A {r_arc} {r_arc} 0 0 1 {bx1:.1f} {by1:.1f}" '
+              f'fill="none" stroke="#1e2736" stroke-width="40" stroke-linecap="butt"/>')
 
-    # Background track
-    bx0, by0 = _pt(180, r_outer)
-    bx1, by1 = _pt(  0, r_outer)
-    bg = (f'<path d="M {bx0:.1f} {by0:.1f} A {r_outer} {r_outer} 0 0 1 {bx1:.1f} {by1:.1f}" '
-          f'fill="none" stroke="#1e2736" stroke-width="32" stroke-linecap="butt"/>')
-
-    # Color segments
+    # ── Color segments
     segs_svg = ""
     for i, (sa, ea, col) in enumerate(seg_defs):
-        sx, sy = _pt(sa, r_outer)
-        ex, ey = _pt(ea, r_outer)
+        sx, sy = _pt(sa, r_arc)
+        ex, ey = _pt(ea, r_arc)
         is_active = (i == active_idx)
-        w  = "32" if is_active else "22"
-        op = "1"  if is_active else "0.55"
-        segs_svg += (f'<path d="M {sx:.1f} {sy:.1f} A {r_outer} {r_outer} 0 0 1 {ex:.1f} {ey:.1f}" '
-                     f'fill="none" stroke="{col}" stroke-width="{w}" stroke-linecap="butt" opacity="{op}"/>')
+        sw  = "40" if is_active else "28"
+        op  = "1"  if is_active else "0.50"
+        segs_svg += (f'<path d="M {sx:.1f} {sy:.1f} A {r_arc} {r_arc} 0 0 1 {ex:.1f} {ey:.1f}" '
+                     f'fill="none" stroke="{col}" stroke-width="{sw}" stroke-linecap="butt" opacity="{op}"/>')
 
-    # Divider ticks
+    # ── Divider ticks between segments
     ticks_svg = ""
     for ta in [135, 90, 45]:
-        t0x, t0y = _pt(ta, r_outer - 18)
+        t0x, t0y = _pt(ta, r_inner - 4)
         t1x, t1y = _pt(ta, r_outer + 4)
-        ticks_svg += f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>'
+        ticks_svg += (f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" '
+                      f'x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>')
 
-    # Labels (segment name text outside arc)
+    # ── Labels just outside the arc (r_outer + 16)
+    r_lbl = r_outer + 18
+    lbl_defs = [
+        (175, "Bear",     "#ef4444", "end"),
+        (128, "Neutral",  "#f59e0b", "end"),
+        ( 52, "Mild Bull","#38bdf8", "start"),
+        (  5, "Strong",   "#10b981", "start"),
+    ]
     lbl_svg = ""
-    lbl_colors = ["#ef4444", "#f59e0b", "#38bdf8", "#10b981"]
-    for i, (la, lt, lc) in enumerate(zip(seg_label_angles, seg_label_texts, lbl_colors)):
+    for i, (la, lt, lc, anc) in enumerate(lbl_defs):
         lx, ly = _pt(la, r_lbl)
-        anc = "end" if la > 110 else ("middle" if 60 < la <= 110 else "start")
-        font_w = "800" if i == active_idx else "600"
+        fw = "800" if i == active_idx else "600"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
                     f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
-                    f'font-size="12" font-weight="{font_w}" fill="{lc}">{lt}</text>')
+                    f'font-size="11" font-weight="{fw}" fill="{lc}">{lt}</text>')
 
-    # Needle
+    # ── Score number in center
+    score_svg = (f'<text x="{cx}" y="{cy+28}" text-anchor="middle" dominant-baseline="central" '
+                 f'font-family="Segoe UI,sans-serif" font-size="30" font-weight="900" '
+                 f'fill="{fc}" opacity="0.20">{sc}</text>')
+
+    # ── Needle
     ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
-    # Short counter needle for aesthetic (opposite dir, 20px)
-    cnx, cny = _pt(seg_mid_angles[active_idx] + 180, 20)
+    cnx, cny = _pt(seg_mid_angles[active_idx] + 180, 16)
 
-    src_d = f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>' if src_lbl else ""
+    src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'
+             f'{src_lbl}</div>') if src_lbl else ""
     dt_d  = (f'<div style="font-size:10px;color:#64748b;margin-top:3px;">'
              f'{date_str} &nbsp;·&nbsp; Score {sc}/3</div>') if date_str else ""
 
+    # viewBox: left margin so Bear label fits, right margin so Strong label fits
+    # Bear at 175°: x = 155 + 146*cos(175°) ≈ 155 - 145.4 = 9.6  → left edge ~0
+    # Strong at 5°: x = 155 + 146*cos(5°)   ≈ 155 + 145.4 = 300.4 → right edge ~310
+    # Arc top at 90°: y = 155 - 108 = 47; label top at 155-146 = 9 → viewBox y start = 5
     return (
-        '<style>*{box-sizing:border-box;margin:0;padding:0;}'
+        '<style>'
+        '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
         '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
-        'padding:26px 32px 26px;text-align:center;display:inline-block;}'
-        '.gtitle{font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:8px;}'
-        f'.gname{{font-size:24px;font-weight:800;color:{fc};margin-top:4px;}}'
-        '.leg{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
-        '.li{display:flex;align-items:center;gap:4px;font-size:9.5px;color:#94a3b8;}'
+        'padding:18px 20px 14px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
+        '.gtitle{font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:6px;}'
+        f'.gname{{font-size:22px;font-weight:800;color:{fc};margin-top:4px;}}'
+        '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}'
+        '.li{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}'
         '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0;}'
-        'svg{display:block;margin-top:8px;overflow:visible;}'
+        'svg{display:block;margin:0 auto;overflow:visible;}'
         '</style>'
         '<div class="gcard">'
         '<div class="gtitle">MARKET REGIME</div>'
-        '<svg width="420" height="260" viewBox="-20 0 340 260">'
-        f'{bg}'
+        '<svg width="310" height="175" viewBox="0 5 310 175">'
+        f'{bg_svg}'
         f'{segs_svg}'
         f'{ticks_svg}'
         f'{lbl_svg}'
+        f'{score_svg}'
         f'<line x1="{cnx:.1f}" y1="{cny:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
         f'stroke="white" stroke-width="3.5" stroke-linecap="round"/>'
         f'<circle cx="{cx}" cy="{cy}" r="10" fill="{fc}" stroke="#111827" stroke-width="3"/>'
@@ -1512,7 +1610,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         f'<div class="gname">{em} {lbl}</div>'
         f'{dt_d}{src_d}'
         '<div class="leg">'
-        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear (0)</div>'
+        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear</div>'
         '<div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral (1)</div>'
         '<div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull (2)</div>'
         '<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull (3)</div>'
@@ -3279,38 +3377,6 @@ with _tab_screener:
         # Inserted here so dfStats is available (screener already run)
         # ══════════════════════════════════════════════════════════════
 
-        # ── Dashboard API helpers (cached 30 min) ─────────────────────
-        @st.cache_data(ttl=1800, show_spinner=False)
-        def _fetch_dashboard_data_cached(api_url):
-            import requests as _req
-            try:
-                r = _req.get(api_url + "?action=all", timeout=15,
-                             headers={"User-Agent": "Mozilla/5.0"})
-                if r.status_code == 200:
-                    j = r.json()
-                    if j.get("ok"):
-                        return j.get("data", {})
-            except Exception:
-                pass
-            return {}
-
-        def _extract_nav_series_from_dash(dash_data):
-            rows = dash_data.get("benchmarking", {}).get("rows", [])
-            return [r["momnPF"] for r in rows if r.get("momnPF") and r["momnPF"] > 0]
-
-        def _extract_vix_from_dash(dash_data):
-            for entry in dash_data.get("indexData", {}).get("table", []):
-                nm = str(entry.get("name","")).upper().replace(" ","").replace("_","")
-                if "INDIAVIX" in nm or nm == "VIX":
-                    return entry.get("cmp")
-            return None
-
-        def _extract_weekly_nav_ret(dash_data):
-            navs = _extract_nav_series_from_dash(dash_data)
-            if len(navs) >= 6:
-                return round((navs[-1] / navs[-6] - 1) * 100, 2)
-            return None
-
         import datetime as _dt_regime, math as _math_regime
         from calculations import get_regime_score, get_next_rebalance_dates, get_weekly_deployment_plan
         import streamlit.components.v1 as _stc_regime
@@ -3318,10 +3384,7 @@ with _tab_screener:
         st.markdown('<div class="section-hdr">🌡️ Market Regime & Multi-Asset Allocation</div>',
                     unsafe_allow_html=True)
 
-        # ── Fetch dashboard data — persistent session cache ──────────
-        # Strategy: persist in session_state so data survives reruns.
-        # Refresh button forces a fresh fetch and updates session cache.
-        _dash_data    = {}
+        # ── NAV + VIX — same approach as Regime Tab (direct fetch, no Dashboard API) ──
         _nav_series   = st.session_state.get("_regime_nav_series", [])
         _vix_curr     = st.session_state.get("_regime_vix", None)
         _weekly_nav_r = st.session_state.get("_regime_weekly_ret", None)
@@ -3330,37 +3393,33 @@ with _tab_screener:
         _dash_col1, _dash_col2 = st.columns([3, 1])
         with _dash_col2:
             _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
-                                   help="Portfolio Dashboard se latest NAV data fetch karo")
+                                   help="NAV CSV + India VIX yfinance se fresh fetch karo")
 
-        # Only fetch when button clicked OR cache is truly empty (not just unloaded)
-        if _fetch_nav:
-            _fetch_dashboard_data_cached.clear()
-            with st.spinner("📡 NAV + VIX fetch ho raha hai..."):
+        # Auto-fetch on first open OR when button pressed
+        if _fetch_nav or not _dash_loaded:
+            with st.spinner("📡 VIX + NAV fetch ho raha hai..."):
                 try:
-                    _dash_data = _fetch_dashboard_data_cached(DASHBOARD_API_URL)
-                    _nav_s_new = _extract_nav_series_from_dash(_dash_data)
-                    _vix_new   = _extract_vix_from_dash(_dash_data)
-                    _wret_new  = _extract_weekly_nav_ret(_dash_data)
-                    if _nav_s_new:
-                        _nav_series   = _nav_s_new
+                    _vix_new  = _fetch_vix_yf()
+                    _nav_new  = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
+                    _wret_new = (round((_nav_new[-1] / _nav_new[-6] - 1) * 100, 2)
+                                 if len(_nav_new) >= 6 else None)
+                    if _nav_new:
+                        _nav_series   = _nav_new
                         _vix_curr     = _vix_new
                         _weekly_nav_r = _wret_new
                         st.session_state["_regime_nav_series"]  = _nav_series
                         st.session_state["_regime_vix"]         = _vix_curr
                         st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
                         st.session_state["_regime_dash_loaded"] = True
-                        st.success(f"✅ NAV loaded ({len(_nav_series)} pts)" + (f" | VIX: {_vix_curr:.1f}" if _vix_curr else ""))
+                        _vix_msg = f" | VIX: {_vix_curr:.1f}" if _vix_curr else " | VIX: N/A"
+                        st.success(f"✅ NAV: {len(_nav_series)} pts · Latest: {_nav_series[-1]:.2f}{_vix_msg}")
                     else:
-                        st.warning("⚠️ Dashboard API ne data nahi diya — S1 signal fallback (1) use hoga.")
+                        st.warning("⚠️ NAV fetch nahi hua — CSV URL check karo.")
                 except Exception as _ef:
-                    st.warning(f"⚠️ NAV fetch failed: {_ef}")
-        elif not _dash_loaded:
-            # First time Step 3 opens — show a small hint, don't auto-fetch (avoids error flash)
-            st.info("📡 NAV data ke liye 'Refresh NAV' button dabao (S1 signal ke liye zaroori hai)")
+                    st.warning(f"⚠️ Fetch error: {_ef}")
         else:
-            # Already loaded — show compact status silently
             _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
-            st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh for update")
+            st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh button se update karo")
 
         # ── Regime score ──────────────────────────────────────────────
         _dfS_rg = st.session_state.get("dfStats")
