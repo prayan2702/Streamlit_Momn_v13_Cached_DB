@@ -1474,7 +1474,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         font_w = "800" if i == active_idx else "600"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
                     f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
-                    f'font-size="11" font-weight="{font_w}" fill="{lc}">{lt}</text>')
+                    f'font-size="12" font-weight="{font_w}" fill="{lc}">{lt}</text>')
 
     # Needle
     ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
