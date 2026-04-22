@@ -3402,6 +3402,14 @@ with _tab_screener:
         """, unsafe_allow_html=True)
 
         # ── Gauge + Signals ───────────────────────────────────────────
+        _s1ok  = _sigs.get("s1_equity_curve", 1)
+        _s2ok  = _sigs.get("s2_breadth", 0)
+        _s3ok  = _sigs.get("s3_momentum", 0)
+        _s1c   = "#16a34a" if _s1ok else "#dc2626"
+        _s2c   = "#16a34a" if _s2ok else "#dc2626"
+        _s3c   = "#16a34a" if _s3ok else "#dc2626"
+        _nav_txt = (f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d
+                    else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA"))
         _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
         _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
         _sig_html = (
