@@ -1420,7 +1420,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
     r_outer  = 112        # arc outer radius
     r_inner  = 82         # arc inner radius  (track stroke-width = outer - inner = 30)
     r_needle = 95         # needle length
-    r_lbl    = 124        # label placement radius (outside arc)
+    r_lbl    = 145        # label placement radius (outside arc)
 
     def _pt(angle_deg, radius):
         """Math angle → SVG (x, y). 0°=right, 90°=up, 180°=left."""
@@ -1470,11 +1470,11 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
     lbl_colors = ["#ef4444", "#f59e0b", "#38bdf8", "#10b981"]
     for i, (la, lt, lc) in enumerate(zip(seg_label_angles, seg_label_texts, lbl_colors)):
         lx, ly = _pt(la, r_lbl)
-        anc = "end" if la > 100 else ("middle" if 70 < la <= 100 else "start")
+        anc = "end" if la > 110 else ("middle" if 60 < la <= 110 else "start")
         font_w = "800" if i == active_idx else "600"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
                     f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
-                    f'font-size="10" font-weight="{font_w}" fill="{lc}">{lt}</text>')
+                    f'font-size="11" font-weight="{font_w}" fill="{lc}">{lt}</text>')
 
     # Needle
     ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
@@ -1499,7 +1499,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         '</style>'
         '<div class="gcard">'
         '<div class="gtitle">MARKET REGIME</div>'
-        '<svg width="420" height="280" viewBox="-20 0 340 240">'
+        '<svg width="420" height="260" viewBox="-20 0 340 260">'
         f'{bg}'
         f'{segs_svg}'
         f'{ticks_svg}'
