@@ -1566,7 +1566,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
     # ── Score number in center
     score_svg = (f'<text x="{cx}" y="{cy+28}" text-anchor="middle" dominant-baseline="central" '
                  f'font-family="Segoe UI,sans-serif" font-size="30" font-weight="900" '
-                 f'fill="{fc}" opacity="0.20">{sc}</text>')
+                 f'fill="{white}" opacity="0.20">{sc}</text>')
 
     # ── Needle
     ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
