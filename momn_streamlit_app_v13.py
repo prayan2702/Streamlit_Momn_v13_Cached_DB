@@ -1586,7 +1586,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
         '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
         '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
-        'padding:18px 20px 14px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
+        'padding:26px 32px 26px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
         '.gtitle{font-size:9px;color:#4b5563;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:6px;}'
         f'.gname{{font-size:22px;font-weight:800;color:{fc};margin-top:4px;}}'
         '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}'
