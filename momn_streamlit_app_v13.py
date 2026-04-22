@@ -3609,7 +3609,7 @@ with _tab_screener:
                 _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
                 _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
                 st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                        border-radius:10px;padding:13px 15px;margin-top:80px;">
+                        border-radius:10px;padding:13px 15px;margin-top:85px;">
                   <div style="display:flex;justify-content:space-between;align-items:center;
                               margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
                     <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
