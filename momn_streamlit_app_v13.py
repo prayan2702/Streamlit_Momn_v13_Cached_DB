@@ -3591,7 +3591,7 @@ with _tab_screener:
 
         # ── GOLDBEES + Liquid actions — aligned layout ───────────────
         # Section header
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:#0f172a;
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
                         border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
                         background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
                         border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
