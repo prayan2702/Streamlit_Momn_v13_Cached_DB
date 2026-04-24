@@ -778,21 +778,6 @@ section[data-testid="stSidebar"] .block-container {
     background: linear-gradient(135deg, #0c1e35 0%, #0a1f14 100%);
     border-color: #1e40af;
 }
-[data-theme="dark"] .nse-link-box a {
-    color: #60a5fa;
-}
-[data-theme="dark"] .nse-link-box .hint,
-[data-theme="dark"] .nse-link-box p,
-[data-theme="dark"] .nse-link-box span:not(.hint),
-[data-theme="dark"] .nse-link-box div,
-[data-theme="dark"] .nse-link-box b {
-    color: #cbd5e1 !important;
-}
-@media (prefers-color-scheme: dark) {
-    .nse-link-box { background: linear-gradient(135deg, #0c1e35 0%, #0a1f14 100%); border-color: #1e40af; }
-    .nse-link-box a { color: #60a5fa; }
-    .nse-link-box div, .nse-link-box b, .nse-link-box .hint { color: #cbd5e1 !important; }
-}
 
 [data-theme="dark"] .chip-hold {
     background: #1e293b;
@@ -4211,25 +4196,24 @@ with _tab_screener:
             )
 
             if show_order_calc:
-                # ── Mode selector ─────────────────────────────────────
+                # ── Order Calculator ──────────────────────────────────
                 st.markdown('<div class="section-hdr">⚡ Order Calculator</div>', unsafe_allow_html=True)
 
+                # ── Mode selector ─────────────────────────────────────
                 _oc_mode = st.radio(
                     "Calculation Mode",
                     options=["📈 Only Equity", "🏦 Multi-Asset (Equity + Gold + Liquid)"],
-                    index=0,
-                    horizontal=True,
-                    key="oc_mode_radio",
+                    index=0, horizontal=True, key="oc_mode_radio",
                     help=(
                         "Only Equity: Sell proceeds sirf equity buy orders mein distribute honge.\n\n"
-                        "Multi-Asset: New SOP v2026.06 ke hisab se — sell proceeds pehle Gold/Liquid gap fund karo, "
+                        "Multi-Asset: SOP v2026.06 — Gold/Liquid gap pehle fund karo, "
                         "baaki equity mein. Per-stock target = Eq Budget ÷ 30."
                     )
                 )
                 _multi_asset_mode = "Multi-Asset" in _oc_mode
 
-                # ── Input row ─────────────────────────────────────────
-                qr1, qr2, qr3, qr4 = st.columns(4)
+                # ── Common inputs row ─────────────────────────────────
+                qr1, qr2, qr3 = st.columns(3)
                 with qr1:
                     capital_add = st.number_input(
                         "💰 Capital Addition ₹", min_value=0, value=0, step=5000, key="qr_cap"
@@ -4240,83 +4224,241 @@ with _tab_screener:
                     )
                 with qr3:
                     sell_val_input = st.number_input(
-                        "💸 Sell Value ₹ (Rebalancer se enter karo)",
-                        min_value=0, value=0, step=1000, key="qr_sell",
-                        help="Portfolio Rebalancer mein jo actual sell value mili, woh yahaan enter karo"
+                        "💸 Sell Value ₹", min_value=0, value=0, step=1000, key="qr_sell",
+                        help="Portfolio Rebalancer se actual sell value"
                     )
 
-                sell_brk = len(sell_list_local) * brokerage
-                buy_brk  = len(buy_list_local)  * brokerage
-                gross_pool = sell_val_input + capital_add - sell_brk
+                sell_brk   = len(sell_list_local) * brokerage
+                buy_brk    = len(buy_list_local)  * brokerage
+                gross_pool = sell_val_input + capital_add - sell_brk  # before buy brokerage
 
+                # ══════════════════════════════════════════════════════
+                # MULTI-ASSET MODE
+                # ══════════════════════════════════════════════════════
                 if _multi_asset_mode:
-                    # ── Multi-Asset mode: Gold + Liquid gap first, equity gets remainder ──
-                    # Pull regime allocation from session if available
-                    _oc_rg = st.session_state.get("_regime_result", {})
+
+                    # Pull regime state
+                    _oc_rg      = st.session_state.get("_regime_result", {})
+                    _oc_sc      = _oc_rg.get("score",  2)
+                    _oc_lbl     = _oc_rg.get("label",  "Mild Bull")
                     _oc_eq_pct  = _oc_rg.get("equity", 0.65)
                     _oc_gd_pct  = _oc_rg.get("gold",   0.20)
                     _oc_cs_pct  = _oc_rg.get("cash",   0.15)
-                    _oc_score   = _oc_rg.get("score", 2)
-                    _oc_lbl     = _oc_rg.get("label", "Mild Bull")
+                    _oc_total_pf = st.session_state.get("_regime_total_pf", 0)
+                    _oc_prev_sc  = st.session_state.get("_regime_prev_sc",  _oc_sc)
 
-                    # Per-stock target from step 3 equity budget
-                    _oc_total_pf      = st.session_state.get("_regime_total_pf", 0)
-                    _oc_eq_budget     = _oc_total_pf * _oc_eq_pct if _oc_total_pf > 0 else 0
-                    _oc_per_stock_tgt = _oc_eq_budget / 30 if _oc_eq_budget > 0 else 0
-
-                    # Current Gold + Liquid values (from step 3 session)
-                    _oc_gd_curr = st.session_state.get("_gb_curr_val", 0)
-                    _oc_lf_curr = st.session_state.get("_lf_curr_val", 0)
-
-                    # Override inputs if step 3 not run yet
                     if _oc_total_pf == 0:
-                        st.info("💡 Step 3 ke Regime Panel mein Total Portfolio Value aur Asset Actions pehle fill karo.")
+                        st.info("💡 Step 3 ke Regime Panel mein Total Portfolio Value pehle fill karo.")
 
-                    _oc_ma_col1, _oc_ma_col2 = st.columns(2)
-                    with _oc_ma_col1:
-                        _oc_gd_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
-                                                       value=int(_oc_gd_curr), step=1000, key="oc_gd_curr")
-                        _oc_gd_tgt  = _oc_total_pf * _oc_gd_pct if _oc_total_pf > 0 else 0
-                        _oc_gd_gap  = max(0, _oc_gd_tgt - _oc_gd_curr)  # only fund gap, no sell
-                    with _oc_ma_col2:
-                        _oc_lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
-                                                       value=int(_oc_lf_curr), step=1000, key="oc_lf_curr")
-                        _oc_cs_tgt  = _oc_total_pf * _oc_cs_pct if _oc_total_pf > 0 else 0
-                        _oc_cs_gap  = max(0, _oc_cs_tgt - _oc_lf_curr)
+                    # Current Gold + Liquid inputs
+                    _ma_c1, _ma_c2 = st.columns(2)
+                    with _ma_c1:
+                        _oc_gd_curr = st.number_input(
+                            "🥇 Current GOLDBEES ₹", min_value=0,
+                            value=int(st.session_state.get("_gb_curr_val", 0)),
+                            step=1000, key="oc_gd_curr"
+                        )
+                    with _ma_c2:
+                        _oc_lf_curr = st.number_input(
+                            "💵 Current Liquid Fund ₹", min_value=0,
+                            value=int(st.session_state.get("_lf_curr_val", 0)),
+                            step=1000, key="oc_lf_curr"
+                        )
+
+                    # Compute gaps
+                    _oc_gd_tgt = _oc_total_pf * _oc_gd_pct
+                    _oc_cs_tgt = _oc_total_pf * _oc_cs_pct
+                    _oc_gd_gap = max(0.0, _oc_gd_tgt - _oc_gd_curr)
+                    _oc_cs_gap = max(0.0, _oc_cs_tgt - _oc_lf_curr)
 
                     # Allocation priority: Gold gap → Liquid gap → Equity
                     _oc_for_gold   = min(_oc_gd_gap, gross_pool)
                     _oc_rem1       = gross_pool - _oc_for_gold
                     _oc_for_liquid = min(_oc_cs_gap, _oc_rem1)
-                    _oc_for_equity = max(0, _oc_rem1 - _oc_for_liquid - buy_brk)
-                    per_stock      = _oc_per_stock_tgt if _oc_per_stock_tgt > 0 else (
-                        _oc_for_equity / len(buy_list_local) if buy_list_local else 0)
-                    n_buyable      = int(_oc_for_equity / per_stock) if per_stock > 0 else 0
+                    _oc_for_equity = max(0.0, _oc_rem1 - _oc_for_liquid - buy_brk)
 
-                    # Summary strip — multi-asset
-                    st.markdown(f"""<div class="reb-strip">
-                      <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">→ Gold BUY</div><div class="val" style="color:#b45309">₹{_oc_for_gold:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">→ Liquid ADD</div><div class="val" style="color:#475569">₹{_oc_for_liquid:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">→ Equity Pool</div><div class="val g">₹{_oc_for_equity:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val b">₹{per_stock:,.0f}</div></div>
-                    </div>""", unsafe_allow_html=True)
+                    # Per-stock target from regime budget
+                    _oc_eq_budget     = _oc_total_pf * _oc_eq_pct
+                    _oc_per_stock_tgt = _oc_eq_budget / 30 if _oc_eq_budget > 0 else 0
 
-                    if _oc_rg:
+                    # ── Weekly Deployment Plan toggle ─────────────────
+                    st.markdown("---")
+                    _use_wdp = st.radio(
+                        "📅 Weekly Deployment Plan ke hisab se deploy karna hai?",
+                        options=["✅ Haan — Weekly plan se (Regime shift ho raha hai)",
+                                 "❌ Nahi — Normal monthly RB (Gross pool ÷ buy list)"],
+                        index=1, horizontal=True, key="oc_wdp_toggle",
+                        help=(
+                            "Haan: Regime shift ke waqt weekly phased deployment use karo. "
+                            "Weekly plan ka ek week select karo → us week ka Equity ₹ = equity pool.\n\n"
+                            "Nahi: Gross proceeds sirf Gold/Liquid gap ke baad bacha → Equity Pool. "
+                            "Per-stock = Equity Pool ÷ buy count (ya Eq Budget ÷ 30 fixed target)."
+                        )
+                    )
+                    _wdp_mode = "Haan" in _use_wdp
+
+                    if _wdp_mode:
+                        # ── Weekly Deployment Plan branch ─────────────
+                        from calculations import get_weekly_deployment_plan, get_next_rebalance_dates
+                        _wdp_dates = get_next_rebalance_dates()
+                        _wdp_plan  = get_weekly_deployment_plan(
+                            prev_score=_oc_prev_sc,
+                            curr_score=_oc_sc,
+                            total_pf=_oc_total_pf,
+                            goldbees_curr=_oc_gd_curr,
+                            liquid_curr=_oc_lf_curr,
+                            weekly_nav_ret=st.session_state.get("_regime_weekly_ret"),
+                            vix_curr=st.session_state.get("_regime_vix")
+                        )
+                        _wdp_weeks = _wdp_plan.get("weeks", [])
+                        _fri_lst   = _wdp_dates.get("upcoming_fridays", [])
+
+                        if not _wdp_weeks:
+                            st.info("ℹ️ Score same hai — Weekly Deployment Plan available nahi. 'Nahi' select karo.")
+                        else:
+                            # Week selector
+                            _week_labels = []
+                            for wd in _wdp_weeks:
+                                _fri_d = (_fri_lst[wd["week"]-1].strftime("%d %b")
+                                          if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}")
+                                _week_labels.append(
+                                    f"Week {wd['week']} ({_fri_d}) — "
+                                    f"Eq {wd['eq_pct']}% ₹{wd['eq_val']:,.0f} | "
+                                    f"Gold {wd['gd_pct']}% ₹{wd['gd_val']:,.0f} | "
+                                    f"Cash {wd['cs_pct']}% ₹{wd['cs_val']:,.0f}"
+                                )
+                            _sel_wk_lbl = st.selectbox(
+                                "Kaunsa week execute kar rahe ho?",
+                                options=_week_labels, key="oc_wk_sel"
+                            )
+                            _sel_wk_idx = _week_labels.index(_sel_wk_lbl)
+                            _sel_wk     = _wdp_weeks[_sel_wk_idx]
+
+                            # This week's equity pool = week's eq_val
+                            _wdp_eq_pool    = _sel_wk["eq_val"]
+                            _wdp_gd_pool    = _sel_wk["gd_val"]
+                            _wdp_cs_pool    = _sel_wk["cs_val"]
+
+                            # Per-stock = week's equity allocation ÷ 30 (new SOP fixed target)
+                            _wdp_per_stock  = _wdp_eq_pool / 30 if _wdp_eq_pool > 0 else 0
+                            # How many new entries can be funded this week
+                            _wdp_n_buyable  = (int(_wdp_eq_pool / _wdp_per_stock)
+                                               if _wdp_per_stock > 0 else 0)
+                            _wdp_n_buyable  = min(_wdp_n_buyable, len(buy_list_local))
+
+                            # ── Summary strip — WDP mode ──────────────
+                            st.markdown(f"""<div class="reb-strip">
+                              <div class="reb-stat"><div class="label">Week {_sel_wk['week']} Equity Pool</div>
+                                <div class="val b">₹{_wdp_eq_pool:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Gold Target ₹</div>
+                                <div class="val" style="color:#b45309">₹{_wdp_gd_pool:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Liquid Target ₹</div>
+                                <div class="val" style="color:#475569">₹{_wdp_cs_pool:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Per Stock Tgt</div>
+                                <div class="val g">₹{_wdp_per_stock:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Buy Entries</div>
+                                <div class="val b">{_wdp_n_buyable}</div></div>
+                            </div>""", unsafe_allow_html=True)
+
+                            st.markdown(
+                                f'<div style="font-size:11px;color:#64748b;margin:4px 0 8px;">'
+                                f'Regime: <b>{_oc_lbl}</b> (Score {_oc_sc}) &nbsp;·&nbsp; '
+                                f'Prev Score {_oc_prev_sc} → Curr Score {_oc_sc} &nbsp;·&nbsp; '
+                                f'Per-stock = Eq ₹{_wdp_eq_pool:,.0f} ÷ 30 = '
+                                f'<b>₹{_wdp_per_stock:,.0f}</b>'
+                                f'</div>', unsafe_allow_html=True
+                            )
+
+                            if _wdp_plan.get("paused"):
+                                st.error("⏸ Week 1 PAUSED — VIX > 30 AND weekly return < -5%.")
+
+                            # Gold / Liquid action reminders
+                            _gd_this_wk_gap = max(0, _wdp_gd_pool - _oc_gd_curr)
+                            _cs_this_wk_gap = max(0, _wdp_cs_pool - _oc_lf_curr)
+                            if _gd_this_wk_gap > 0 or _cs_this_wk_gap > 0:
+                                st.markdown(
+                                    f'<div style="background:#fef3c7;border-left:3px solid #b45309;'
+                                    f'border-radius:6px;padding:8px 14px;font-size:12px;'
+                                    f'color:#78350f;margin-bottom:8px;">'
+                                    f'{"🥇 GOLDBEES BUY ₹" + f"{_gd_this_wk_gap:,.0f}" if _gd_this_wk_gap > 15000 else "🥇 GOLDBEES: within band"}'
+                                    f' &nbsp;·&nbsp; '
+                                    f'{"💵 Liquid ADD ₹" + f"{_cs_this_wk_gap:,.0f}" if _cs_this_wk_gap > 15000 else "💵 Liquid: within band"}'
+                                    f'</div>', unsafe_allow_html=True
+                                )
+
+                            # Build buy orders using WDP equity pool
+                            _oc_final_per_stock = _wdp_per_stock
+                            _oc_final_stocks    = buy_list_local[:_wdp_n_buyable]
+                            _oc_final_pool      = _wdp_eq_pool
+
+                    else:
+                        # ── Normal Multi-Asset (no weekly plan) ───────
+                        st.markdown(f"""<div class="reb-strip">
+                          <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">→ Gold BUY</div><div class="val" style="color:#b45309">₹{_oc_for_gold:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">→ Liquid ADD</div><div class="val" style="color:#475569">₹{_oc_for_liquid:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Equity Pool</div><div class="val g">₹{_oc_for_equity:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val b">₹{_oc_per_stock_tgt:,.0f}</div></div>
+                        </div>""", unsafe_allow_html=True)
                         st.markdown(
-                            f'<div style="font-size:11px;color:#64748b;margin-bottom:6px;">'
-                            f'Regime: <b>{_oc_lbl}</b> (Score {_oc_score}) &nbsp;·&nbsp; '
-                            f'Equity {_oc_eq_pct*100:.0f}% / Gold {_oc_gd_pct*100:.0f}% / Liquid {_oc_cs_pct*100:.0f}% &nbsp;·&nbsp; '
-                            f'Per-stock target = Eq Budget (₹{_oc_eq_budget:,.0f}) ÷ 30 = <b>₹{_oc_per_stock_tgt:,.0f}</b>'
-                            f'</div>', unsafe_allow_html=True)
+                            f'<div style="font-size:11px;color:#64748b;margin-bottom:8px;">'
+                            f'Regime: <b>{_oc_lbl}</b> · Eq {_oc_eq_pct*100:.0f}% / '
+                            f'Gold {_oc_gd_pct*100:.0f}% / Liquid {_oc_cs_pct*100:.0f}% · '
+                            f'Per-stock = Eq Budget ₹{_oc_eq_budget:,.0f} ÷ 30 = '
+                            f'<b>₹{_oc_per_stock_tgt:,.0f}</b>'
+                            f'</div>', unsafe_allow_html=True
+                        )
+                        _oc_final_per_stock = _oc_per_stock_tgt
+                        _oc_final_stocks    = buy_list_local
+                        _oc_final_pool      = _oc_for_equity
 
+                    # ── Buy orders table (multi-asset) ────────────────
+                    if sell_val_input == 0 and not capital_add and not _wdp_mode:
+                        st.info("💡 Sell Value enter karo → Buy orders auto-calculate honge.")
+
+                    if buy_list_local and _oc_final_per_stock > 0:
+                        st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
+                        _ma_orders = []; _ma_invested = 0
+                        for _ii, _stk in enumerate(_oc_final_stocks, 1):
+                            _cmp = cmp_map3.get(_stk, 0)
+                            if _cmp > 0:
+                                _qty = int(_oc_final_per_stock / _cmp)
+                                _val = _qty * _cmp
+                                _ma_invested += _val
+                                _ma_orders.append({
+                                    "#": _ii, "Stock": _stk,
+                                    "CMP ₹":       round(_cmp, 2),
+                                    "Gross Alloc": round(_oc_final_per_stock + brokerage),
+                                    "Brok ₹":      brokerage,
+                                    "Net Alloc":   round(_oc_final_per_stock),
+                                    "Qty":         _qty,
+                                    "Value ₹":     round(_val),
+                                })
+                        if _ma_orders:
+                            st.dataframe(
+                                pd.DataFrame(_ma_orders).style.format({
+                                    "CMP ₹": "{:.2f}",
+                                    "Gross Alloc": "{:,.0f}",
+                                    "Net Alloc":   "{:,.0f}",
+                                    "Value ₹":     "{:,.0f}",
+                                }),
+                                use_container_width=True, hide_index=True, height=300
+                            )
+                            _ma_leftover = _oc_final_pool - _ma_invested
+                            st.markdown(f"""<div class="reb-strip">
+                              <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{_ma_invested:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Leftover (Equity)</div><div class="val p">₹{_ma_leftover:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(_ma_orders)}</div></div>
+                            </div>""", unsafe_allow_html=True)
+
+                # ══════════════════════════════════════════════════════
+                # ONLY EQUITY MODE (original logic, unchanged)
+                # ══════════════════════════════════════════════════════
                 else:
-                    # ── Only Equity mode: unchanged original logic ──
                     net_pool  = gross_pool - buy_brk
                     per_stock = net_pool / len(buy_list_local) if buy_list_local else 0
-                    n_buyable = len(buy_list_local)
 
                     st.markdown(f"""<div class="reb-strip">
                       <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
@@ -4327,60 +4469,42 @@ with _tab_screener:
                       <div class="reb-stat"><div class="label">Per Stock</div><div class="val g">{fmt_inr(per_stock)}</div></div>
                     </div>""", unsafe_allow_html=True)
 
-                with qr4:
-                    st.markdown(f"""<div class="metric-card green">
-                      <div class="metric-label">Per Stock</div>
-                      <div class="metric-value green">{fmt_inr(per_stock)}</div>
-                    </div>""", unsafe_allow_html=True)
+                    if sell_val_input == 0 and not capital_add:
+                        st.info("💡 Sell Value enter karo (Portfolio Rebalancer se) → Buy orders auto-calculate honge.")
 
-                if sell_val_input == 0 and not capital_add:
-                    st.info("💡 Sell Value enter karo (Portfolio Rebalancer se) → Buy orders auto-calculate honge.")
-
-                # ── Buy orders table ──────────────────────────────────
-                if buy_list_local and per_stock > 0:
-                    st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
-                    orders = []
-                    total_invested = 0
-                    _stocks_to_order = buy_list_local[:n_buyable] if _multi_asset_mode else buy_list_local
-                    for i, stock in enumerate(_stocks_to_order, 1):
-                        cmp = cmp_map3.get(stock, 0)
-                        if cmp > 0:
-                            qty = int(per_stock / cmp)
-                            val = qty * cmp
-                            total_invested += val
-                            orders.append({
-                                "#":           i,
-                                "Stock":       stock,
-                                "CMP ₹":       round(cmp, 2),
-                                "Gross Alloc": round(per_stock + brokerage),
-                                "Brok ₹":      brokerage,
-                                "Net Alloc":   round(per_stock),
-                                "Qty":         qty,
-                                "Value ₹":     round(val),
-                            })
-
-                    if orders:
-                        orders_df = pd.DataFrame(orders)
-                        st.dataframe(
-                            orders_df.style.format({
-                                "CMP ₹": "{:.2f}",
-                                "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"
-                            }),
-                            use_container_width=True, hide_index=True, height=300
-                        )
-                        leftover = ((_oc_for_equity if _multi_asset_mode else (sell_val_input + capital_add - sell_brk - buy_brk))
-                                    - total_invested)
-                        st.markdown(f"""<div class="reb-strip">
-                          <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">Leftover (Equity)</div><div class="val p">₹{leftover:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
-                        </div>""", unsafe_allow_html=True)
-                        if _multi_asset_mode and _oc_for_gold > 0:
-                            st.markdown(
-                                f'<div style="font-size:11px;color:#b45309;margin-top:4px;">'
-                                f'🥇 GOLDBEES: ₹{_oc_for_gold:,.0f} BUY karo &nbsp;·&nbsp; '
-                                f'💵 Liquid Fund: ₹{_oc_for_liquid:,.0f} ADD karo'
-                                f'</div>', unsafe_allow_html=True)
+                    if buy_list_local and per_stock > 0:
+                        st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
+                        orders = []; total_invested = 0
+                        for i, stock in enumerate(buy_list_local, 1):
+                            cmp = cmp_map3.get(stock, 0)
+                            if cmp > 0:
+                                qty = int(per_stock / cmp)
+                                val = qty * cmp
+                                total_invested += val
+                                orders.append({
+                                    "#":           i,
+                                    "Stock":       stock,
+                                    "CMP ₹":       round(cmp, 2),
+                                    "Gross Alloc": round(per_stock + brokerage),
+                                    "Brok ₹":      brokerage,
+                                    "Net Alloc":   round(per_stock),
+                                    "Qty":         qty,
+                                    "Value ₹":     round(val),
+                                })
+                        if orders:
+                            st.dataframe(
+                                pd.DataFrame(orders).style.format({
+                                    "CMP ₹": "{:.2f}",
+                                    "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"
+                                }),
+                                use_container_width=True, hide_index=True, height=300
+                            )
+                            leftover = net_pool - total_invested
+                            st.markdown(f"""<div class="reb-strip">
+                              <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{leftover:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
+                            </div>""", unsafe_allow_html=True)
 
             st.divider()
             if st.button("▶ Next: Apply & Export →", type="primary"):
