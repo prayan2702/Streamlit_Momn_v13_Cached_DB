@@ -155,7 +155,7 @@
     "chosen_lbl": "Upstox",
     "chosen_role": "primary",
     "chosen_ath": 249.5,
-    "reviewed_date": "22-Apr-26",
+    "reviewed_date": "24-Apr-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -371,6 +371,14 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "secondary",
     "chosen_ath": 333.0,
+    "reviewed_date": "24-Apr-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "SEJALLTD": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "secondary",
+    "chosen_ath": 1036.7,
     "reviewed_date": "24-Apr-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
