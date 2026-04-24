@@ -10,6 +10,22 @@ Changes vs v13:
     - Secret missing → alag message (TRIGGER_PIN set nahi)
     - Wrong PIN → alag message
   • Logic/calculations untouched
+
+SOP v2026.06 — Multi-Asset Regime Changes (app-level):
+  • Allocation updated: Score3=80/15/5, Score2=65/20/15, Score1=45/25/30, Score0=25/30/45
+  • VIX Overlay panel: VIX>30→+5%Gold, VIX 20-30→+3%Gold (Liquid→Gold, Equity untouched)
+  • Gold drift band: ±7% of PF (was ±5%)
+  • Transaction guardrail: ₹15K minimum per GOLDBEES/Liquid transaction
+  • Drawdown Protocol: DD≥15% warn, DD≥20% override, DD≥30% emergency
+  • Equiweight Maintenance: Proceeds allocation panel — exit-funded regime shift
+    Per-stock target = Equity Budget÷30, drift band ±₹20K
+  • _alloc_start: updated to new allocations
+  • Regime Tab: VIX overlay display on allocation tiles
+
+  NOTE: calculations.py get_regime_score() mein bhi allocation constants update karo:
+    ALLOC = {3:(0.80,0.15,0.05), 2:(0.65,0.20,0.15), 1:(0.45,0.25,0.30), 0:(0.25,0.30,0.45)}
+    GOLD_CAP = 0.30  # hard max
+    GOLD_DRIFT_BAND = 0.07  # ±7% of total portfolio
 """
 
 import io
@@ -1791,7 +1807,28 @@ with _tab_regime:
                         f'<div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div>'
                         f'<div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>'
                         f'</div>', unsafe_allow_html=True)
-            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_rt_date_s}")
+
+            # ── VIX Overlay display in Regime Tab ────────────────────
+            if _rt_vx is not None:
+                _rt_vix_ovl = 0
+                if _rt_vx > 30: _rt_vix_ovl = 5
+                elif _rt_vx > 20: _rt_vix_ovl = 3
+                if _rt_vix_ovl > 0:
+                    _rt_eff_gd  = min(_rt_gd*100 + _rt_vix_ovl, 30)
+                    _rt_act_ovl = _rt_eff_gd - _rt_gd*100
+                    _rt_eff_cs  = _rt_cs*100 - _rt_act_ovl
+                    _rt_vc = "#dc2626" if _rt_vx > 30 else "#d97706"
+                    st.markdown(f"""<div style="background:{'#fef2f2' if _rt_vx>30 else '#fef3c7'};
+                        border:1.5px solid {_rt_vc};border-left:4px solid {_rt_vc};
+                        border-radius:8px;padding:10px 14px;font-size:12px;color:{_rt_vc};margin-top:8px;">
+                      ⚡ <b>VIX Overlay Active (VIX {_rt_vx:.1f}):</b>
+                      Gold {_rt_gd*100:.0f}% → <b>{_rt_eff_gd:.0f}%</b> (+{_rt_act_ovl:.0f}pp) |
+                      Liquid {_rt_cs*100:.0f}% → <b>{_rt_eff_cs:.0f}%</b> |
+                      Equity UNTOUCHED | Source: Liquid → Gold
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.caption(f"VIX {_rt_vx:.1f} ≤ 20 — No overlay. Base allocation applies.")
+            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_rt_date_s} | Alloc: {_rt_eq*100:.0f}/{_rt_gd*100:.0f}/{_rt_cs*100:.0f} (Eq/Gold/Cash)")
 
 # ════════════════════════════════════════════════════════════════════
 # SCREENER TAB — all step content
@@ -3426,7 +3463,7 @@ with _tab_screener:
         if _dfS_rg is not None:
             _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
         else:
-            _rg = {"score":2,"label":"Mild Bull","equity":0.70,"gold":0.20,"cash":0.10,
+            _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
                    "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
                    "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
 
@@ -3543,18 +3580,18 @@ with _tab_screener:
         # ── Shift message ─────────────────────────────────────────────
         _sc_diff = _sc - _prev_sc
         if _sc_diff == 0:
-            _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±5% check karo.","#15803d","#dcfce7"
+            _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±7% check karo. New entries at new target weight (Eq Budget ÷ 30).","#15803d","#dcfce7"
         elif abs(_sc_diff) == 1:
-            _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — ek mahine mein complete karo.","#1d4ed8","#dbeafe"
+            _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — exits se Gold/Liquid fund karo, new entries at new target weight. Existing stocks drift band mein rahenge.","#1d4ed8","#dbeafe"
         else:
-            _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — 2 mahine mein gradually. Weekly plan neeche dekho.","#b45309","#fef3c7"
+            _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — phased 2-month plan. Monthly exits se Gold/Liquid fund karo. Weekly plan neeche dekho.","#b45309","#fef3c7"
         st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
                     border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
           {_smsg}</div>""", unsafe_allow_html=True)
 
         # ── GOLDBEES + Liquid actions — aligned layout ───────────────
         # Section header
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:#0f172a;
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
                         border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
                         background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
                         border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
@@ -3575,22 +3612,39 @@ with _tab_screener:
             if _total_pf > 0:
                 _gd_tgt = _total_pf * _gd
                 _gd_dif = _gd_tgt - _gb_curr
-                _gdok   = abs(_gd_dif) / _total_pf < 0.05
+                _gdok   = abs(_gd_dif) / _total_pf < 0.07
                 _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
                 _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
                 _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
                 _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
-                _gact_txt  = "Hold (within ±5%)" if _gdok else (f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}")
+                # ₹15K min guardrail — sub-₹15K transaction not worth brokerage
+                _gd_min_ok = abs(_gd_dif) >= 15000
+                _gact_txt  = "Hold (within ±7%)" if _gdok else (
+                    f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}"
+                )
+                if not _gdok and not _gd_min_ok:
+                    _gact_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_gd_dif):,.0f}"
+                    _gdc, _gd_bg = "#64748b", "#f1f5f9"
+                # VIX overlay adjusted gold target
+                _vix_ovl_pct = 0
+                if _vix_curr and _vix_curr > 30: _vix_ovl_pct = 5
+                elif _vix_curr and _vix_curr > 20: _vix_ovl_pct = 3
+                _eff_gd_pct = min(_gd + _vix_ovl_pct/100, 0.30)
+                _gd_tgt_eff = _total_pf * _eff_gd_pct
+                _ovl_note   = f" (VIX +{_vix_ovl_pct}%)" if _vix_ovl_pct > 0 else ""
                 st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
                         border-radius:10px;padding:13px 15px;margin-top:6px;">
                   <div style="display:flex;justify-content:space-between;align-items:center;
                               margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
                     <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
                     <span style="font-size:16px;opacity:.4">→</span>
-                    <span>Target: <b style="font-size:14px;">₹{_gd_tgt:,.0f}</b></span>
+                    <span>Target: <b style="font-size:14px;">₹{_gd_tgt_eff:,.0f}</b>{_ovl_note}</span>
                   </div>
                   <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
                     {_gact_icon} {_gact_txt}
+                  </div>
+                  <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
+                    Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_gd_dif):,.0f}" if not _gdok else 'Within band'}
                   </div>
                 </div>""", unsafe_allow_html=True)
 
@@ -3603,11 +3657,18 @@ with _tab_screener:
             if _total_pf > 0:
                 _cs_tgt = _total_pf * _cs
                 _cs_dif = _cs_tgt - _lf_curr
-                _csok   = abs(_cs_dif) / _total_pf < 0.05
+                _csok   = abs(_cs_dif) / _total_pf < 0.07
                 _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
                 _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
                 _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
-                _cs_txt  = "Hold (within ±5%)" if _csok else (f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}")
+                # ₹15K min guardrail
+                _cs_min_ok = abs(_cs_dif) >= 15000
+                _cs_txt  = "Hold (within ±7%)" if _csok else (
+                    f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}"
+                )
+                if not _csok and not _cs_min_ok:
+                    _cs_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_cs_dif):,.0f}"
+                    _csc, _cs_bg = "#64748b", "#f1f5f9"
                 st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
                         border-radius:10px;padding:13px 15px;margin-top:89px;">
                   <div style="display:flex;justify-content:space-between;align-items:center;
@@ -3619,16 +3680,200 @@ with _tab_screener:
                   <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
                     {_cs_icon} {_cs_txt}
                   </div>
+                  <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
+                    Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_cs_dif):,.0f}" if not _csok else 'Within band'}
+                  </div>
                 </div>""", unsafe_allow_html=True)
 
         # ── Equity budget ─────────────────────────────────────────────
+        _eq_budget = _total_pf * _eq
+        _per_stock_target = _eq_budget / 30 if _eq_budget > 0 else 0
+        _drift_band_rs = 20000  # ±₹20K per stock drift band (SOP 9.5.1)
         st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
                     border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
           <b style="color:#1d4ed8">📈 Equity Budget:</b>
           <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
-            <b style="font-size:16px;color:#1d4ed8"> ₹{_total_pf*_eq:,.0f}</b>
+            <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
+          </span>
+          &nbsp;&nbsp;
+          <span style="color:#475569;font-size:12px;">
+            | Per stock target: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
+            &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
+            &nbsp;| Band Low: ₹{max(0,_per_stock_target-_drift_band_rs):,.0f}
+            — High: ₹{_per_stock_target+_drift_band_rs:,.0f}
           </span>
         </div>""", unsafe_allow_html=True)
+
+        # ── VIX Overlay Panel (SOP Section 7.5) ──────────────────────
+        if _vix_curr is not None and _total_pf > 0:
+            _base_gold_pct = _gd * 100
+            _vix_overlay_pct = 0
+            _vix_overlay_src = ""
+            if _vix_curr > 30:
+                _vix_overlay_pct = 5
+                _vix_overlay_src = "VIX > 30"
+            elif _vix_curr > 20:
+                _vix_overlay_pct = 3
+                _vix_overlay_src = "VIX 20-30"
+
+            if _vix_overlay_pct > 0:
+                _eff_gold_pct = min(_base_gold_pct + _vix_overlay_pct, 30)  # hard cap 30%
+                _actual_overlay = _eff_gold_pct - _base_gold_pct
+                _eff_cash_pct   = (_cs * 100) - _actual_overlay  # liquid funds the shift
+                _eff_gold_rs    = _total_pf * _eff_gold_pct / 100
+                _eff_cash_rs    = _total_pf * _eff_cash_pct / 100
+                _overlay_rs     = _total_pf * _actual_overlay / 100
+                _vix_col = "#dc2626" if _vix_curr > 30 else "#d97706"
+                _vix_bg  = "#fef2f2" if _vix_curr > 30 else "#fef3c7"
+                st.markdown(f"""
+                <div style="background:{_vix_bg};border:1.5px solid {_vix_col};border-left:4px solid {_vix_col};
+                            border-radius:8px;padding:12px 16px;margin:8px 0;">
+                  <div style="font-size:13px;font-weight:700;color:{_vix_col};margin-bottom:6px;">
+                    ⚡ VIX Overlay Active — {_vix_overlay_src} (+{_actual_overlay:.0f}% Gold from Liquid)
+                  </div>
+                  <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#374151;">
+                    <span>Base Gold: <b>{_base_gold_pct:.0f}%</b></span>
+                    <span style="color:{_vix_col};">→ Effective Gold: <b>{_eff_gold_pct:.0f}%</b> (₹{_eff_gold_rs:,.0f})</span>
+                    <span>Effective Cash: <b>{_eff_cash_pct:.0f}%</b> (₹{_eff_cash_rs:,.0f})</span>
+                    <span style="color:#6d28d9;font-weight:600;">Move ₹{_overlay_rs:,.0f} from Liquid → GOLDBEES</span>
+                  </div>
+                  <div style="font-size:11px;color:#6b7280;margin-top:6px;">
+                    ⚠️ Equity UNTOUCHED — only Liquid → Gold shift. Apply at monthly RB (VIX 20-30) or this Friday (VIX > 30).
+                    Normalize hone pe (VIX ≤ 20) → excess Gold wapas Liquid mein.
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+                            padding:8px 14px;font-size:12px;color:#15803d;margin:4px 0;">
+                  ✅ VIX {_vix_curr:.1f} ≤ 20 — No VIX Overlay. Base allocation applies.
+                </div>""", unsafe_allow_html=True)
+
+        # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
+                        border-left:4px solid #dc2626;padding:6px 0 6px 12px;
+                        background:linear-gradient(90deg,rgba(220,38,38,.06) 0%,transparent 60%);
+                        border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+            📉 Portfolio Drawdown Protocol
+        </div>""", unsafe_allow_html=True)
+        _dd_c1, _dd_c2 = st.columns(2)
+        with _dd_c1:
+            _pf_ath = st.number_input("📈 Portfolio ATH Value ₹ (All-Time High)",
+                                       min_value=0, value=int(st.session_state.get("_pf_ath_val", _total_pf or 1000000)),
+                                       step=10000, key="_pf_ath_val",
+                                       help="Apne portfolio ka highest value — NAV sheet se dekho")
+        with _dd_c2:
+            _pf_curr_dd = st.number_input("💼 Current Portfolio Value ₹",
+                                           min_value=0, value=int(_total_pf),
+                                           step=10000, key="_pf_curr_dd_val",
+                                           help="Aaj ki total value (Equity + Gold + Cash)")
+
+        if _pf_ath > 0 and _pf_curr_dd > 0:
+            _dd_pct = (_pf_curr_dd / _pf_ath - 1) * 100
+            _dd_abs  = abs(_dd_pct)
+            if _dd_pct >= 0:
+                st.markdown(f"""<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
+                            padding:8px 14px;font-size:13px;color:#15803d;">
+                  ✅ Portfolio ATH pe ya upar hai — DD: <b>{_dd_pct:+.1f}%</b>. No override needed.
+                </div>""", unsafe_allow_html=True)
+            elif _dd_abs < 15:
+                st.markdown(f"""<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+                            padding:8px 14px;font-size:13px;color:#15803d;">
+                  ✅ DD: <b>{_dd_pct:.1f}%</b> — Normal range (< 15%). Strategy as usual.
+                </div>""", unsafe_allow_html=True)
+            elif _dd_abs < 20:
+                st.warning(f"⚠️ DD: **{_dd_pct:.1f}%** — DD ≥ 15% zone. Weekly check mandatory. Capital additions pause karo.")
+            elif _dd_abs < 30:
+                st.error(f"🚨 DD Override TRIGGERED — DD: **{_dd_pct:.1f}%** ≥ 20% from ATH!")
+                st.markdown(f"""<div style="background:#fef2f2;border:1.5px solid #dc2626;border-radius:8px;
+                            padding:12px 16px;font-size:13px;color:#dc2626;margin:4px 0;">
+                  <b>⚠️ DD Override Active:</b> Current signal Score {_sc} ignored.
+                  Treat as Score 0 (Bear). Target: Equity 25% | Gold 30% | Cash 45%.<br>
+                  <span style="font-size:12px;color:#7f1d1d;">
+                  4-week defensive shift shuru karo. Equity ₹{_total_pf*0.25:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.45:,.0f}
+                  </span>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.error(f"🚨🚨 EMERGENCY — DD: **{_dd_pct:.1f}%** ≥ 30% from ATH!")
+                st.markdown(f"""<div style="background:#fef2f2;border:2px solid #7f1d1d;border-radius:8px;
+                            padding:12px 16px;font-size:13px;color:#7f1d1d;">
+                  <b>🆘 Emergency Protocol:</b> Single-week move. Target: Equity 20% | Gold 30% | Cash 50%.<br>
+                  Equity ₹{_total_pf*0.20:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.50:,.0f}
+                </div>""", unsafe_allow_html=True)
+
+        # ── Equiweight Maintenance (SOP Section 9.5) ──────────────────
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
+                        border-left:4px solid #7c3aed;padding:6px 0 6px 12px;
+                        background:linear-gradient(90deg,rgba(124,58,237,.06) 0%,transparent 60%);
+                        border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+            ⚖️ Equiweight Maintenance — Exit-Funded Regime Shift
+        </div>""", unsafe_allow_html=True)
+        _ew_c1, _ew_c2, _ew_c3 = st.columns(3)
+        with _ew_c1:
+            _exit_proceeds = st.number_input("💰 Exit Proceeds ₹ (sells se mila)",
+                                              min_value=0, value=0, step=1000, key="_exit_proceeds_val",
+                                              help="Is mahine ke exits ki total sell value")
+        with _ew_c2:
+            _n_new_entries = st.number_input("🟢 New Entries Count", min_value=0, max_value=30,
+                                              value=0, step=1, key="_n_new_entries_val",
+                                              help="Kitne naye stocks buy karne hain")
+        with _ew_c3:
+            st.markdown(f"""<div style="background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;
+                        padding:10px 12px;text-align:center;margin-top:4px;">
+              <div style="font-size:10px;color:#6d28d9;font-weight:600;text-transform:uppercase;">Per Stock Target</div>
+              <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stock_target:,.0f}</div>
+              <div style="font-size:10px;color:#7c3aed;">Eq Budget ÷ 30</div>
+            </div>""", unsafe_allow_html=True)
+
+        if _exit_proceeds > 0 and _total_pf > 0:
+            # VIX overlay adjusted gold gap
+            _vix_adj_gold_pct = min(_gd + (_vix_overlay_pct/100 if '_vix_overlay_pct' in dir() else 0), 0.30)
+            _gold_gap    = max(0, _total_pf * _vix_adj_gold_pct - (_gb_curr if '_gb_curr' in dir() else 0))
+            _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
+            _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
+            _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
+            _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
+            _surplus              = _proceeds_after_liq - _new_entry_cost
+
+            st.markdown(f"""
+            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                        padding:14px 16px;margin-top:8px;">
+              <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px;">
+                📊 Proceeds Allocation Plan
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+                <div style="background:#dbeafe;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-size:10px;color:#1d4ed8;font-weight:600">EXIT PROCEEDS</div>
+                  <div style="font-size:18px;font-weight:800;color:#1d4ed8">₹{_exit_proceeds:,.0f}</div>
+                </div>
+                <div style="background:#{'fef3c7' if _gold_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-size:10px;color:#{'b45309' if _gold_gap>0 else '15803d'};font-weight:600">1. GOLD GAP (first)</div>
+                  <div style="font-size:18px;font-weight:800;color:#{'b45309' if _gold_gap>0 else '15803d'}">₹{_gold_gap:,.0f}</div>
+                </div>
+                <div style="background:#{'dbeafe' if _liquid_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-size:10px;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'};font-weight:600">2. LIQUID GAP</div>
+                  <div style="font-size:18px;font-weight:800;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'}">₹{_liquid_gap:,.0f}</div>
+                </div>
+                <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stock_target:,.0f})</div>
+                  <div style="font-size:18px;font-weight:800;color:#15803d">₹{_new_entry_cost:,.0f}</div>
+                </div>
+                <div style="background:#{'dcfce7' if _surplus>=0 else 'fee2e2'};border-radius:8px;padding:10px;text-align:center;">
+                  <div style="font-size:10px;color:#{'15803d' if _surplus>=0 else 'dc2626'};font-weight:600">SURPLUS / SHORTFALL</div>
+                  <div style="font-size:18px;font-weight:800;color:#{'15803d' if _surplus>=0 else 'dc2626'}">₹{_surplus:+,.0f}</div>
+                </div>
+              </div>
+              <div style="margin-top:10px;font-size:12px;color:#64748b;background:#f1f5f9;border-radius:6px;padding:8px 12px;">
+                {'✅ Surplus ₹' + f"{_surplus:,.0f}" + ' → most underweight existing stock mein daalo (1 extra transaction max).'
+                 if _surplus > 15000 else
+                 ('⚠️ Shortfall ₹' + f"{abs(_surplus):,.0f}" + ' → partial entry ya ek stock entry defer karo. Agla month complete hoga.'
+                 if _surplus < -5000 else
+                 '✅ Proceeds approximately match. Clean rebalance.')}
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.caption("Rule: Gold/Liquid gap fund karo FIRST. Existing stocks drift band ±₹20K — sirf surplus ho tabhi correct karo. Standalone sell for equiweight KABHI nahi.")
 
         st.markdown("---")
 
@@ -3655,8 +3900,8 @@ with _tab_screener:
             _prev_gd = _plan["weeks"][0]["gd_pct"]
             _prev_cs = _plan["weeks"][0]["cs_pct"]
             # Starting point = prev_score allocation
-            _alloc_start = {3:(90,10,0),2:(70,20,10),1:(40,30,30),0:(20,40,40)}
-            _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(70,20,10))
+            _alloc_start = {3:(80,15,5),2:(65,20,15),1:(45,25,30),0:(25,30,45)}
+            _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(65,20,15))
 
             _wk_rows = []
             for _wi, wd in enumerate(_plan["weeks"]):
