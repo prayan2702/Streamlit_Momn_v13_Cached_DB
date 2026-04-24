@@ -296,10 +296,11 @@ def get_regime_score(dfStats, equity_nav_series=None):
 
     score = s1 + s2 + s3
     alloc = {
-        3: {'label': 'Strong Bull', 'equity': 0.90, 'gold': 0.10, 'cash': 0.00},
-        2: {'label': 'Mild Bull',   'equity': 0.70, 'gold': 0.20, 'cash': 0.10},
-        1: {'label': 'Neutral',     'equity': 0.40, 'gold': 0.30, 'cash': 0.30},
-        0: {'label': 'Bear',        'equity': 0.20, 'gold': 0.40, 'cash': 0.40},
+        # SOP v2026.06 — Gold floor 15%, Equity/Cash rebalanced
+        3: {'label': 'Strong Bull', 'equity': 0.80, 'gold': 0.15, 'cash': 0.05},
+        2: {'label': 'Mild Bull',   'equity': 0.65, 'gold': 0.20, 'cash': 0.15},
+        1: {'label': 'Neutral',     'equity': 0.45, 'gold': 0.25, 'cash': 0.30},
+        0: {'label': 'Bear',        'equity': 0.25, 'gold': 0.30, 'cash': 0.45},
     }[score]
 
     return {
@@ -318,7 +319,7 @@ def get_regime_score(dfStats, equity_nav_series=None):
 
 def _regime_default():
     return {
-        'score': 2, 'label': 'Mild Bull', 'equity': 0.70, 'gold': 0.20, 'cash': 0.10,
+        'score': 2, 'label': 'Mild Bull', 'equity': 0.65, 'gold': 0.20, 'cash': 0.15,
         'breadth_pct': 0.0, 'median_roc3m': 0.0, 'stocks_above_dma': 0, 'total_stocks': 0,
         'nav_current': None, 'nav_dma200': None, 'nav_series_len': 0,
         'signals': {'s1_equity_curve': 1, 's2_breadth': 0, 's3_momentum': 0},
@@ -365,11 +366,11 @@ def get_weekly_deployment_plan(prev_score, curr_score, total_pf,
     Returns dict with weeks list, paused flag, accelerate_msg
     """
     _alloc = {
-        3: (0.90, 0.10, 0.00), 2: (0.70, 0.20, 0.10),
-        1: (0.40, 0.30, 0.30), 0: (0.20, 0.40, 0.40),
+        3: (0.80, 0.15, 0.05), 2: (0.65, 0.20, 0.15),
+        1: (0.45, 0.25, 0.30), 0: (0.25, 0.30, 0.45),
     }
-    prev_alloc = _alloc.get(prev_score, (0.70, 0.20, 0.10))
-    curr_alloc = _alloc.get(curr_score, (0.70, 0.20, 0.10))
+    prev_alloc = _alloc.get(prev_score, (0.65, 0.20, 0.15))
+    curr_alloc = _alloc.get(curr_score, (0.65, 0.20, 0.15))
     delta_e = curr_alloc[0] - prev_alloc[0]
     delta_g = curr_alloc[1] - prev_alloc[1]
     delta_c = curr_alloc[2] - prev_alloc[2]
