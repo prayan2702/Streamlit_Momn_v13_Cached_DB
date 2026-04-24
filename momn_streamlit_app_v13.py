@@ -3751,7 +3751,7 @@ with _tab_screener:
                 </div>""", unsafe_allow_html=True)
 
         # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:#0f172a;
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
                         border-left:4px solid #dc2626;padding:6px 0 6px 12px;
                         background:linear-gradient(90deg,rgba(220,38,38,.06) 0%,transparent 60%);
                         border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
@@ -3803,7 +3803,7 @@ with _tab_screener:
                 </div>""", unsafe_allow_html=True)
 
         # ── Equiweight Maintenance (SOP Section 9.5) ──────────────────
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:#0f172a;
+        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
                         border-left:4px solid #7c3aed;padding:6px 0 6px 12px;
                         background:linear-gradient(90deg,rgba(124,58,237,.06) 0%,transparent 60%);
                         border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
