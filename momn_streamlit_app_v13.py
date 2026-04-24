@@ -1966,7 +1966,7 @@ with _tab_screener:
                 st.markdown("""
                 <div class="nse-link-box">
                   <div>📥</div>
-                  <div>
+                  <div class="section-hdr">
                     <b>NSE — Securities Available for Trading</b>
                     <div class="hint">
                       GitHub cache se auto-load hoga &nbsp;|&nbsp;
