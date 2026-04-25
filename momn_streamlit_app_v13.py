@@ -3427,179 +3427,185 @@ with _tab_screener:
                 st.success("Updated!")
 
         portfolio = st.session_state.reb_portfolio or []
+        # ── Step 3 sub-tabs ───────────────────────────────────────────
+        _s3_tab_a, _s3_tab_b = st.tabs([
+            "🌡️  Regime & Allocation",
+            "⚖️  Rebalancer & Orders",
+        ])
 
+        with _s3_tab_a:
         # ══════════════════════════════════════════════════════════════
         # REGIME PANEL — Market Regime & Multi-Asset Allocation
         # Inserted here so dfStats is available (screener already run)
         # ══════════════════════════════════════════════════════════════
 
-        import datetime as _dt_regime, math as _math_regime
-        from calculations import get_regime_score, get_next_rebalance_dates, get_weekly_deployment_plan
-        import streamlit.components.v1 as _stc_regime
+            import datetime as _dt_regime, math as _math_regime
+            from calculations import get_regime_score, get_next_rebalance_dates, get_weekly_deployment_plan
+            import streamlit.components.v1 as _stc_regime
 
-        st.markdown('<div class="section-hdr">🌡️ Market Regime & Multi-Asset Allocation</div>',
-                    unsafe_allow_html=True)
+            st.markdown('<div class="section-hdr">🌡️ Market Regime & Multi-Asset Allocation</div>',
+                        unsafe_allow_html=True)
 
-        # ── NAV + VIX — same approach as Regime Tab (direct fetch, no Dashboard API) ──
-        _nav_series   = st.session_state.get("_regime_nav_series", [])
-        _vix_curr     = st.session_state.get("_regime_vix", None)
-        _weekly_nav_r = st.session_state.get("_regime_weekly_ret", None)
-        _dash_loaded  = st.session_state.get("_regime_dash_loaded", False)
+            # ── NAV + VIX — same approach as Regime Tab (direct fetch, no Dashboard API) ──
+            _nav_series   = st.session_state.get("_regime_nav_series", [])
+            _vix_curr     = st.session_state.get("_regime_vix", None)
+            _weekly_nav_r = st.session_state.get("_regime_weekly_ret", None)
+            _dash_loaded  = st.session_state.get("_regime_dash_loaded", False)
 
-        _dash_col1, _dash_col2 = st.columns([3, 1])
-        with _dash_col2:
-            _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
-                                   help="NAV CSV + India VIX yfinance se fresh fetch karo")
+            _dash_col1, _dash_col2 = st.columns([3, 1])
+            with _dash_col2:
+                _fetch_nav = st.button("📡 Refresh NAV", key="refresh_nav_btn",
+                                       help="NAV CSV + India VIX yfinance se fresh fetch karo")
 
-        # Auto-fetch on first open OR when button pressed
-        if _fetch_nav or not _dash_loaded:
-            with st.spinner("📡 VIX + NAV fetch ho raha hai..."):
-                try:
-                    _vix_new  = _fetch_vix_yf()
-                    _nav_new  = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
-                    _wret_new = (round((_nav_new[-1] / _nav_new[-6] - 1) * 100, 2)
-                                 if len(_nav_new) >= 6 else None)
-                    if _nav_new:
-                        _nav_series   = _nav_new
-                        _vix_curr     = _vix_new
-                        _weekly_nav_r = _wret_new
-                        st.session_state["_regime_nav_series"]  = _nav_series
-                        st.session_state["_regime_vix"]         = _vix_curr
-                        st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
-                        st.session_state["_regime_dash_loaded"] = True
-                        _vix_msg = f" | VIX: {_vix_curr:.1f}" if _vix_curr else " | VIX: N/A"
-                        st.success(f"✅ NAV: {len(_nav_series)} pts · Latest: {_nav_series[-1]:.2f}{_vix_msg}")
-                    else:
-                        st.warning("⚠️ NAV fetch nahi hua — CSV URL check karo.")
-                except Exception as _ef:
-                    st.warning(f"⚠️ Fetch error: {_ef}")
-        else:
-            _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
-            st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh button se update karo")
+            # Auto-fetch on first open OR when button pressed
+            if _fetch_nav or not _dash_loaded:
+                with st.spinner("📡 VIX + NAV fetch ho raha hai..."):
+                    try:
+                        _vix_new  = _fetch_vix_yf()
+                        _nav_new  = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
+                        _wret_new = (round((_nav_new[-1] / _nav_new[-6] - 1) * 100, 2)
+                                     if len(_nav_new) >= 6 else None)
+                        if _nav_new:
+                            _nav_series   = _nav_new
+                            _vix_curr     = _vix_new
+                            _weekly_nav_r = _wret_new
+                            st.session_state["_regime_nav_series"]  = _nav_series
+                            st.session_state["_regime_vix"]         = _vix_curr
+                            st.session_state["_regime_weekly_ret"]  = _weekly_nav_r
+                            st.session_state["_regime_dash_loaded"] = True
+                            _vix_msg = f" | VIX: {_vix_curr:.1f}" if _vix_curr else " | VIX: N/A"
+                            st.success(f"✅ NAV: {len(_nav_series)} pts · Latest: {_nav_series[-1]:.2f}{_vix_msg}")
+                        else:
+                            st.warning("⚠️ NAV fetch nahi hua — CSV URL check karo.")
+                    except Exception as _ef:
+                        st.warning(f"⚠️ Fetch error: {_ef}")
+            else:
+                _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
+                st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh button se update karo")
 
-        # ── Regime score ──────────────────────────────────────────────
-        _dfS_rg = st.session_state.get("dfStats")
-        if _dfS_rg is not None:
-            _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
-        else:
-            _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
-                   "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
-                   "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
+            # ── Regime score ──────────────────────────────────────────────
+            _dfS_rg = st.session_state.get("dfStats")
+            if _dfS_rg is not None:
+                _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
+            else:
+                _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
+                       "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
+                       "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
 
-        _sc   = _rg["score"];  _lbl  = _rg["label"]
-        _eq   = _rg["equity"]; _gd   = _rg["gold"];  _cs   = _rg["cash"]
-        _sigs = _rg["signals"]
-        _brd  = _rg["breadth_pct"]; _roc3 = _rg["median_roc3m"]
-        _nav_c= _rg.get("nav_current"); _nav_d= _rg.get("nav_dma200")
+            _sc   = _rg["score"];  _lbl  = _rg["label"]
+            _eq   = _rg["equity"]; _gd   = _rg["gold"];  _cs   = _rg["cash"]
+            _sigs = _rg["signals"]
+            _brd  = _rg["breadth_pct"]; _roc3 = _rg["median_roc3m"]
+            _nav_c= _rg.get("nav_current"); _nav_d= _rg.get("nav_dma200")
 
-        _COL  = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
-                 1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}
-        _fc,_bc,_em = _COL[_sc]
+            _COL  = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
+                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}
+            _fc,_bc,_em = _COL[_sc]
 
-        # ── Next dates banner ─────────────────────────────────────────
-        _dates_rg    = get_next_rebalance_dates()
-        _nxt_fri     = _dates_rg["next_friday"]
-        _nxt_rb      = _dates_rg["next_monthly_rb"]
-        _days_fri    = (_nxt_fri - _dt_regime.date.today()).days
+            # ── Next dates banner ─────────────────────────────────────────
+            _dates_rg    = get_next_rebalance_dates()
+            _nxt_fri     = _dates_rg["next_friday"]
+            _nxt_rb      = _dates_rg["next_monthly_rb"]
+            _days_fri    = (_nxt_fri - _dt_regime.date.today()).days
 
-        st.markdown(f"""
-        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-          <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;
-                      padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:'DM Mono',monospace;">
-            📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
-            <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
-          </div>
-          <div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
-                      padding:7px 14px;font-size:12px;color:#15803d;font-family:'DM Mono',monospace;">
-            📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
-          </div>
-          {('<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 14px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>' + str(round(_vix_curr,1)) + ('</b> 🔴' if _vix_curr>20 else '</b>') + '</div>') if _vix_curr else '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: N/A</div>'}
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+              <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;
+                          padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:'DM Mono',monospace;">
+                📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
+                <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
+              </div>
+              <div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
+                          padding:7px 14px;font-size:12px;color:#15803d;font-family:'DM Mono',monospace;">
+                📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
+              </div>
+              {('<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 14px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>' + str(round(_vix_curr,1)) + ('</b> 🔴' if _vix_curr>20 else '</b>') + '</div>') if _vix_curr else '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: N/A</div>'}
+            </div>
+            """, unsafe_allow_html=True)
 
-        # ── Gauge + Signals ───────────────────────────────────────────
-        _s1ok  = _sigs.get("s1_equity_curve", 1)
-        _s2ok  = _sigs.get("s2_breadth", 0)
-        _s3ok  = _sigs.get("s3_momentum", 0)
-        _s1c   = "#16a34a" if _s1ok else "#dc2626"
-        _s2c   = "#16a34a" if _s2ok else "#dc2626"
-        _s3c   = "#16a34a" if _s3ok else "#dc2626"
-        _nav_txt = (f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d
-                    else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA"))
-        _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
-        _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
-        _sig_html = (
-        '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}'
-        '.sigs{display:flex;flex-direction:column;gap:10px;}'
-        '.sig{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}'
-        '.si{font-size:24px;flex-shrink:0;}'
-        '.sb{flex:1;}'
-        '.st{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}'
-        '.sc_t{font-size:12px;margin-bottom:4px;}'
-        '.sv{font-size:15px;font-weight:800;}'
-        '.sbg{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}'
-        '</style>'
-        '<div class="sigs">'
-        f'<div class="sig" style="background:{"#e8fdf2" if _s1ok else "#fef2f2"};border-color:{"#86efac" if _s1ok else "#fca5a5"}">'
-        f'<div class="si">{"✅" if _s1ok else "❌"}</div>'
-        f'<div class="sb"><div class="st" style="color:{_s1c}">S1 — Equity Curve Trend</div>'
-        '<div class="sc_t" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
-        f'<div class="sv" style="color:{_s1c}">{_nav_txt}</div></div>'
-        f'<div class="sbg" style="background:{_s1c};color:white">{"PASS" if _s1ok else "FAIL"}</div>'
-        '</div>'
-        f'<div class="sig" style="background:{"#e8fdf2" if _s2ok else "#fef2f2"};border-color:{"#86efac" if _s2ok else "#fca5a5"}">'
-        f'<div class="si">{"✅" if _s2ok else "❌"}</div>'
-        f'<div class="sb"><div class="st" style="color:{_s2c}">S2 — Market Breadth</div>'
-        '<div class="sc_t" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
-        f'<div class="sv" style="color:{_s2c}">{_brd}% above DMA</div></div>'
-        f'<div class="sbg" style="background:{_s2c};color:white">{"PASS" if _s2ok else "FAIL"}</div>'
-        '</div>'
-        f'<div class="sig" style="background:{"#e8fdf2" if _s3ok else "#fef2f2"};border-color:{"#86efac" if _s3ok else "#fca5a5"}">'
-        f'<div class="si">{"✅" if _s3ok else "❌"}</div>'
-        f'<div class="sb"><div class="st" style="color:{_s3c}">S3 — Universe Momentum</div>'
-        '<div class="sc_t" style="color:#374151">Median 3M ROC &gt; 0%</div>'
-        f'<div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median 3M return</div></div>'
-        f'<div class="sbg" style="background:{_s3c};color:white">{"PASS" if _s3ok else "FAIL"}</div>'
-        '</div>'
-        '</div>'
-        )
-        _g_col, _s_col = st.columns([1, 1.6])
-        with _g_col:
-            _stc_regime.html(_gauge_html, height=380)
-        with _s_col:
-            _stc_regime.html(_sig_html, height=380)
+            # ── Gauge + Signals ───────────────────────────────────────────
+            _s1ok  = _sigs.get("s1_equity_curve", 1)
+            _s2ok  = _sigs.get("s2_breadth", 0)
+            _s3ok  = _sigs.get("s3_momentum", 0)
+            _s1c   = "#16a34a" if _s1ok else "#dc2626"
+            _s2c   = "#16a34a" if _s2ok else "#dc2626"
+            _s3c   = "#16a34a" if _s3ok else "#dc2626"
+            _nav_txt = (f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d
+                        else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA"))
+            _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
+            _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
+            _sig_html = (
+            '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}'
+            '.sigs{display:flex;flex-direction:column;gap:10px;}'
+            '.sig{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}'
+            '.si{font-size:24px;flex-shrink:0;}'
+            '.sb{flex:1;}'
+            '.st{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}'
+            '.sc_t{font-size:12px;margin-bottom:4px;}'
+            '.sv{font-size:15px;font-weight:800;}'
+            '.sbg{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}'
+            '</style>'
+            '<div class="sigs">'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s1ok else "#fef2f2"};border-color:{"#86efac" if _s1ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s1ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s1c}">S1 — Equity Curve Trend</div>'
+            '<div class="sc_t" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
+            f'<div class="sv" style="color:{_s1c}">{_nav_txt}</div></div>'
+            f'<div class="sbg" style="background:{_s1c};color:white">{"PASS" if _s1ok else "FAIL"}</div>'
+            '</div>'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s2ok else "#fef2f2"};border-color:{"#86efac" if _s2ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s2ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s2c}">S2 — Market Breadth</div>'
+            '<div class="sc_t" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
+            f'<div class="sv" style="color:{_s2c}">{_brd}% above DMA</div></div>'
+            f'<div class="sbg" style="background:{_s2c};color:white">{"PASS" if _s2ok else "FAIL"}</div>'
+            '</div>'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s3ok else "#fef2f2"};border-color:{"#86efac" if _s3ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s3ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s3c}">S3 — Universe Momentum</div>'
+            '<div class="sc_t" style="color:#374151">Median 3M ROC &gt; 0%</div>'
+            f'<div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median 3M return</div></div>'
+            f'<div class="sbg" style="background:{_s3c};color:white">{"PASS" if _s3ok else "FAIL"}</div>'
+            '</div>'
+            '</div>'
+            )
+            _g_col, _s_col = st.columns([1, 1.6])
+            with _g_col:
+                _stc_regime.html(_gauge_html, height=380)
+            with _s_col:
+                _stc_regime.html(_sig_html, height=380)
 
-        st.markdown("---")
+            st.markdown("---")
 
-        # ── Portfolio value + prev score ──────────────────────────────
-        _pv1, _pv2 = st.columns(2)
-        with _pv1:
-            _total_pf = st.number_input("💼 Total Portfolio Value ₹ (Equity + Gold + Cash)",
-                                         min_value=0, value=int(st.session_state.get("regime_pf_val",1000000)),
-                                         step=10000, key="regime_pf_val")
-        with _pv2:
-            _prev_sc  = st.number_input("📅 Pichle Mahine Ka Score (0-3)", min_value=0, max_value=3,
-                                         value=int(st.session_state.get("regime_prev_score", _sc)),
-                                         step=1, key="regime_prev_score")
+            # ── Portfolio value + prev score ──────────────────────────────
+            _pv1, _pv2 = st.columns(2)
+            with _pv1:
+                _total_pf = st.number_input("💼 Total Portfolio Value ₹ (Equity + Gold + Cash)",
+                                             min_value=0, value=int(st.session_state.get("regime_pf_val",1000000)),
+                                             step=10000, key="regime_pf_val")
+            with _pv2:
+                _prev_sc  = st.number_input("📅 Pichle Mahine Ka Score (0-3)", min_value=0, max_value=3,
+                                             value=int(st.session_state.get("regime_prev_score", _sc)),
+                                             step=1, key="regime_prev_score")
 
-        # ── Allocation cards ──────────────────────────────────────────
-        _a1,_a2,_a3 = st.columns(3)
-        for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
-            ("📈 Equity",_eq,"#2563eb","#dbeafe"),
-            ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
-            ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
-            with col:
-                st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
-                    padding:12px;text-align:center;margin-bottom:8px;">
-                  <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
-                  <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
-                  <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
-                </div>""", unsafe_allow_html=True)
+            # ── Allocation cards ──────────────────────────────────────────
+            _a1,_a2,_a3 = st.columns(3)
+            for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
+                ("📈 Equity",_eq,"#2563eb","#dbeafe"),
+                ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
+                ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
+                with col:
+                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
+                        padding:12px;text-align:center;margin-bottom:8px;">
+                      <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
+                      <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
+                      <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
+                    </div>""", unsafe_allow_html=True)
 
-        # ── Shift message ─────────────────────────────────────────────
-        _sc_diff = _sc - _prev_sc
+            # ── Shift message ─────────────────────────────────────────────
+            _sc_diff = _sc - _prev_sc
 
-        # Persist for Order Calculator (Step 4)
+        # Persist for Order Calculator
         st.session_state["_regime_result"]   = _rg
         st.session_state["_regime_prev_sc"]  = int(_prev_sc)
         st.session_state["_regime_total_pf"] = float(_total_pf)
@@ -3609,864 +3615,791 @@ with _tab_screener:
             _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — exits se Gold/Liquid fund karo, new entries at new target weight. Existing stocks drift band mein rahenge.","#1d4ed8","#dbeafe"
         else:
             _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — phased 2-month plan. Monthly exits se Gold/Liquid fund karo. Weekly plan neeche dekho.","#b45309","#fef3c7"
-        st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
-                    border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
-          {_smsg}</div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
+                        border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
+              {_smsg}</div>""", unsafe_allow_html=True)
 
-        # ── GOLDBEES + Liquid actions — aligned layout ───────────────
-        # Section header
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
-                        border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
-                        background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
-                        border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
-            🏦 Asset Actions
-        </div>""", unsafe_allow_html=True)
-
-        _act_col1, _act_col2 = st.columns(2)
-
-        # ─── GOLDBEES ───────────────────────────────────────────────────
-        with _act_col1:
-            st.markdown('<div style="font-size:13px;font-weight:700;color:#b45309;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fcd34d">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
-            _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
-                                        value=0, step=1000, key="goldbees_curr_val",
-                                        label_visibility="visible")
-            st.session_state["_gb_curr_val"] = float(_gb_curr)
-            _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0,
-                                        value=0.0, step=0.5, key="goldbees_cmp",
-                                        label_visibility="visible")
-            if _total_pf > 0:
-                _gd_tgt = _total_pf * _gd
-                _gd_dif = _gd_tgt - _gb_curr
-                _gdok   = abs(_gd_dif) / _total_pf < 0.07
-                _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
-                _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
-                _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
-                _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
-                # ₹15K min guardrail — sub-₹15K transaction not worth brokerage
-                _gd_min_ok = abs(_gd_dif) >= 15000
-                _gact_txt  = "Hold (within ±7%)" if _gdok else (
-                    f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}"
-                )
-                if not _gdok and not _gd_min_ok:
-                    _gact_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_gd_dif):,.0f}"
-                    _gdc, _gd_bg = "#64748b", "#f1f5f9"
-                # VIX overlay adjusted gold target
-                _vix_ovl_pct = 0
-                if _vix_curr and _vix_curr > 30: _vix_ovl_pct = 5
-                elif _vix_curr and _vix_curr > 20: _vix_ovl_pct = 3
-                _eff_gd_pct = min(_gd + _vix_ovl_pct/100, 0.30)
-                _gd_tgt_eff = _total_pf * _eff_gd_pct
-                _ovl_note   = f" (VIX +{_vix_ovl_pct}%)" if _vix_ovl_pct > 0 else ""
-                st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
-                        border-radius:10px;padding:13px 15px;margin-top:6px;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;
-                              margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
-                    <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
-                    <span style="font-size:16px;opacity:.4">→</span>
-                    <span>Target: <b style="font-size:14px;">₹{_gd_tgt_eff:,.0f}</b>{_ovl_note}</span>
-                  </div>
-                  <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
-                    {_gact_icon} {_gact_txt}
-                  </div>
-                  <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                    Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_gd_dif):,.0f}" if not _gdok else 'Within band'}
-                  </div>
-                </div>""", unsafe_allow_html=True)
-
-        # ─── LIQUID FUND ─────────────────────────────────────────────────
-        with _act_col2:
-            st.markdown('<div style="font-size:13px;font-weight:700;color:#475569;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #cbd5e1">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
-            _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
-                                        value=0, step=1000, key="liquid_curr_val",
-                                        label_visibility="visible")
-            st.session_state["_lf_curr_val"] = float(_lf_curr)
-            if _total_pf > 0:
-                _cs_tgt = _total_pf * _cs
-                _cs_dif = _cs_tgt - _lf_curr
-                _csok   = abs(_cs_dif) / _total_pf < 0.07
-                _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
-                _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
-                _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
-                # ₹15K min guardrail
-                _cs_min_ok = abs(_cs_dif) >= 15000
-                _cs_txt  = "Hold (within ±7%)" if _csok else (
-                    f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}"
-                )
-                if not _csok and not _cs_min_ok:
-                    _cs_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_cs_dif):,.0f}"
-                    _csc, _cs_bg = "#64748b", "#f1f5f9"
-                st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                        border-radius:10px;padding:13px 15px;margin-top:89px;">
-                  <div style="display:flex;justify-content:space-between;align-items:center;
-                              margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
-                    <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
-                    <span style="font-size:16px;opacity:.4">→</span>
-                    <span>Target: <b style="font-size:14px;">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
-                  </div>
-                  <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
-                    {_cs_icon} {_cs_txt}
-                  </div>
-                  <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                    Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_cs_dif):,.0f}" if not _csok else 'Within band'}
-                  </div>
-                </div>""", unsafe_allow_html=True)
-
-        # ── Equity budget ─────────────────────────────────────────────
-        _eq_budget = _total_pf * _eq
-        _per_stock_target = _eq_budget / 30 if _eq_budget > 0 else 0
-        _drift_band_rs = 20000  # ±₹20K per stock drift band (SOP 9.5.1)
-        st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
-                    border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
-          <b style="color:#1d4ed8">📈 Equity Budget:</b>
-          <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
-            <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
-          </span>
-          &nbsp;&nbsp;
-          <span style="color:#475569;font-size:12px;">
-            | Per stock target: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
-            &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
-            &nbsp;| Band Low: ₹{max(0,_per_stock_target-_drift_band_rs):,.0f}
-            — High: ₹{_per_stock_target+_drift_band_rs:,.0f}
-          </span>
-        </div>""", unsafe_allow_html=True)
-
-        # ── VIX Overlay Panel (SOP Section 7.5) ──────────────────────
-        if _vix_curr is not None and _total_pf > 0:
-            _base_gold_pct = _gd * 100
-            _vix_overlay_pct = 0
-            _vix_overlay_src = ""
-            if _vix_curr > 30:
-                _vix_overlay_pct = 5
-                _vix_overlay_src = "VIX > 30"
-            elif _vix_curr > 20:
-                _vix_overlay_pct = 3
-                _vix_overlay_src = "VIX 20-30"
-
-            if _vix_overlay_pct > 0:
-                _eff_gold_pct = min(_base_gold_pct + _vix_overlay_pct, 30)  # hard cap 30%
-                _actual_overlay = _eff_gold_pct - _base_gold_pct
-                _eff_cash_pct   = (_cs * 100) - _actual_overlay  # liquid funds the shift
-                _eff_gold_rs    = _total_pf * _eff_gold_pct / 100
-                _eff_cash_rs    = _total_pf * _eff_cash_pct / 100
-                _overlay_rs     = _total_pf * _actual_overlay / 100
-                _vix_col = "#dc2626" if _vix_curr > 30 else "#d97706"
-                _vix_bg  = "#fef2f2" if _vix_curr > 30 else "#fef3c7"
-                st.markdown(f"""
-                <div style="background:{_vix_bg};border:1.5px solid {_vix_col};border-left:4px solid {_vix_col};
-                            border-radius:8px;padding:12px 16px;margin:8px 0;">
-                  <div style="font-size:13px;font-weight:700;color:{_vix_col};margin-bottom:6px;">
-                    ⚡ VIX Overlay Active — {_vix_overlay_src} (+{_actual_overlay:.0f}% Gold from Liquid)
-                  </div>
-                  <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#374151;">
-                    <span>Base Gold: <b>{_base_gold_pct:.0f}%</b></span>
-                    <span style="color:{_vix_col};">→ Effective Gold: <b>{_eff_gold_pct:.0f}%</b> (₹{_eff_gold_rs:,.0f})</span>
-                    <span>Effective Cash: <b>{_eff_cash_pct:.0f}%</b> (₹{_eff_cash_rs:,.0f})</span>
-                    <span style="color:#6d28d9;font-weight:600;">Move ₹{_overlay_rs:,.0f} from Liquid → GOLDBEES</span>
-                  </div>
-                  <div style="font-size:11px;color:#6b7280;margin-top:6px;">
-                    ⚠️ Equity UNTOUCHED — only Liquid → Gold shift. Apply at monthly RB (VIX 20-30) or this Friday (VIX > 30).
-                    Normalize hone pe (VIX ≤ 20) → excess Gold wapas Liquid mein.
-                  </div>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
-                            padding:8px 14px;font-size:12px;color:#15803d;margin:4px 0;">
-                  ✅ VIX {_vix_curr:.1f} ≤ 20 — No VIX Overlay. Base allocation applies.
-                </div>""", unsafe_allow_html=True)
-
-        # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
-                        border-left:4px solid #dc2626;padding:6px 0 6px 12px;
-                        background:linear-gradient(90deg,rgba(220,38,38,.06) 0%,transparent 60%);
-                        border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
-            📉 Portfolio Drawdown Protocol
-        </div>""", unsafe_allow_html=True)
-        _dd_c1, _dd_c2 = st.columns(2)
-        with _dd_c1:
-            _pf_ath = st.number_input("📈 Portfolio ATH Value ₹ (All-Time High)",
-                                       min_value=0, value=int(st.session_state.get("_pf_ath_val", _total_pf or 1000000)),
-                                       step=10000, key="_pf_ath_val",
-                                       help="Apne portfolio ka highest value — NAV sheet se dekho")
-        with _dd_c2:
-            _pf_curr_dd = st.number_input("💼 Current Portfolio Value ₹",
-                                           min_value=0, value=int(_total_pf),
-                                           step=10000, key="_pf_curr_dd_val",
-                                           help="Aaj ki total value (Equity + Gold + Cash)")
-
-        if _pf_ath > 0 and _pf_curr_dd > 0:
-            _dd_pct = (_pf_curr_dd / _pf_ath - 1) * 100
-            _dd_abs  = abs(_dd_pct)
-            if _dd_pct >= 0:
-                st.markdown(f"""<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
-                            padding:8px 14px;font-size:13px;color:#15803d;">
-                  ✅ Portfolio ATH pe ya upar hai — DD: <b>{_dd_pct:+.1f}%</b>. No override needed.
-                </div>""", unsafe_allow_html=True)
-            elif _dd_abs < 15:
-                st.markdown(f"""<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
-                            padding:8px 14px;font-size:13px;color:#15803d;">
-                  ✅ DD: <b>{_dd_pct:.1f}%</b> — Normal range (< 15%). Strategy as usual.
-                </div>""", unsafe_allow_html=True)
-            elif _dd_abs < 20:
-                st.warning(f"⚠️ DD: **{_dd_pct:.1f}%** — DD ≥ 15% zone. Weekly check mandatory. Capital additions pause karo.")
-            elif _dd_abs < 30:
-                st.error(f"🚨 DD Override TRIGGERED — DD: **{_dd_pct:.1f}%** ≥ 20% from ATH!")
-                st.markdown(f"""<div style="background:#fef2f2;border:1.5px solid #dc2626;border-radius:8px;
-                            padding:12px 16px;font-size:13px;color:#dc2626;margin:4px 0;">
-                  <b>⚠️ DD Override Active:</b> Current signal Score {_sc} ignored.
-                  Treat as Score 0 (Bear). Target: Equity 25% | Gold 30% | Cash 45%.<br>
-                  <span style="font-size:12px;color:#7f1d1d;">
-                  4-week defensive shift shuru karo. Equity ₹{_total_pf*0.25:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.45:,.0f}
-                  </span>
-                </div>""", unsafe_allow_html=True)
-            else:
-                st.error(f"🚨🚨 EMERGENCY — DD: **{_dd_pct:.1f}%** ≥ 30% from ATH!")
-                st.markdown(f"""<div style="background:#fef2f2;border:2px solid #7f1d1d;border-radius:8px;
-                            padding:12px 16px;font-size:13px;color:#7f1d1d;">
-                  <b>🆘 Emergency Protocol:</b> Single-week move. Target: Equity 20% | Gold 30% | Cash 50%.<br>
-                  Equity ₹{_total_pf*0.20:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.50:,.0f}
-                </div>""", unsafe_allow_html=True)
-
-        # ── Equiweight Maintenance (SOP Section 9.5) ──────────────────
-        st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
-                        border-left:4px solid #7c3aed;padding:6px 0 6px 12px;
-                        background:linear-gradient(90deg,rgba(124,58,237,.06) 0%,transparent 60%);
-                        border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
-            ⚖️ Equiweight Maintenance — Exit-Funded Regime Shift
-        </div>""", unsafe_allow_html=True)
-        _ew_c1, _ew_c2, _ew_c3 = st.columns(3)
-        with _ew_c1:
-            _exit_proceeds = st.number_input("💰 Exit Proceeds ₹ (sells se mila)",
-                                              min_value=0, value=0, step=1000, key="_exit_proceeds_val",
-                                              help="Is mahine ke exits ki total sell value")
-        with _ew_c2:
-            _n_new_entries = st.number_input("🟢 New Entries Count", min_value=0, max_value=30,
-                                              value=0, step=1, key="_n_new_entries_val",
-                                              help="Kitne naye stocks buy karne hain")
-        with _ew_c3:
-            st.markdown(f"""<div style="background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;
-                        padding:10px 12px;text-align:center;margin-top:4px;">
-              <div style="font-size:10px;color:#6d28d9;font-weight:600;text-transform:uppercase;">Per Stock Target</div>
-              <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stock_target:,.0f}</div>
-              <div style="font-size:10px;color:#7c3aed;">Eq Budget ÷ 30</div>
+            # ── GOLDBEES + Liquid actions — aligned layout ───────────────
+            # Section header
+            st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
+                            border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
+                            background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
+                            border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
+                🏦 Asset Actions
             </div>""", unsafe_allow_html=True)
 
-        if _exit_proceeds > 0 and _total_pf > 0:
-            # VIX overlay adjusted gold gap
-            _vix_adj_gold_pct = min(_gd + (_vix_overlay_pct/100 if '_vix_overlay_pct' in dir() else 0), 0.30)
-            _gold_gap    = max(0, _total_pf * _vix_adj_gold_pct - (_gb_curr if '_gb_curr' in dir() else 0))
-            _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
-            _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
-            _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
-            _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
-            _surplus              = _proceeds_after_liq - _new_entry_cost
+            _act_col1, _act_col2 = st.columns(2)
 
-            st.markdown(f"""
-            <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
-                        padding:14px 16px;margin-top:8px;">
-              <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px;">
-                📊 Proceeds Allocation Plan
-              </div>
-              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
-                <div style="background:#dbeafe;border-radius:8px;padding:10px;text-align:center;">
-                  <div style="font-size:10px;color:#1d4ed8;font-weight:600">EXIT PROCEEDS</div>
-                  <div style="font-size:18px;font-weight:800;color:#1d4ed8">₹{_exit_proceeds:,.0f}</div>
-                </div>
-                <div style="background:#{'fef3c7' if _gold_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
-                  <div style="font-size:10px;color:#{'b45309' if _gold_gap>0 else '15803d'};font-weight:600">1. GOLD GAP (first)</div>
-                  <div style="font-size:18px;font-weight:800;color:#{'b45309' if _gold_gap>0 else '15803d'}">₹{_gold_gap:,.0f}</div>
-                </div>
-                <div style="background:#{'dbeafe' if _liquid_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
-                  <div style="font-size:10px;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'};font-weight:600">2. LIQUID GAP</div>
-                  <div style="font-size:18px;font-weight:800;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'}">₹{_liquid_gap:,.0f}</div>
-                </div>
-                <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
-                  <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stock_target:,.0f})</div>
-                  <div style="font-size:18px;font-weight:800;color:#15803d">₹{_new_entry_cost:,.0f}</div>
-                </div>
-                <div style="background:#{'dcfce7' if _surplus>=0 else 'fee2e2'};border-radius:8px;padding:10px;text-align:center;">
-                  <div style="font-size:10px;color:#{'15803d' if _surplus>=0 else 'dc2626'};font-weight:600">SURPLUS / SHORTFALL</div>
-                  <div style="font-size:18px;font-weight:800;color:#{'15803d' if _surplus>=0 else 'dc2626'}">₹{_surplus:+,.0f}</div>
-                </div>
-              </div>
-              <div style="margin-top:10px;font-size:12px;color:#64748b;background:#f1f5f9;border-radius:6px;padding:8px 12px;">
-                {'✅ Surplus ₹' + f"{_surplus:,.0f}" + ' → most underweight existing stock mein daalo (1 extra transaction max).'
-                 if _surplus > 15000 else
-                 ('⚠️ Shortfall ₹' + f"{abs(_surplus):,.0f}" + ' → partial entry ya ek stock entry defer karo. Agla month complete hoga.'
-                 if _surplus < -5000 else
-                 '✅ Proceeds approximately match. Clean rebalance.')}
-              </div>
-            </div>
-            """, unsafe_allow_html=True)
-            st.caption("Rule: Gold/Liquid gap fund karo FIRST. Existing stocks drift band ±₹20K — sirf surplus ho tabhi correct karo. Standalone sell for equiweight KABHI nahi.")
-
-        st.markdown("---")
-
-        # ── Weekly Deployment Plan ────────────────────────────────────
-        if _sc_diff != 0 and _total_pf > 0:
-            st.markdown("### 📅 Weekly Deployment Plan")
-            _plan = get_weekly_deployment_plan(
-                prev_score=_prev_sc, curr_score=_sc, total_pf=_total_pf,
-                goldbees_curr=_gb_curr if "_gb_curr" in dir() else 0,
-                liquid_curr=_lf_curr if "_lf_curr" in dir() else 0,
-                weekly_nav_ret=_weekly_nav_r, vix_curr=_vix_curr
-            )
-            if _plan["paused"]:
-                st.error(f"⏸ Week 1 PAUSED — VIX {_vix_curr:.1f} > 30 AND Weekly return {_weekly_nav_r:.1f}% < -5%. Next Friday check karo.")
-            elif _plan["is_recovery"]:
-                st.info(f"🔺 Recovery mode — {_plan['n_weeks']} weeks. Faster deploy.")
-            else:
-                st.info(f"🔻 Defensive mode — {_plan['n_weeks']} weeks. Gradual reduce.")
-            st.markdown(f"""<div style="background:#fef3c7;border:1px solid #fcd34d;border-left:3px solid #b45309;
-                        border-radius:6px;padding:8px 14px;font-size:12px;color:#78350f;margin-bottom:8px;">
-              {_plan["accelerate_msg"]}</div>""", unsafe_allow_html=True)
-            _fri_lst = _dates_rg["upcoming_fridays"]
-            _prev_eq = _plan["weeks"][0]["eq_pct"]  # will compare against previous week
-            _prev_gd = _plan["weeks"][0]["gd_pct"]
-            _prev_cs = _plan["weeks"][0]["cs_pct"]
-            # Starting point = prev_score allocation
-            _alloc_start = {3:(80,15,5),2:(65,20,15),1:(45,25,30),0:(25,30,45)}
-            _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(65,20,15))
-
-            _wk_rows = []
-            for _wi, wd in enumerate(_plan["weeks"]):
-                fri_lbl = _fri_lst[wd["week"]-1].strftime("%d %b") if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}"
-                # Compare vs starting allocation (not previous week)
-                _de = wd["eq_pct"] - _st_e
-                _dg = wd["gd_pct"] - _st_g
-                _dc = wd["cs_pct"] - _st_c
-                # Arrow indicators
-                def _arrow(delta): return "" if abs(delta)<0.1 else ("▲ " if delta>0 else "▼ ")
-                def _sign(v): return f"+{v:.1f}" if v>0 else f"{v:.1f}" if v<0 else "0"
-                _wk_rows.append({
-                    "Check" : fri_lbl,
-                    "Eq %"  : f"{_arrow(_de)}{wd['eq_pct']}% ({_sign(_de)}pp)",
-                    "Gold %": f"{_arrow(_dg)}{wd['gd_pct']}% ({_sign(_dg)}pp)",
-                    "Cash %": f"{_arrow(_dc)}{wd['cs_pct']}% ({_sign(_dc)}pp)",
-                    "Eq ₹"  : f"₹{wd['eq_val']:,.0f}",
-                    "Gold ₹" : f"₹{wd['gd_val']:,.0f}",
-                    "Cash ₹" : f"₹{wd['cs_val']:,.0f}",
-                    "Action" : wd["action"],
-                })
-            st.dataframe(pd.DataFrame(_wk_rows), use_container_width=True, hide_index=True)
-            st.markdown("---")
-
-        # ── Weekly Switch Alerts ──────────────────────────────────────
-        _w_alerts = []
-        if _weekly_nav_r is not None and _weekly_nav_r < -5.0:
-            _w_alerts.append(f"📉 Weekly NAV return = **{_weekly_nav_r:.1f}%** (< -5%)")
-        if _vix_curr is not None and _vix_curr > 30:
-            _w_alerts.append(f"😱 India VIX = **{_vix_curr:.1f}** (> 30)")
-        _dfF_check = st.session_state.get("dfFiltered")
-        if _dfF_check is not None and len(_dfF_check) < 30:
-            _w_alerts.append(f"📊 Qualifying stocks = **{len(_dfF_check)}** (< 30)")
-        if _w_alerts:
-            st.markdown("### ⚡ Weekly Switch Alert")
-            for _wa in _w_alerts: st.warning(_wa)
-            if len(_w_alerts) >= 2:
-                st.error("🚨 **Weekly Switch TRIGGERED** — Weekly rotation mode activate karo (5 weeks).")
-            else:
-                st.info("⚠️ Single trigger — monitor karo. Both VIX>30 AND weekly<-5% chahiye for switch.")
-
-        st.divider()
-        # ══════════════════════════════════════════════════════════════
-        # END REGIME PANEL — Existing rebalance code continues below
-        # ══════════════════════════════════════════════════════════════
-
-        # ── Compute rebalance ─────────────────────────────────────
-        if portfolio and st.session_state.dfFiltered is not None:
-            dfFiltered      = st.session_state.dfFiltered
-            dfStats         = st.session_state.dfStats
-            top_n           = st.session_state.top_n_rank
-            rank_threshold  = top_n
-
-            top_rank_tickers = dfFiltered.reset_index()
-            top_rank_tickers = top_rank_tickers[top_rank_tickers['Rank'] <= rank_threshold]['Ticker']
-
-            current_portfolio_tickers = pd.Series(portfolio)
-            entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)]
-            exit_stocks  = current_portfolio_tickers[~current_portfolio_tickers.isin(top_rank_tickers)]
-            hold_stocks  = current_portfolio_tickers[current_portfolio_tickers.isin(top_rank_tickers)]
-
-            num_sells = len(exit_stocks)
-            entry_stocks = entry_stocks.head(num_sells)
-
-            if len(entry_stocks) < num_sells:
-                entry_stocks = pd.concat([
-                    entry_stocks,
-                    pd.Series([None] * (num_sells - len(entry_stocks)))
-                ])
-
-            # ── Reasons for exit (v10 logic) ──────────────────────
-            reasons_for_exit = []
-            for ticker in exit_stocks:
-                if pd.isna(ticker) or ticker == "":
-                    reasons_for_exit.append(""); continue
-                reasons    = []
-                stock_data = dfStats[dfStats['Ticker'] == ticker] if dfStats is not None else pd.DataFrame()
-                if len(stock_data) > 0:
-                    if stock_data.index[0] > rank_threshold:          reasons.append(f"Rank > {rank_threshold}")
-                    if stock_data['volm_cr'].values[0] <= 1:           reasons.append("Volume ≤ 1 Cr")
-                    if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]:
-                                                                       reasons.append("Close ≤ 200-DMA")
-                    if stock_data['roc12M'].values[0] <= 5.5:          reasons.append("12M ROC ≤ 5.5%")
-                    if stock_data['circuit'].values[0] >= 20:          reasons.append("Circuit ≥ 20")
-                    if stock_data['AWAY_ATH'].values[0] <= -25:        reasons.append("Away ATH ≤ -25%")
-                    if stock_data['roc12M'].values[0] >= 1000:         reasons.append("12M ROC ≥ 1000%")
-                    if stock_data['Close'].values[0] <= 30:            reasons.append("Close ≤ ₹30")
-                    if stock_data['circuit5'].values[0] > 10:          reasons.append("5% Circuit > 10")
-                else:
-                    reasons.append("Not in selected universe")
-                reasons_for_exit.append(", ".join(reasons) if reasons else "Rank dropped")
-
-            reasons_for_exit.extend([""] * (len(entry_stocks) - len(reasons_for_exit)))
-
-            rebalance_table = pd.DataFrame({
-                'S.No.':           range(1, num_sells + 1),
-                'Sell Stocks':     exit_stocks.tolist(),
-                'Buy Stocks':      entry_stocks.tolist(),
-                'Reason for Exit': reasons_for_exit,
-            })
-            rebalance_table = rebalance_table[
-                ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())
-            ]
-            rebalance_table.set_index('S.No.', inplace=True)
-            st.session_state.sell_list = exit_stocks.dropna().tolist()
-            st.session_state.buy_list  = entry_stocks.dropna().tolist()
-            st.session_state.rebalance_table = rebalance_table
-            st.session_state.rebalance_done  = True
-
-            # ── Summary strip ──────────────────────────────────────
-            st.markdown(f"""<div class="reb-strip">
-              <div class="reb-stat"><div class="label">Portfolio</div><div class="val b">{len(portfolio)}</div></div>
-              <div class="reb-stat"><div class="label">Top-{rank_threshold} Screener</div><div class="val b">{len(top_rank_tickers)}</div></div>
-              <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{len(exit_stocks)}</div></div>
-              <div class="reb-stat"><div class="label">BUY (Entry)</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
-              <div class="reb-stat"><div class="label">HOLD</div><div class="val p">{len(hold_stocks)}</div></div>
-            </div>""", unsafe_allow_html=True)
-
-            # ── Sell / Buy / Hold columns ──────────────────────────
-            col_sell, col_buy, col_hold = st.columns(3)
-            with col_sell:
-                st.markdown('<div class="section-hdr" style="border-left-color:var(--red)">🔴 SELL List</div>', unsafe_allow_html=True)
-                sell_list = exit_stocks.dropna().tolist()
-                if sell_list:
-                    chips = " ".join([f'<span class="chip chip-sell">{s}</span>' for s in sell_list])
-                    st.markdown(chips, unsafe_allow_html=True)
-                    cmp_map = {}
-                    if dfStats is not None:
-                        cmp_map = dict(zip(dfStats['Ticker'], dfStats['Close']))
-                    # Also try dfFiltered for CMP (in case stock is in filtered but not dfStats)
-                    if dfFiltered is not None:
-                        for t, c in zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Close']):
-                            if t not in cmp_map:
-                                cmp_map[t] = c
-                    sell_df = pd.DataFrame({
-                        "Stock": sell_list,
-                        "CMP ₹": [
-                            round(cmp_map[s], 2) if s in cmp_map and cmp_map[s] > 0
-                            else "N/A *"
-                            for s in sell_list
-                        ],
-                        "Reason": reasons_for_exit[:len(sell_list)]
-                    })
-                    st.dataframe(sell_df, hide_index=True, use_container_width=True)
-                    missing_cmp = [s for s in sell_list if s not in cmp_map or cmp_map.get(s, 0) == 0]
-                    if missing_cmp:
-                        st.caption(
-                            f"* {', '.join(missing_cmp)} — CMP unavailable "
-                            f"(stock selected universe ({st.session_state.universe}) mein nahi hai). "
-                            "Broker app se manually CMP check karo."
-                        )
-                else:
-                    st.success("Koi sell nahi hai!")
-
-            with col_buy:
-                st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List (New Entry)</div>', unsafe_allow_html=True)
-                buy_list = entry_stocks.dropna().tolist()
-                if buy_list:
-                    chips = " ".join([f'<span class="chip chip-buy">{s}</span>' for s in buy_list])
-                    st.markdown(chips, unsafe_allow_html=True)
-                    rank_map = dict(zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Rank']))
-                    cmp_map2 = {}
-                    if dfStats is not None:
-                        cmp_map2 = dict(zip(dfStats['Ticker'], dfStats['Close']))
-                    buy_df = pd.DataFrame({
-                        "Stock":        buy_list,
-                        "Screener Rank":[rank_map.get(s, "—") for s in buy_list],
-                        "CMP ₹":        [round(cmp_map2.get(s, 0), 2) for s in buy_list],
-                    })
-                    st.dataframe(buy_df, hide_index=True, use_container_width=True)
-                else:
-                    st.info("Koi buy nahi hai.")
-
-            with col_hold:
-                st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🔵 HOLD (Retain)</div>', unsafe_allow_html=True)
-                if not hold_stocks.empty:
-                    chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_stocks.tolist()])
-                    st.markdown(chips, unsafe_allow_html=True)
-
-            # ── Rebalance table ────────────────────────────────────
-            st.markdown('<div class="section-hdr">📋 Rebalance Table (Sell → Buy mapping)</div>', unsafe_allow_html=True)
-            if not rebalance_table.empty:
-                st.dataframe(rebalance_table, use_container_width=True)
-
-            st.divider()
-
-            # ══════════════════════════════════════════════════════════
-            # WORKFLOW PANEL — Screener → Rebalancer → Order Calculator
-            # ══════════════════════════════════════════════════════════
-            st.markdown('<div class="section-hdr">🔄 Rebalancer Workflow</div>', unsafe_allow_html=True)
-
-            # ── Step A: Copy Top-N screener list → Google Sheet "Worst Rank Held"
-            sell_list_local = exit_stocks.dropna().tolist()
-            buy_list_local  = entry_stocks.dropna().tolist()
-
-            cmp_map3 = {}
-            if dfStats is not None:
-                cmp_map3 = dict(zip(dfStats['Ticker'], dfStats['Close']))
-
-            # Top-N screener tickers — Worst Rank Held column ke liye
-            # Sirf wahi stocks jo filter pass kiye AND rank <= top_n_rank
-            # (Excel "Filtered Stocks" sheet ke same 48 stocks)
-            _df_sorted = dfFiltered.reset_index()
-            if 'Rank' in _df_sorted.columns:
-                _df_sorted = _df_sorted.sort_values('Rank', ascending=True)
-                _top_filtered = _df_sorted[_df_sorted['Rank'] <= st.session_state.top_n_rank]
-            else:
-                _top_filtered = _df_sorted.head(st.session_state.top_n_rank)
-            top_n_tickers = _top_filtered["Ticker"].tolist()
-            worst_rank_text = "\n".join(top_n_tickers) if top_n_tickers else "(no data)"
-
-            st.markdown("""
-            <div class="workflow-box">
-            <b>📋 Workflow Steps:</b><br>
-            <span class="step-tag">1</span> Neeche <b>Top-N Screener list</b> copy karo → Google Sheet ke <b>"Worst Rank Held"</b> column mein paste karo
-              <span style="color:#64748b;font-size:12px;">(ye list rebalancer ko batati hai ki kaun good rank mein hai)</span><br>
-            <span class="step-tag">2</span> <b>"Open Portfolio Rebalancer"</b> button dabao → Sell stocks select karo → actual sell value note karo<br>
-            <span class="step-tag">3</span> <i>(Optional)</i> Neeche <b>"Buy/Sell order calculate karna chahte hain?"</b> checkbox enable karo → Sell Value enter karo → Buy orders auto-calculate honge
-            </div>
-            """, unsafe_allow_html=True)
-
-            wa1, wa2 = st.columns([1, 1])
-            with wa1:
-                n_top = len(top_n_tickers)
-                st.markdown(f"**📋 Top-{st.session_state.top_n_rank} Screener List — Google Sheet 'Worst Rank Held' column mein paste karo:**")
-                st.caption(f"✅ {n_top} filtered & ranked stocks | Rank 1 se Rank {n_top} tak")
-                st.text_area(
-                    "Top-N list — Google Sheet Worst Rank Held column mein paste karo",
-                    value=worst_rank_text,
-                    height=min(160, max(80, len(top_n_tickers) * 6 + 60)),
-                    key="sell_copy_area",
-                    label_visibility="collapsed",
-                    help="Yeh Top-N screener stocks Google Sheet ke Worst Rank Held column mein paste karo"
-                )
-                # Clipboard copy — uses execCommand fallback for Streamlit iframe sandbox
-                import streamlit.components.v1 as _components
-                _safe_text = worst_rank_text.replace("`", "'").replace("\\", "/")
-                _copy_html = f"""
-                <textarea id="cpytxt" style="position:absolute;left:-9999px;">{_safe_text}</textarea>
-                <button id="cpybtn"
-                  onclick="
-                    var t=document.getElementById('cpytxt');
-                    t.select(); t.setSelectionRange(0,99999);
-                    var ok=false;
-                    try{{ok=document.execCommand('copy');}}catch(e){{}}
-                    if(!ok && navigator.clipboard){{
-                      navigator.clipboard.writeText(t.value).then(function(){{
-                        document.getElementById('cpybtn').innerHTML='✅ Copied!';
-                        document.getElementById('cpybtn').style.background='#16a34a';
-                      }});
-                    }} else if(ok) {{
-                      document.getElementById('cpybtn').innerHTML='✅ Copied!';
-                      document.getElementById('cpybtn').style.background='#16a34a';
-                    }} else {{
-                      alert('Manually select text above aur Ctrl+C / Cmd+C dabao');
-                    }}
-                  "
-                  style="background:#2563eb;color:white;border:none;padding:9px 22px;
-                         border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;
-                         margin-top:6px;letter-spacing:.2px;
-                         box-shadow:0 2px 8px rgba(37,99,235,.3);
-                         transition:background .2s;">
-                  📋 Copy to Clipboard
-                </button>
-                """
-                _components.html(_copy_html, height=50)
-
-            with wa2:
-                st.markdown("**⚖️ Portfolio Rebalancer:**")
-                st.markdown(f"""
-                <a href="{APPS_SCRIPT_URL}" target="_blank" class="qlink-btn qlink-rebalancer"
-                   style="display:block;text-decoration:none;font-weight:700;font-size:14px;
-                          color:#ffffff !important;
-                          padding:13px 20px;border-radius:10px;text-align:center;margin:4px 0;">
-                  ⚖️ Open Portfolio Rebalancer
-                </a>
-                <div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.7;
-                            padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border);">
-                  📌 Wahan se sell karke <b>actual sell value</b> note karo.<br>
-                  ↩️ Phir neeche woh value enter karo.
-                </div>
-                """, unsafe_allow_html=True)
-
-            st.divider()
-
-            # ── Order Calculator (optional) ────────────────────────────
-            show_order_calc = st.checkbox(
-                "⚡ Buy/Sell order calculate karna chahte hain?",
-                value=False, key="show_order_calc",
-                help="Sell value enter karke buy order quantities auto-calculate honge"
-            )
-
-            if show_order_calc:
-                st.markdown('<div class="section-hdr">⚡ Order Calculator</div>', unsafe_allow_html=True)
-
-                # ── Mode selector ─────────────────────────────────────
-                _oc_mode = st.radio(
-                    "Calculation Mode",
-                    options=["📈 Only Equity", "🏦 Multi-Asset (Equity + Gold + Liquid)"],
-                    index=0, horizontal=True, key="oc_mode_radio",
-                    help=(
-                        "Only Equity: Sell proceeds sirf equity stocks mein equally distribute honge.\n\n"
-                        "Multi-Asset: SOP v2026.06 — pehle Gold/Liquid gap fund karo, "
-                        "baaki equity mein. Per-stock = Eq Budget ÷ 30."
+            # ─── GOLDBEES ───────────────────────────────────────────────────
+            with _act_col1:
+                st.markdown('<div style="font-size:13px;font-weight:700;color:#b45309;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fcd34d">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
+                _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
+                                            value=0, step=1000, key="goldbees_curr_val",
+                                            label_visibility="visible")
+                _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0,
+                                            value=0.0, step=0.5, key="goldbees_cmp",
+                                            label_visibility="visible")
+                if _total_pf > 0:
+                    _gd_tgt = _total_pf * _gd
+                    _gd_dif = _gd_tgt - _gb_curr
+                    _gdok   = abs(_gd_dif) / _total_pf < 0.07
+                    _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
+                    _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
+                    _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
+                    _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
+                    # ₹15K min guardrail — sub-₹15K transaction not worth brokerage
+                    _gd_min_ok = abs(_gd_dif) >= 15000
+                    _gact_txt  = "Hold (within ±7%)" if _gdok else (
+                        f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}"
                     )
-                )
-                _multi_asset_mode = "Multi-Asset" in _oc_mode
-
-                # ── Common inputs (shared by both modes) ─────────────
-                qr1, qr2, qr3, qr4 = st.columns(4)
-                with qr1:
-                    capital_add = st.number_input(
-                        "💰 Capital Addition ₹", min_value=0, value=0, step=5000, key="qr_cap"
-                    )
-                with qr2:
-                    brokerage = st.number_input(
-                        "🏦 Brokerage/Stock ₹", min_value=0, value=0, step=10, key="qr_brk"
-                    )
-                with qr3:
-                    sell_val_input = st.number_input(
-                        "💸 Sell Value ₹ (Rebalancer se enter karo)",
-                        min_value=0, value=0, step=1000, key="qr_sell",
-                        help="Portfolio Rebalancer mein jo actual sell value mili, woh yahaan enter karo"
-                    )
-
-                sell_brk   = len(sell_list_local) * brokerage
-                buy_brk    = len(buy_list_local)  * brokerage
-                gross_pool = sell_val_input + capital_add - sell_brk  # before buy brokerage
-
-                # ══════════════════════════════════════════════════════
-                # ONLY EQUITY MODE — original behavior unchanged
-                # ══════════════════════════════════════════════════════
-                if not _multi_asset_mode:
-                    net_pool  = gross_pool - buy_brk
-                    per_stock = net_pool / len(buy_list_local) if buy_list_local else 0
-
-                    with qr4:
-                        st.markdown(f"""<div class="metric-card green">
-                          <div class="metric-label">Net Pool / Stock</div>
-                          <div class="metric-value green">{fmt_inr(per_stock)}</div>
-                        </div>""", unsafe_allow_html=True)
-
-                    st.markdown(f"""<div class="reb-strip">
-                      <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">- Buy Brok</div><div class="val r">₹{buy_brk:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">Net Pool</div><div class="val g">₹{net_pool:,.0f}</div></div>
-                      <div class="reb-stat"><div class="label">Per Stock</div><div class="val g">{fmt_inr(per_stock)}</div></div>
+                    if not _gdok and not _gd_min_ok:
+                        _gact_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_gd_dif):,.0f}"
+                        _gdc, _gd_bg = "#64748b", "#f1f5f9"
+                    # VIX overlay adjusted gold target
+                    _vix_ovl_pct = 0
+                    if _vix_curr and _vix_curr > 30: _vix_ovl_pct = 5
+                    elif _vix_curr and _vix_curr > 20: _vix_ovl_pct = 3
+                    _eff_gd_pct = min(_gd + _vix_ovl_pct/100, 0.30)
+                    _gd_tgt_eff = _total_pf * _eff_gd_pct
+                    _ovl_note   = f" (VIX +{_vix_ovl_pct}%)" if _vix_ovl_pct > 0 else ""
+                    st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
+                            border-radius:10px;padding:13px 15px;margin-top:6px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;
+                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
+                        <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
+                        <span style="font-size:16px;opacity:.4">→</span>
+                        <span>Target: <b style="font-size:14px;">₹{_gd_tgt_eff:,.0f}</b>{_ovl_note}</span>
+                      </div>
+                      <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
+                        {_gact_icon} {_gact_txt}
+                      </div>
+                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
+                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_gd_dif):,.0f}" if not _gdok else 'Within band'}
+                      </div>
                     </div>""", unsafe_allow_html=True)
 
-                    if sell_val_input == 0 and not capital_add:
-                        st.info("💡 Sell Value enter karo (Portfolio Rebalancer se) → Buy orders auto-calculate honge.")
-
-                    if buy_list_local and per_stock > 0:
-                        st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
-                        orders = []; total_invested = 0
-                        for i, stock in enumerate(buy_list_local, 1):
-                            cmp = cmp_map3.get(stock, 0)
-                            if cmp > 0:
-                                qty = int(per_stock / cmp); val = qty * cmp
-                                total_invested += val
-                                orders.append({"#": i, "Stock": stock, "CMP ₹": round(cmp, 2),
-                                    "Gross Alloc": round(per_stock + brokerage), "Brok ₹": brokerage,
-                                    "Net Alloc": round(per_stock), "Qty": qty, "Value ₹": round(val)})
-                        if orders:
-                            st.dataframe(pd.DataFrame(orders).style.format(
-                                {"CMP ₹": "{:.2f}", "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"}),
-                                use_container_width=True, hide_index=True, height=300)
-                            leftover = net_pool - total_invested
-                            st.markdown(f"""<div class="reb-strip">
-                              <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{leftover:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
-                            </div>""", unsafe_allow_html=True)
-
-                # ══════════════════════════════════════════════════════
-                # MULTI-ASSET MODE — SOP v2026.06
-                # ══════════════════════════════════════════════════════
-                else:
-                    _oc_rg       = st.session_state.get("_regime_result", {})
-                    _oc_sc       = int(_oc_rg.get("score",  _sc))
-                    _oc_lbl      = _oc_rg.get("label",  _lbl)
-                    _oc_eq_pct   = float(_oc_rg.get("equity", _eq))
-                    _oc_gd_pct   = float(_oc_rg.get("gold",   _gd))
-                    _oc_cs_pct   = float(_oc_rg.get("cash",   _cs))
-                    _oc_total_pf = float(st.session_state.get("_regime_total_pf", _total_pf))
-                    _oc_prev_sc  = int(st.session_state.get("_regime_prev_sc",   _prev_sc))
-
-                    if _oc_total_pf == 0:
-                        st.warning("⚠️ Step 3 ke Regime Panel mein Total Portfolio Value enter karo — tab sahi calculate hoga.")
-
-                    # Gold + Liquid current values — pre-filled from regime panel
-                    _ma_c1, _ma_c2 = st.columns(2)
-                    with _ma_c1:
-                        _oc_gd_curr = st.number_input("🥇 Current GOLDBEES ₹", min_value=0,
-                            value=int(st.session_state.get("_gb_curr_val", 0)), step=1000, key="oc_gd_curr")
-                    with _ma_c2:
-                        _oc_lf_curr = st.number_input("💵 Current Liquid Fund ₹", min_value=0,
-                            value=int(st.session_state.get("_lf_curr_val", 0)), step=1000, key="oc_lf_curr")
-
-                    # Compute gaps and allocation
-                    _oc_gd_gap     = max(0.0, _oc_total_pf * _oc_gd_pct - _oc_gd_curr)
-                    _oc_cs_gap     = max(0.0, _oc_total_pf * _oc_cs_pct - _oc_lf_curr)
-                    _oc_for_gold   = min(_oc_gd_gap, gross_pool)
-                    _oc_rem1       = gross_pool - _oc_for_gold
-                    _oc_for_liquid = min(_oc_cs_gap, _oc_rem1)
-                    _oc_for_equity = max(0.0, _oc_rem1 - _oc_for_liquid - buy_brk)
-                    _oc_eq_budget  = _oc_total_pf * _oc_eq_pct
-                    _oc_per_stock_tgt = _oc_eq_budget / 30 if _oc_eq_budget > 0 else 0
-
-                    # Defaults (may be overridden by WDP branch below)
-                    _oc_final_per_stock = _oc_per_stock_tgt
-                    _oc_final_stocks    = buy_list_local
-                    _oc_final_pool      = _oc_for_equity
-                    _wdp_mode           = False
-
-                    # ── Weekly Deployment Plan toggle ─────────────────
-                    st.markdown("---")
-                    _use_wdp = st.radio(
-                        "📅 Weekly Deployment Plan ke hisab se deploy karna hai?",
-                        options=["✅ Haan — Weekly plan se (Regime shift ho raha hai)",
-                                 "❌ Nahi — Normal monthly RB (Equity pool ÷ per-stock target)"],
-                        index=1, horizontal=True, key="oc_wdp_toggle"
+            # ─── LIQUID FUND ─────────────────────────────────────────────────
+            with _act_col2:
+                st.markdown('<div style="font-size:13px;font-weight:700;color:#475569;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #cbd5e1">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
+                _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
+                                            value=0, step=1000, key="liquid_curr_val",
+                                            label_visibility="visible")
+                if _total_pf > 0:
+                    _cs_tgt = _total_pf * _cs
+                    _cs_dif = _cs_tgt - _lf_curr
+                    _csok   = abs(_cs_dif) / _total_pf < 0.07
+                    _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
+                    _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
+                    _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
+                    # ₹15K min guardrail
+                    _cs_min_ok = abs(_cs_dif) >= 15000
+                    _cs_txt  = "Hold (within ±7%)" if _csok else (
+                        f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}"
                     )
-                    _wdp_mode = "Haan" in _use_wdp
+                    if not _csok and not _cs_min_ok:
+                        _cs_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_cs_dif):,.0f}"
+                        _csc, _cs_bg = "#64748b", "#f1f5f9"
+                    st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
+                            border-radius:10px;padding:13px 15px;margin-top:89px;">
+                      <div style="display:flex;justify-content:space-between;align-items:center;
+                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
+                        <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
+                        <span style="font-size:16px;opacity:.4">→</span>
+                        <span>Target: <b style="font-size:14px;">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
+                      </div>
+                      <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
+                        {_cs_icon} {_cs_txt}
+                      </div>
+                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
+                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_cs_dif):,.0f}" if not _csok else 'Within band'}
+                      </div>
+                    </div>""", unsafe_allow_html=True)
 
-                    if _wdp_mode:
-                        from calculations import get_weekly_deployment_plan, get_next_rebalance_dates
-                        _wdp_dates = get_next_rebalance_dates()
-                        _wdp_plan  = get_weekly_deployment_plan(
-                            prev_score=_oc_prev_sc, curr_score=_oc_sc,
-                            total_pf=_oc_total_pf, goldbees_curr=_oc_gd_curr,
-                            liquid_curr=_oc_lf_curr,
-                            weekly_nav_ret=st.session_state.get("_regime_weekly_ret"),
-                            vix_curr=st.session_state.get("_regime_vix")
-                        )
-                        _wdp_weeks = _wdp_plan.get("weeks", [])
-                        _fri_lst   = _wdp_dates.get("upcoming_fridays", [])
+            # ── Equity budget ─────────────────────────────────────────────
+            _eq_budget = _total_pf * _eq
+            _per_stock_target = _eq_budget / 30 if _eq_budget > 0 else 0
+            _drift_band_rs = 20000  # ±₹20K per stock drift band (SOP 9.5.1)
+            st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
+                        border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
+              <b style="color:#1d4ed8">📈 Equity Budget:</b>
+              <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
+                <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
+              </span>
+              &nbsp;&nbsp;
+              <span style="color:#475569;font-size:12px;">
+                | Per stock target: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
+                &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
+                &nbsp;| Band Low: ₹{max(0,_per_stock_target-_drift_band_rs):,.0f}
+                — High: ₹{_per_stock_target+_drift_band_rs:,.0f}
+              </span>
+            </div>""", unsafe_allow_html=True)
 
-                        if not _wdp_weeks:
-                            st.info(f"ℹ️ Score same (Prev {_oc_prev_sc} = Curr {_oc_sc}) — "
-                                    "WDP sirf regime shift pe activate hota hai. 'Nahi' select karo.")
-                        else:
-                            _week_labels = []
-                            for wd in _wdp_weeks:
-                                _fd = (_fri_lst[wd["week"]-1].strftime("%d %b")
-                                       if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}")
-                                _week_labels.append(
-                                    f"Week {wd['week']} ({_fd})"
-                                    f" — Eq {wd['eq_pct']}% ₹{wd['eq_val']:,.0f}"
-                                    f" | Gold {wd['gd_pct']}% ₹{wd['gd_val']:,.0f}"
-                                    f" | Cash {wd['cs_pct']}% ₹{wd['cs_val']:,.0f}"
-                                )
-                            _sel_lbl = st.selectbox("Kaunsa week execute kar rahe ho?",
-                                                    options=_week_labels, key="oc_wk_sel")
-                            _sel_wk  = _wdp_weeks[_week_labels.index(_sel_lbl)]
-                            _wdp_eq  = float(_sel_wk["eq_val"])
-                            _wdp_gd  = float(_sel_wk["gd_val"])
-                            _wdp_cs  = float(_sel_wk["cs_val"])
-                            _wdp_ps  = _wdp_eq / 30 if _wdp_eq > 0 else 0
-                            _wdp_nb  = min(int(_wdp_eq / _wdp_ps) if _wdp_ps > 0 else 0, len(buy_list_local))
+            # ── VIX Overlay Panel (SOP Section 7.5) ──────────────────────
+            if _vix_curr is not None and _total_pf > 0:
+                _base_gold_pct = _gd * 100
+                _vix_overlay_pct = 0
+                _vix_overlay_src = ""
+                if _vix_curr > 30:
+                    _vix_overlay_pct = 5
+                    _vix_overlay_src = "VIX > 30"
+                elif _vix_curr > 20:
+                    _vix_overlay_pct = 3
+                    _vix_overlay_src = "VIX 20-30"
 
-                            st.markdown(f"""<div class="reb-strip">
-                              <div class="reb-stat"><div class="label">Week {_sel_wk['week']} Equity Pool</div><div class="val b">₹{_wdp_eq:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Gold Target ₹</div><div class="val" style="color:#b45309">₹{_wdp_gd:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Liquid Target ₹</div><div class="val" style="color:#475569">₹{_wdp_cs:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val g">₹{_wdp_ps:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Buy Entries</div><div class="val b">{_wdp_nb}</div></div>
-                            </div>""", unsafe_allow_html=True)
-                            st.markdown(
-                                f'<div style="font-size:11px;color:#64748b;margin:4px 0 8px;">'
-                                f'Regime: <b>{_oc_lbl}</b> (Score {_oc_sc}) · Prev {_oc_prev_sc} → Curr {_oc_sc}'
-                                f' · Per-stock = ₹{_wdp_eq:,.0f} ÷ 30 = <b>₹{_wdp_ps:,.0f}</b>'
-                                f'</div>', unsafe_allow_html=True)
-                            if _wdp_plan.get("paused"):
-                                st.error("⏸ Week 1 PAUSED — VIX > 30 AND weekly return < -5%.")
-                            _gd_gap_wk = max(0.0, _wdp_gd - _oc_gd_curr)
-                            _cs_gap_wk = max(0.0, _wdp_cs - _oc_lf_curr)
-                            st.markdown(
-                                f'<div style="background:#fef3c7;border-left:3px solid #b45309;'
-                                f'border-radius:6px;padding:8px 14px;font-size:12px;color:#78350f;margin-bottom:8px;">'
-                                f'{"🥇 GOLDBEES BUY ₹" + f"{_gd_gap_wk:,.0f}" if _gd_gap_wk >= 15000 else "🥇 GOLDBEES: within band"}'
-                                f' &nbsp;·&nbsp; '
-                                f'{"💵 Liquid ADD ₹" + f"{_cs_gap_wk:,.0f}" if _cs_gap_wk >= 15000 else "💵 Liquid: within band"}'
-                                f'</div>', unsafe_allow_html=True)
-                            _oc_final_per_stock = _wdp_ps
-                            _oc_final_stocks    = buy_list_local[:_wdp_nb]
-                            _oc_final_pool      = _wdp_eq
+                if _vix_overlay_pct > 0:
+                    _eff_gold_pct = min(_base_gold_pct + _vix_overlay_pct, 30)  # hard cap 30%
+                    _actual_overlay = _eff_gold_pct - _base_gold_pct
+                    _eff_cash_pct   = (_cs * 100) - _actual_overlay  # liquid funds the shift
+                    _eff_gold_rs    = _total_pf * _eff_gold_pct / 100
+                    _eff_cash_rs    = _total_pf * _eff_cash_pct / 100
+                    _overlay_rs     = _total_pf * _actual_overlay / 100
+                    _vix_col = "#dc2626" if _vix_curr > 30 else "#d97706"
+                    _vix_bg  = "#fef2f2" if _vix_curr > 30 else "#fef3c7"
+                    st.markdown(f"""
+                    <div style="background:{_vix_bg};border:1.5px solid {_vix_col};border-left:4px solid {_vix_col};
+                                border-radius:8px;padding:12px 16px;margin:8px 0;">
+                      <div style="font-size:13px;font-weight:700;color:{_vix_col};margin-bottom:6px;">
+                        ⚡ VIX Overlay Active — {_vix_overlay_src} (+{_actual_overlay:.0f}% Gold from Liquid)
+                      </div>
+                      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#374151;">
+                        <span>Base Gold: <b>{_base_gold_pct:.0f}%</b></span>
+                        <span style="color:{_vix_col};">→ Effective Gold: <b>{_eff_gold_pct:.0f}%</b> (₹{_eff_gold_rs:,.0f})</span>
+                        <span>Effective Cash: <b>{_eff_cash_pct:.0f}%</b> (₹{_eff_cash_rs:,.0f})</span>
+                        <span style="color:#6d28d9;font-weight:600;">Move ₹{_overlay_rs:,.0f} from Liquid → GOLDBEES</span>
+                      </div>
+                      <div style="font-size:11px;color:#6b7280;margin-top:6px;">
+                        ⚠️ Equity UNTOUCHED — only Liquid → Gold shift. Apply at monthly RB (VIX 20-30) or this Friday (VIX > 30).
+                        Normalize hone pe (VIX ≤ 20) → excess Gold wapas Liquid mein.
+                      </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+                                padding:8px 14px;font-size:12px;color:#15803d;margin:4px 0;">
+                      ✅ VIX {_vix_curr:.1f} ≤ 20 — No VIX Overlay. Base allocation applies.
+                    </div>""", unsafe_allow_html=True)
+
+            # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
+            st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
+                            border-left:4px solid #dc2626;padding:6px 0 6px 12px;
+                            background:linear-gradient(90deg,rgba(220,38,38,.06) 0%,transparent 60%);
+                            border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+                📉 Portfolio Drawdown Protocol
+            </div>""", unsafe_allow_html=True)
+            _dd_c1, _dd_c2 = st.columns(2)
+            with _dd_c1:
+                _pf_ath = st.number_input("📈 Portfolio ATH Value ₹ (All-Time High)",
+                                           min_value=0, value=int(st.session_state.get("_pf_ath_val", _total_pf or 1000000)),
+                                           step=10000, key="_pf_ath_val",
+                                           help="Apne portfolio ka highest value — NAV sheet se dekho")
+            with _dd_c2:
+                _pf_curr_dd = st.number_input("💼 Current Portfolio Value ₹",
+                                               min_value=0, value=int(_total_pf),
+                                               step=10000, key="_pf_curr_dd_val",
+                                               help="Aaj ki total value (Equity + Gold + Cash)")
+
+            if _pf_ath > 0 and _pf_curr_dd > 0:
+                _dd_pct = (_pf_curr_dd / _pf_ath - 1) * 100
+                _dd_abs  = abs(_dd_pct)
+                if _dd_pct >= 0:
+                    st.markdown(f"""<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
+                                padding:8px 14px;font-size:13px;color:#15803d;">
+                      ✅ Portfolio ATH pe ya upar hai — DD: <b>{_dd_pct:+.1f}%</b>. No override needed.
+                    </div>""", unsafe_allow_html=True)
+                elif _dd_abs < 15:
+                    st.markdown(f"""<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+                                padding:8px 14px;font-size:13px;color:#15803d;">
+                      ✅ DD: <b>{_dd_pct:.1f}%</b> — Normal range (< 15%). Strategy as usual.
+                    </div>""", unsafe_allow_html=True)
+                elif _dd_abs < 20:
+                    st.warning(f"⚠️ DD: **{_dd_pct:.1f}%** — DD ≥ 15% zone. Weekly check mandatory. Capital additions pause karo.")
+                elif _dd_abs < 30:
+                    st.error(f"🚨 DD Override TRIGGERED — DD: **{_dd_pct:.1f}%** ≥ 20% from ATH!")
+                    st.markdown(f"""<div style="background:#fef2f2;border:1.5px solid #dc2626;border-radius:8px;
+                                padding:12px 16px;font-size:13px;color:#dc2626;margin:4px 0;">
+                      <b>⚠️ DD Override Active:</b> Current signal Score {_sc} ignored.
+                      Treat as Score 0 (Bear). Target: Equity 25% | Gold 30% | Cash 45%.<br>
+                      <span style="font-size:12px;color:#7f1d1d;">
+                      4-week defensive shift shuru karo. Equity ₹{_total_pf*0.25:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.45:,.0f}
+                      </span>
+                    </div>""", unsafe_allow_html=True)
+                else:
+                    st.error(f"🚨🚨 EMERGENCY — DD: **{_dd_pct:.1f}%** ≥ 30% from ATH!")
+                    st.markdown(f"""<div style="background:#fef2f2;border:2px solid #7f1d1d;border-radius:8px;
+                                padding:12px 16px;font-size:13px;color:#7f1d1d;">
+                      <b>🆘 Emergency Protocol:</b> Single-week move. Target: Equity 20% | Gold 30% | Cash 50%.<br>
+                      Equity ₹{_total_pf*0.20:,.0f} | Gold ₹{_total_pf*0.30:,.0f} | Cash ₹{_total_pf*0.50:,.0f}
+                    </div>""", unsafe_allow_html=True)
+
+            # ── Equiweight Maintenance (SOP Section 9.5) ──────────────────
+            st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
+                            border-left:4px solid #7c3aed;padding:6px 0 6px 12px;
+                            background:linear-gradient(90deg,rgba(124,58,237,.06) 0%,transparent 60%);
+                            border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+                ⚖️ Equiweight Maintenance — Exit-Funded Regime Shift
+            </div>""", unsafe_allow_html=True)
+            _ew_c1, _ew_c2, _ew_c3 = st.columns(3)
+            with _ew_c1:
+                _exit_proceeds = st.number_input("💰 Exit Proceeds ₹ (sells se mila)",
+                                                  min_value=0, value=0, step=1000, key="_exit_proceeds_val",
+                                                  help="Is mahine ke exits ki total sell value")
+            with _ew_c2:
+                _n_new_entries = st.number_input("🟢 New Entries Count", min_value=0, max_value=30,
+                                                  value=0, step=1, key="_n_new_entries_val",
+                                                  help="Kitne naye stocks buy karne hain")
+            with _ew_c3:
+                st.markdown(f"""<div style="background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;
+                            padding:10px 12px;text-align:center;margin-top:4px;">
+                  <div style="font-size:10px;color:#6d28d9;font-weight:600;text-transform:uppercase;">Per Stock Target</div>
+                  <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stock_target:,.0f}</div>
+                  <div style="font-size:10px;color:#7c3aed;">Eq Budget ÷ 30</div>
+                </div>""", unsafe_allow_html=True)
+
+            if _exit_proceeds > 0 and _total_pf > 0:
+                # VIX overlay adjusted gold gap
+                _vix_adj_gold_pct = min(_gd + (_vix_overlay_pct/100 if '_vix_overlay_pct' in dir() else 0), 0.30)
+                _gold_gap    = max(0, _total_pf * _vix_adj_gold_pct - (_gb_curr if '_gb_curr' in dir() else 0))
+                _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
+                _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
+                _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
+                _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
+                _surplus              = _proceeds_after_liq - _new_entry_cost
+
+                st.markdown(f"""
+                <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                            padding:14px 16px;margin-top:8px;">
+                  <div style="font-size:13px;font-weight:700;color:#0f172a;margin-bottom:10px;">
+                    📊 Proceeds Allocation Plan
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;">
+                    <div style="background:#dbeafe;border-radius:8px;padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:#1d4ed8;font-weight:600">EXIT PROCEEDS</div>
+                      <div style="font-size:18px;font-weight:800;color:#1d4ed8">₹{_exit_proceeds:,.0f}</div>
+                    </div>
+                    <div style="background:#{'fef3c7' if _gold_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:#{'b45309' if _gold_gap>0 else '15803d'};font-weight:600">1. GOLD GAP (first)</div>
+                      <div style="font-size:18px;font-weight:800;color:#{'b45309' if _gold_gap>0 else '15803d'}">₹{_gold_gap:,.0f}</div>
+                    </div>
+                    <div style="background:#{'dbeafe' if _liquid_gap>0 else 'f0fdf4'};border-radius:8px;padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'};font-weight:600">2. LIQUID GAP</div>
+                      <div style="font-size:18px;font-weight:800;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'}">₹{_liquid_gap:,.0f}</div>
+                    </div>
+                    <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stock_target:,.0f})</div>
+                      <div style="font-size:18px;font-weight:800;color:#15803d">₹{_new_entry_cost:,.0f}</div>
+                    </div>
+                    <div style="background:#{'dcfce7' if _surplus>=0 else 'fee2e2'};border-radius:8px;padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:#{'15803d' if _surplus>=0 else 'dc2626'};font-weight:600">SURPLUS / SHORTFALL</div>
+                      <div style="font-size:18px;font-weight:800;color:#{'15803d' if _surplus>=0 else 'dc2626'}">₹{_surplus:+,.0f}</div>
+                    </div>
+                  </div>
+                  <div style="margin-top:10px;font-size:12px;color:#64748b;background:#f1f5f9;border-radius:6px;padding:8px 12px;">
+                    {'✅ Surplus ₹' + f"{_surplus:,.0f}" + ' → most underweight existing stock mein daalo (1 extra transaction max).'
+                     if _surplus > 15000 else
+                     ('⚠️ Shortfall ₹' + f"{abs(_surplus):,.0f}" + ' → partial entry ya ek stock entry defer karo. Agla month complete hoga.'
+                     if _surplus < -5000 else
+                     '✅ Proceeds approximately match. Clean rebalance.')}
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.caption("Rule: Gold/Liquid gap fund karo FIRST. Existing stocks drift band ±₹20K — sirf surplus ho tabhi correct karo. Standalone sell for equiweight KABHI nahi.")
+
+            st.markdown("---")
+
+            # ── Weekly Deployment Plan ────────────────────────────────────
+            if _sc_diff != 0 and _total_pf > 0:
+                st.markdown("### 📅 Weekly Deployment Plan")
+                _plan = get_weekly_deployment_plan(
+                    prev_score=_prev_sc, curr_score=_sc, total_pf=_total_pf,
+                    goldbees_curr=_gb_curr if "_gb_curr" in dir() else 0,
+                    liquid_curr=_lf_curr if "_lf_curr" in dir() else 0,
+                    weekly_nav_ret=_weekly_nav_r, vix_curr=_vix_curr
+                )
+                if _plan["paused"]:
+                    st.error(f"⏸ Week 1 PAUSED — VIX {_vix_curr:.1f} > 30 AND Weekly return {_weekly_nav_r:.1f}% < -5%. Next Friday check karo.")
+                elif _plan["is_recovery"]:
+                    st.info(f"🔺 Recovery mode — {_plan['n_weeks']} weeks. Faster deploy.")
+                else:
+                    st.info(f"🔻 Defensive mode — {_plan['n_weeks']} weeks. Gradual reduce.")
+                st.markdown(f"""<div style="background:#fef3c7;border:1px solid #fcd34d;border-left:3px solid #b45309;
+                            border-radius:6px;padding:8px 14px;font-size:12px;color:#78350f;margin-bottom:8px;">
+                  {_plan["accelerate_msg"]}</div>""", unsafe_allow_html=True)
+                _fri_lst = _dates_rg["upcoming_fridays"]
+                _prev_eq = _plan["weeks"][0]["eq_pct"]  # will compare against previous week
+                _prev_gd = _plan["weeks"][0]["gd_pct"]
+                _prev_cs = _plan["weeks"][0]["cs_pct"]
+                # Starting point = prev_score allocation
+                _alloc_start = {3:(80,15,5),2:(65,20,15),1:(45,25,30),0:(25,30,45)}
+                _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(65,20,15))
+
+                _wk_rows = []
+                for _wi, wd in enumerate(_plan["weeks"]):
+                    fri_lbl = _fri_lst[wd["week"]-1].strftime("%d %b") if wd["week"]-1 < len(_fri_lst) else f"Wk{wd['week']}"
+                    # Compare vs starting allocation (not previous week)
+                    _de = wd["eq_pct"] - _st_e
+                    _dg = wd["gd_pct"] - _st_g
+                    _dc = wd["cs_pct"] - _st_c
+                    # Arrow indicators
+                    def _arrow(delta): return "" if abs(delta)<0.1 else ("▲ " if delta>0 else "▼ ")
+                    def _sign(v): return f"+{v:.1f}" if v>0 else f"{v:.1f}" if v<0 else "0"
+                    _wk_rows.append({
+                        "Check" : fri_lbl,
+                        "Eq %"  : f"{_arrow(_de)}{wd['eq_pct']}% ({_sign(_de)}pp)",
+                        "Gold %": f"{_arrow(_dg)}{wd['gd_pct']}% ({_sign(_dg)}pp)",
+                        "Cash %": f"{_arrow(_dc)}{wd['cs_pct']}% ({_sign(_dc)}pp)",
+                        "Eq ₹"  : f"₹{wd['eq_val']:,.0f}",
+                        "Gold ₹" : f"₹{wd['gd_val']:,.0f}",
+                        "Cash ₹" : f"₹{wd['cs_val']:,.0f}",
+                        "Action" : wd["action"],
+                    })
+                st.dataframe(pd.DataFrame(_wk_rows), use_container_width=True, hide_index=True)
+                st.markdown("---")
+
+            # ── Weekly Switch Alerts ──────────────────────────────────────
+            _w_alerts = []
+            if _weekly_nav_r is not None and _weekly_nav_r < -5.0:
+                _w_alerts.append(f"📉 Weekly NAV return = **{_weekly_nav_r:.1f}%** (< -5%)")
+            if _vix_curr is not None and _vix_curr > 30:
+                _w_alerts.append(f"😱 India VIX = **{_vix_curr:.1f}** (> 30)")
+            _dfF_check = st.session_state.get("dfFiltered")
+            if _dfF_check is not None and len(_dfF_check) < 30:
+                _w_alerts.append(f"📊 Qualifying stocks = **{len(_dfF_check)}** (< 30)")
+            if _w_alerts:
+                st.markdown("### ⚡ Weekly Switch Alert")
+                for _wa in _w_alerts: st.warning(_wa)
+                if len(_w_alerts) >= 2:
+                    st.error("🚨 **Weekly Switch TRIGGERED** — Weekly rotation mode activate karo (5 weeks).")
+                else:
+                    st.info("⚠️ Single trigger — monitor karo. Both VIX>30 AND weekly<-5% chahiye for switch.")
+
+            st.divider()
+            # ══════════════════════════════════════════════════════════════
+
+        with _s3_tab_b:
+            # ── Compute rebalance ─────────────────────────────────────
+            if portfolio and st.session_state.dfFiltered is not None:
+                dfFiltered      = st.session_state.dfFiltered
+                dfStats         = st.session_state.dfStats
+                top_n           = st.session_state.top_n_rank
+                rank_threshold  = top_n
+
+                top_rank_tickers = dfFiltered.reset_index()
+                top_rank_tickers = top_rank_tickers[top_rank_tickers['Rank'] <= rank_threshold]['Ticker']
+
+                current_portfolio_tickers = pd.Series(portfolio)
+                entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)]
+                exit_stocks  = current_portfolio_tickers[~current_portfolio_tickers.isin(top_rank_tickers)]
+                hold_stocks  = current_portfolio_tickers[current_portfolio_tickers.isin(top_rank_tickers)]
+
+                num_sells = len(exit_stocks)
+                entry_stocks = entry_stocks.head(num_sells)
+
+                if len(entry_stocks) < num_sells:
+                    entry_stocks = pd.concat([
+                        entry_stocks,
+                        pd.Series([None] * (num_sells - len(entry_stocks)))
+                    ])
+
+                # ── Reasons for exit (v10 logic) ──────────────────────
+                reasons_for_exit = []
+                for ticker in exit_stocks:
+                    if pd.isna(ticker) or ticker == "":
+                        reasons_for_exit.append(""); continue
+                    reasons    = []
+                    stock_data = dfStats[dfStats['Ticker'] == ticker] if dfStats is not None else pd.DataFrame()
+                    if len(stock_data) > 0:
+                        if stock_data.index[0] > rank_threshold:          reasons.append(f"Rank > {rank_threshold}")
+                        if stock_data['volm_cr'].values[0] <= 1:           reasons.append("Volume ≤ 1 Cr")
+                        if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]:
+                                                                           reasons.append("Close ≤ 200-DMA")
+                        if stock_data['roc12M'].values[0] <= 5.5:          reasons.append("12M ROC ≤ 5.5%")
+                        if stock_data['circuit'].values[0] >= 20:          reasons.append("Circuit ≥ 20")
+                        if stock_data['AWAY_ATH'].values[0] <= -25:        reasons.append("Away ATH ≤ -25%")
+                        if stock_data['roc12M'].values[0] >= 1000:         reasons.append("12M ROC ≥ 1000%")
+                        if stock_data['Close'].values[0] <= 30:            reasons.append("Close ≤ ₹30")
+                        if stock_data['circuit5'].values[0] > 10:          reasons.append("5% Circuit > 10")
                     else:
-                        # Normal multi-asset — show allocation breakdown
+                        reasons.append("Not in selected universe")
+                    reasons_for_exit.append(", ".join(reasons) if reasons else "Rank dropped")
+
+                reasons_for_exit.extend([""] * (len(entry_stocks) - len(reasons_for_exit)))
+
+                rebalance_table = pd.DataFrame({
+                    'S.No.':           range(1, num_sells + 1),
+                    'Sell Stocks':     exit_stocks.tolist(),
+                    'Buy Stocks':      entry_stocks.tolist(),
+                    'Reason for Exit': reasons_for_exit,
+                })
+                rebalance_table = rebalance_table[
+                    ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())
+                ]
+                rebalance_table.set_index('S.No.', inplace=True)
+                st.session_state.sell_list = exit_stocks.dropna().tolist()
+                st.session_state.buy_list  = entry_stocks.dropna().tolist()
+                st.session_state.rebalance_table = rebalance_table
+                st.session_state.rebalance_done  = True
+
+                # ── Summary strip ──────────────────────────────────────
+                st.markdown(f"""<div class="reb-strip">
+                  <div class="reb-stat"><div class="label">Portfolio</div><div class="val b">{len(portfolio)}</div></div>
+                  <div class="reb-stat"><div class="label">Top-{rank_threshold} Screener</div><div class="val b">{len(top_rank_tickers)}</div></div>
+                  <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{len(exit_stocks)}</div></div>
+                  <div class="reb-stat"><div class="label">BUY (Entry)</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
+                  <div class="reb-stat"><div class="label">HOLD</div><div class="val p">{len(hold_stocks)}</div></div>
+                </div>""", unsafe_allow_html=True)
+
+                # ── Sell / Buy / Hold columns ──────────────────────────
+                col_sell, col_buy, col_hold = st.columns(3)
+                with col_sell:
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--red)">🔴 SELL List</div>', unsafe_allow_html=True)
+                    sell_list = exit_stocks.dropna().tolist()
+                    if sell_list:
+                        chips = " ".join([f'<span class="chip chip-sell">{s}</span>' for s in sell_list])
+                        st.markdown(chips, unsafe_allow_html=True)
+                        cmp_map = {}
+                        if dfStats is not None:
+                            cmp_map = dict(zip(dfStats['Ticker'], dfStats['Close']))
+                        # Also try dfFiltered for CMP (in case stock is in filtered but not dfStats)
+                        if dfFiltered is not None:
+                            for t, c in zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Close']):
+                                if t not in cmp_map:
+                                    cmp_map[t] = c
+                        sell_df = pd.DataFrame({
+                            "Stock": sell_list,
+                            "CMP ₹": [
+                                round(cmp_map[s], 2) if s in cmp_map and cmp_map[s] > 0
+                                else "N/A *"
+                                for s in sell_list
+                            ],
+                            "Reason": reasons_for_exit[:len(sell_list)]
+                        })
+                        st.dataframe(sell_df, hide_index=True, use_container_width=True)
+                        missing_cmp = [s for s in sell_list if s not in cmp_map or cmp_map.get(s, 0) == 0]
+                        if missing_cmp:
+                            st.caption(
+                                f"* {', '.join(missing_cmp)} — CMP unavailable "
+                                f"(stock selected universe ({st.session_state.universe}) mein nahi hai). "
+                                "Broker app se manually CMP check karo."
+                            )
+                    else:
+                        st.success("Koi sell nahi hai!")
+
+                with col_buy:
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List (New Entry)</div>', unsafe_allow_html=True)
+                    buy_list = entry_stocks.dropna().tolist()
+                    if buy_list:
+                        chips = " ".join([f'<span class="chip chip-buy">{s}</span>' for s in buy_list])
+                        st.markdown(chips, unsafe_allow_html=True)
+                        rank_map = dict(zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Rank']))
+                        cmp_map2 = {}
+                        if dfStats is not None:
+                            cmp_map2 = dict(zip(dfStats['Ticker'], dfStats['Close']))
+                        buy_df = pd.DataFrame({
+                            "Stock":        buy_list,
+                            "Screener Rank":[rank_map.get(s, "—") for s in buy_list],
+                            "CMP ₹":        [round(cmp_map2.get(s, 0), 2) for s in buy_list],
+                        })
+                        st.dataframe(buy_df, hide_index=True, use_container_width=True)
+                    else:
+                        st.info("Koi buy nahi hai.")
+
+                with col_hold:
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🔵 HOLD (Retain)</div>', unsafe_allow_html=True)
+                    if not hold_stocks.empty:
+                        chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_stocks.tolist()])
+                        st.markdown(chips, unsafe_allow_html=True)
+
+                # ── Rebalance table ────────────────────────────────────
+                st.markdown('<div class="section-hdr">📋 Rebalance Table (Sell → Buy mapping)</div>', unsafe_allow_html=True)
+                if not rebalance_table.empty:
+                    st.dataframe(rebalance_table, use_container_width=True)
+
+                st.divider()
+
+                # ══════════════════════════════════════════════════════════
+                # WORKFLOW PANEL — Screener → Rebalancer → Order Calculator
+                # ══════════════════════════════════════════════════════════
+                st.markdown('<div class="section-hdr">🔄 Rebalancer Workflow</div>', unsafe_allow_html=True)
+
+                # ── Step A: Copy Top-N screener list → Google Sheet "Worst Rank Held"
+                sell_list_local = exit_stocks.dropna().tolist()
+                buy_list_local  = entry_stocks.dropna().tolist()
+
+                cmp_map3 = {}
+                if dfStats is not None:
+                    cmp_map3 = dict(zip(dfStats['Ticker'], dfStats['Close']))
+
+                # Top-N screener tickers — Worst Rank Held column ke liye
+                # Sirf wahi stocks jo filter pass kiye AND rank <= top_n_rank
+                # (Excel "Filtered Stocks" sheet ke same 48 stocks)
+                _df_sorted = dfFiltered.reset_index()
+                if 'Rank' in _df_sorted.columns:
+                    _df_sorted = _df_sorted.sort_values('Rank', ascending=True)
+                    _top_filtered = _df_sorted[_df_sorted['Rank'] <= st.session_state.top_n_rank]
+                else:
+                    _top_filtered = _df_sorted.head(st.session_state.top_n_rank)
+                top_n_tickers = _top_filtered["Ticker"].tolist()
+                worst_rank_text = "\n".join(top_n_tickers) if top_n_tickers else "(no data)"
+
+                st.markdown("""
+                <div class="workflow-box">
+                <b>📋 Workflow Steps:</b><br>
+                <span class="step-tag">1</span> Neeche <b>Top-N Screener list</b> copy karo → Google Sheet ke <b>"Worst Rank Held"</b> column mein paste karo
+                  <span style="color:#64748b;font-size:12px;">(ye list rebalancer ko batati hai ki kaun good rank mein hai)</span><br>
+                <span class="step-tag">2</span> <b>"Open Portfolio Rebalancer"</b> button dabao → Sell stocks select karo → actual sell value note karo<br>
+                <span class="step-tag">3</span> <i>(Optional)</i> Neeche <b>"Buy/Sell order calculate karna chahte hain?"</b> checkbox enable karo → Sell Value enter karo → Buy orders auto-calculate honge
+                </div>
+                """, unsafe_allow_html=True)
+
+                wa1, wa2 = st.columns([1, 1])
+                with wa1:
+                    n_top = len(top_n_tickers)
+                    st.markdown(f"**📋 Top-{st.session_state.top_n_rank} Screener List — Google Sheet 'Worst Rank Held' column mein paste karo:**")
+                    st.caption(f"✅ {n_top} filtered & ranked stocks | Rank 1 se Rank {n_top} tak")
+                    st.text_area(
+                        "Top-N list — Google Sheet Worst Rank Held column mein paste karo",
+                        value=worst_rank_text,
+                        height=min(160, max(80, len(top_n_tickers) * 6 + 60)),
+                        key="sell_copy_area",
+                        label_visibility="collapsed",
+                        help="Yeh Top-N screener stocks Google Sheet ke Worst Rank Held column mein paste karo"
+                    )
+                    # Clipboard copy — uses execCommand fallback for Streamlit iframe sandbox
+                    import streamlit.components.v1 as _components
+                    _safe_text = worst_rank_text.replace("`", "'").replace("\\", "/")
+                    _copy_html = f"""
+                    <textarea id="cpytxt" style="position:absolute;left:-9999px;">{_safe_text}</textarea>
+                    <button id="cpybtn"
+                      onclick="
+                        var t=document.getElementById('cpytxt');
+                        t.select(); t.setSelectionRange(0,99999);
+                        var ok=false;
+                        try{{ok=document.execCommand('copy');}}catch(e){{}}
+                        if(!ok && navigator.clipboard){{
+                          navigator.clipboard.writeText(t.value).then(function(){{
+                            document.getElementById('cpybtn').innerHTML='✅ Copied!';
+                            document.getElementById('cpybtn').style.background='#16a34a';
+                          }});
+                        }} else if(ok) {{
+                          document.getElementById('cpybtn').innerHTML='✅ Copied!';
+                          document.getElementById('cpybtn').style.background='#16a34a';
+                        }} else {{
+                          alert('Manually select text above aur Ctrl+C / Cmd+C dabao');
+                        }}
+                      "
+                      style="background:#2563eb;color:white;border:none;padding:9px 22px;
+                             border-radius:8px;font-weight:700;cursor:pointer;font-size:13px;
+                             margin-top:6px;letter-spacing:.2px;
+                             box-shadow:0 2px 8px rgba(37,99,235,.3);
+                             transition:background .2s;">
+                      📋 Copy to Clipboard
+                    </button>
+                    """
+                    _components.html(_copy_html, height=50)
+
+                with wa2:
+                    st.markdown("**⚖️ Portfolio Rebalancer:**")
+                    st.markdown(f"""
+                    <a href="{APPS_SCRIPT_URL}" target="_blank" class="qlink-btn qlink-rebalancer"
+                       style="display:block;text-decoration:none;font-weight:700;font-size:14px;
+                              color:#ffffff !important;
+                              padding:13px 20px;border-radius:10px;text-align:center;margin:4px 0;">
+                      ⚖️ Open Portfolio Rebalancer
+                    </a>
+                    <div style="font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.7;
+                                padding:8px 10px;background:var(--bg);border-radius:6px;border:1px solid var(--border);">
+                      📌 Wahan se sell karke <b>actual sell value</b> note karo.<br>
+                      ↩️ Phir neeche woh value enter karo.
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.divider()
+
+                # ── Order Calculator (optional) ────────────────────────────
+                show_order_calc = st.checkbox(
+                    "⚡ Buy/Sell order calculate karna chahte hain?",
+                    value=False, key="show_order_calc",
+                    help="Sell value enter karke buy order quantities auto-calculate honge"
+                )
+
+                if show_order_calc:
+                    st.markdown('<div class="section-hdr">⚡ Order Calculator</div>', unsafe_allow_html=True)
+
+                    _oc_mode = st.radio(
+                        "Calculation Mode",
+                        options=["📈 Only Equity", "🏦 Multi-Asset (Equity + Gold + Liquid)"],
+                        index=0, horizontal=True, key="oc_mode_radio",
+                        help="Only Equity: sell proceeds sirf equity mein.\nMulti-Asset: Gold/Liquid gap pehle, baaki equity mein."
+                    )
+                    _multi_asset_mode = "Multi-Asset" in _oc_mode
+
+                    qr1, qr2, qr3, qr4 = st.columns(4)
+                    with qr1:
+                        capital_add = st.number_input("💰 Capital Addition ₹", min_value=0, value=0, step=5000, key="qr_cap")
+                    with qr2:
+                        brokerage = st.number_input("🏦 Brokerage/Stock ₹", min_value=0, value=0, step=10, key="qr_brk")
+                    with qr3:
+                        sell_val_input = st.number_input("💸 Sell Value ₹", min_value=0, value=0, step=1000, key="qr_sell",
+                                                         help="Portfolio Rebalancer mein jo actual sell value mili")
+
+                    sell_brk   = len(sell_list_local) * brokerage
+                    buy_brk    = len(buy_list_local)  * brokerage
+                    gross_pool = sell_val_input + capital_add - sell_brk
+
+                    if not _multi_asset_mode:
+                        # ── ONLY EQUITY — original behavior ──────────
+                        net_pool  = gross_pool - buy_brk
+                        per_stock = net_pool / len(buy_list_local) if buy_list_local else 0
+                        with qr4:
+                            st.markdown(f"""<div class="metric-card green">
+                              <div class="metric-label">Net Pool / Stock</div>
+                              <div class="metric-value green">{fmt_inr(per_stock)}</div>
+                            </div>""", unsafe_allow_html=True)
                         st.markdown(f"""<div class="reb-strip">
                           <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
                           <div class="reb-stat"><div class="label">+ Capital</div><div class="val g">₹{capital_add:,.0f}</div></div>
                           <div class="reb-stat"><div class="label">- Sell Brok</div><div class="val r">₹{sell_brk:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">→ Gold BUY</div><div class="val" style="color:#b45309">₹{_oc_for_gold:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">→ Liquid ADD</div><div class="val" style="color:#475569">₹{_oc_for_liquid:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">Equity Pool</div><div class="val g">₹{_oc_for_equity:,.0f}</div></div>
-                          <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val b">₹{_oc_per_stock_tgt:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">- Buy Brok</div><div class="val r">₹{buy_brk:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Net Pool</div><div class="val g">₹{net_pool:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Per Stock</div><div class="val g">{fmt_inr(per_stock)}</div></div>
                         </div>""", unsafe_allow_html=True)
-                        st.markdown(
-                            f'<div style="font-size:11px;color:#64748b;margin-bottom:8px;">'
-                            f'Regime: <b>{_oc_lbl}</b> (Score {_oc_sc})'
-                            f' · Eq {_oc_eq_pct*100:.0f}% / Gold {_oc_gd_pct*100:.0f}% / Liquid {_oc_cs_pct*100:.0f}%'
-                            f' · Per-stock = Eq Budget ₹{_oc_eq_budget:,.0f} ÷ 30 = <b>₹{_oc_per_stock_tgt:,.0f}</b>'
-                            f'</div>', unsafe_allow_html=True)
+                        if sell_val_input == 0 and not capital_add:
+                            st.info("💡 Sell Value enter karo → Buy orders auto-calculate honge.")
+                        if buy_list_local and per_stock > 0:
+                            st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
+                            orders = []; total_invested = 0
+                            for i, stock in enumerate(buy_list_local, 1):
+                                cmp = cmp_map3.get(stock, 0)
+                                if cmp > 0:
+                                    qty = int(per_stock / cmp); val = qty * cmp; total_invested += val
+                                    orders.append({"#": i, "Stock": stock, "CMP ₹": round(cmp, 2),
+                                        "Gross Alloc": round(per_stock + brokerage), "Brok ₹": brokerage,
+                                        "Net Alloc": round(per_stock), "Qty": qty, "Value ₹": round(val)})
+                            if orders:
+                                st.dataframe(pd.DataFrame(orders).style.format(
+                                    {"CMP ₹": "{:.2f}", "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"}),
+                                    use_container_width=True, hide_index=True, height=300)
+                                leftover = net_pool - total_invested
+                                st.markdown(f"""<div class="reb-strip">
+                                  <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{total_invested:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{leftover:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(orders)}</div></div>
+                                </div>""", unsafe_allow_html=True)
 
-                    # ── Buy orders table (common to both multi-asset branches) ──
-                    if sell_val_input == 0 and not capital_add and not _wdp_mode:
-                        st.info("💡 Sell Value enter karo → Buy orders auto-calculate honge.")
+                    else:
+                        # ── MULTI-ASSET MODE — SOP v2026.06 ──────────
+                        _oc_rg       = st.session_state.get("_regime_result", {})
+                        _oc_sc       = int(_oc_rg.get("score",  _sc))
+                        _oc_lbl      = _oc_rg.get("label",  _lbl)
+                        _oc_eq_pct   = float(_oc_rg.get("equity", _eq))
+                        _oc_gd_pct   = float(_oc_rg.get("gold",   _gd))
+                        _oc_cs_pct   = float(_oc_rg.get("cash",   _cs))
+                        _oc_total_pf = float(st.session_state.get("_regime_total_pf", _total_pf))
+                        _oc_prev_sc  = int(st.session_state.get("_regime_prev_sc",   _prev_sc))
+                        if _oc_total_pf == 0:
+                            st.warning("⚠️ 'Regime & Allocation' tab mein Total Portfolio Value enter karo.")
+                        _ma_c1, _ma_c2 = st.columns(2)
+                        with _ma_c1:
+                            _oc_gd_curr = st.number_input("🥇 Current GOLDBEES ₹", min_value=0,
+                                value=int(st.session_state.get("_gb_curr_val", 0)), step=1000, key="oc_gd_curr")
+                        with _ma_c2:
+                            _oc_lf_curr = st.number_input("💵 Current Liquid Fund ₹", min_value=0,
+                                value=int(st.session_state.get("_lf_curr_val", 0)), step=1000, key="oc_lf_curr")
+                        _oc_gd_gap     = max(0.0, _oc_total_pf * _oc_gd_pct - _oc_gd_curr)
+                        _oc_cs_gap     = max(0.0, _oc_total_pf * _oc_cs_pct - _oc_lf_curr)
+                        _oc_for_gold   = min(_oc_gd_gap, gross_pool)
+                        _oc_rem1       = gross_pool - _oc_for_gold
+                        _oc_for_liquid = min(_oc_cs_gap, _oc_rem1)
+                        _oc_for_equity = max(0.0, _oc_rem1 - _oc_for_liquid - buy_brk)
+                        _oc_eq_budget  = _oc_total_pf * _oc_eq_pct
+                        _oc_per_stock_tgt = _oc_eq_budget / 30 if _oc_eq_budget > 0 else 0
+                        _oc_final_per_stock = _oc_per_stock_tgt
+                        _oc_final_stocks    = buy_list_local
+                        _oc_final_pool      = _oc_for_equity
+                        _wdp_mode = False
 
-                    if buy_list_local and _oc_final_per_stock > 0:
-                        st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
-                        _ma_orders = []; _ma_invested = 0
-                        for _ii, _stk in enumerate(_oc_final_stocks, 1):
-                            _cmp = cmp_map3.get(_stk, 0)
-                            if _cmp > 0:
-                                _qty = int(_oc_final_per_stock / _cmp); _val = _qty * _cmp
-                                _ma_invested += _val
-                                _ma_orders.append({"#": _ii, "Stock": _stk, "CMP ₹": round(_cmp, 2),
-                                    "Gross Alloc": round(_oc_final_per_stock + brokerage), "Brok ₹": brokerage,
-                                    "Net Alloc": round(_oc_final_per_stock), "Qty": _qty, "Value ₹": round(_val)})
-                        if _ma_orders:
-                            st.dataframe(pd.DataFrame(_ma_orders).style.format(
-                                {"CMP ₹": "{:.2f}", "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"}),
-                                use_container_width=True, hide_index=True, height=300)
-                            _ma_leftover = _oc_final_pool - _ma_invested
+                        st.markdown("---")
+                        _use_wdp = st.radio(
+                            "📅 Weekly Deployment Plan ke hisab se?",
+                            options=["✅ Haan — Weekly plan se (Regime shift ho raha hai)",
+                                     "❌ Nahi — Normal monthly RB"],
+                            index=1, horizontal=True, key="oc_wdp_toggle"
+                        )
+                        _wdp_mode = "Haan" in _use_wdp
+
+                        if _wdp_mode:
+                            from calculations import get_weekly_deployment_plan, get_next_rebalance_dates
+                            _wdp_plan  = get_weekly_deployment_plan(prev_score=_oc_prev_sc, curr_score=_oc_sc,
+                                total_pf=_oc_total_pf, goldbees_curr=_oc_gd_curr, liquid_curr=_oc_lf_curr,
+                                weekly_nav_ret=st.session_state.get("_regime_weekly_ret"),
+                                vix_curr=st.session_state.get("_regime_vix"))
+                            _wdp_weeks = _wdp_plan.get("weeks", [])
+                            _fri_lst   = get_next_rebalance_dates().get("upcoming_fridays", [])
+                            if not _wdp_weeks:
+                                st.info(f"ℹ️ Score same (Prev {_oc_prev_sc} = Curr {_oc_sc}) — 'Nahi' select karo.")
+                            else:
+                                _week_labels = [
+                                    f"Week {wd['week']} ({_fri_lst[wd['week']-1].strftime('%d %b') if wd['week']-1 < len(_fri_lst) else '?'})"
+                                    f" — Eq {wd['eq_pct']}% ₹{wd['eq_val']:,.0f}"
+                                    f" | Gold {wd['gd_pct']}% ₹{wd['gd_val']:,.0f}"
+                                    f" | Cash {wd['cs_pct']}% ₹{wd['cs_val']:,.0f}"
+                                    for wd in _wdp_weeks
+                                ]
+                                _sel_lbl = st.selectbox("Kaunsa week?", options=_week_labels, key="oc_wk_sel")
+                                _sel_wk  = _wdp_weeks[_week_labels.index(_sel_lbl)]
+                                _wdp_eq  = float(_sel_wk["eq_val"]); _wdp_gd = float(_sel_wk["gd_val"]); _wdp_cs = float(_sel_wk["cs_val"])
+                                _wdp_ps  = _wdp_eq / 30 if _wdp_eq > 0 else 0
+                                _wdp_nb  = min(int(_wdp_eq / _wdp_ps) if _wdp_ps > 0 else 0, len(buy_list_local))
+                                st.markdown(f"""<div class="reb-strip">
+                                  <div class="reb-stat"><div class="label">Wk{_sel_wk['week']} Equity Pool</div><div class="val b">₹{_wdp_eq:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Gold Target</div><div class="val" style="color:#b45309">₹{_wdp_gd:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Liquid Target</div><div class="val" style="color:#475569">₹{_wdp_cs:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val g">₹{_wdp_ps:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Buy Entries</div><div class="val b">{_wdp_nb}</div></div>
+                                </div>""", unsafe_allow_html=True)
+                                _gd_gap_wk = max(0.0, _wdp_gd - _oc_gd_curr); _cs_gap_wk = max(0.0, _wdp_cs - _oc_lf_curr)
+                                st.markdown(f'<div style="background:#fef3c7;border-left:3px solid #b45309;border-radius:6px;padding:8px 14px;font-size:12px;color:#78350f;margin-bottom:8px;">{"🥇 GOLDBEES BUY ₹"+f"{_gd_gap_wk:,.0f}" if _gd_gap_wk>=15000 else "🥇 GOLDBEES: within band"} &nbsp;·&nbsp; {"💵 Liquid ADD ₹"+f"{_cs_gap_wk:,.0f}" if _cs_gap_wk>=15000 else "💵 Liquid: within band"}</div>', unsafe_allow_html=True)
+                                if _wdp_plan.get("paused"): st.error("⏸ Week 1 PAUSED — VIX > 30 AND weekly return < -5%.")
+                                _oc_final_per_stock = _wdp_ps; _oc_final_stocks = buy_list_local[:_wdp_nb]; _oc_final_pool = _wdp_eq
+                        else:
                             st.markdown(f"""<div class="reb-strip">
-                              <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{_ma_invested:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{_ma_leftover:,.0f}</div></div>
-                              <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(_ma_orders)}</div></div>
+                              <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">→ Gold BUY</div><div class="val" style="color:#b45309">₹{_oc_for_gold:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">→ Liquid ADD</div><div class="val" style="color:#475569">₹{_oc_for_liquid:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Equity Pool</div><div class="val g">₹{_oc_for_equity:,.0f}</div></div>
+                              <div class="reb-stat"><div class="label">Per Stock Tgt</div><div class="val b">₹{_oc_per_stock_tgt:,.0f}</div></div>
                             </div>""", unsafe_allow_html=True)
+                            st.caption(f"Regime: {_oc_lbl} · Eq {_oc_eq_pct*100:.0f}% / Gold {_oc_gd_pct*100:.0f}% / Liquid {_oc_cs_pct*100:.0f}% · Per-stock = Eq Budget ÷ 30 = ₹{_oc_per_stock_tgt:,.0f}")
 
-            st.divider()
-            if st.button("▶ Next: Apply & Export →", type="primary"):
-                st.session_state.current_step = 4; st.rerun()
+                        if sell_val_input == 0 and not capital_add and not _wdp_mode:
+                            st.info("💡 Sell Value enter karo → Buy orders auto-calculate honge.")
+                        if buy_list_local and _oc_final_per_stock > 0:
+                            st.markdown('<div class="section-hdr">📋 Buy Orders (Estimated)</div>', unsafe_allow_html=True)
+                            _ma_orders = []; _ma_invested = 0
+                            for _ii, _stk in enumerate(_oc_final_stocks, 1):
+                                _cmp = cmp_map3.get(_stk, 0)
+                                if _cmp > 0:
+                                    _qty = int(_oc_final_per_stock / _cmp); _val = _qty * _cmp; _ma_invested += _val
+                                    _ma_orders.append({"#": _ii, "Stock": _stk, "CMP ₹": round(_cmp, 2),
+                                        "Gross Alloc": round(_oc_final_per_stock + brokerage), "Brok ₹": brokerage,
+                                        "Net Alloc": round(_oc_final_per_stock), "Qty": _qty, "Value ₹": round(_val)})
+                            if _ma_orders:
+                                st.dataframe(pd.DataFrame(_ma_orders).style.format(
+                                    {"CMP ₹": "{:.2f}", "Gross Alloc": "{:,.0f}", "Net Alloc": "{:,.0f}", "Value ₹": "{:,.0f}"}),
+                                    use_container_width=True, hide_index=True, height=300)
+                                st.markdown(f"""<div class="reb-strip">
+                                  <div class="reb-stat"><div class="label">Total Invested</div><div class="val g">₹{_ma_invested:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Leftover</div><div class="val p">₹{_oc_final_pool-_ma_invested:,.0f}</div></div>
+                                  <div class="reb-stat"><div class="label">Buy Orders</div><div class="val b">{len(_ma_orders)}</div></div>
+                                </div>""", unsafe_allow_html=True)
 
-        elif not portfolio:
-            st.info("⬆️ Upar se portfolio data load karo (Google Sheet ya CSV).")
+                st.divider()
+                if st.button("▶ Next: Apply & Export →", type="primary"):
+                    st.session_state.current_step = 4; st.rerun()
+
+            elif not portfolio:
+                st.info("⬆️ Upar se portfolio data load karo (Google Sheet ya CSV).")
 
 
     # ═══════════════════════════════════════════════════════════════
