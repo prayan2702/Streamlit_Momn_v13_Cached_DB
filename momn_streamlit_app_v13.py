@@ -2046,6 +2046,11 @@ with _tab_sim:
         '</div>', unsafe_allow_html=True
     )
 
+    # ── Read preset overrides BEFORE widgets instantiate ─────────────
+    _pre_vix  = st.session_state.pop("_sim_pre_vix",  None)
+    _pre_sc   = st.session_state.pop("_sim_pre_sc",   None)
+    _pre_ath  = st.session_state.pop("_sim_pre_ath",  None)
+
     # ── Input columns ────────────────────────────────────────────────
     _sc1, _sc2 = st.columns(2)
 
@@ -2059,8 +2064,9 @@ with _tab_sim:
                                         value=int(_sim_total * 0.20), step=10000, key="sim_curr_gd")
         _sim_curr_cs = st.number_input("Current Liquid Fund ₹", min_value=0,
                                         value=int(_sim_total * 0.15), step=10000, key="sim_curr_cs")
+        _ath_default = _pre_ath if _pre_ath is not None else int(_sim_total * 1.05)
         _sim_ath     = st.number_input("ATH Portfolio Value ₹ (all-time high)", min_value=100000,
-                                        value=int(_sim_total * 1.05), step=50000, key="sim_ath",
+                                        value=_ath_default, step=50000, key="sim_ath",
                                         help="DD = (Current / ATH - 1) × 100. ATH ≥ Current if no crash.")
 
     with _sc2:
@@ -2069,11 +2075,13 @@ with _tab_sim:
                                      options=[0, 1, 2, 3],
                                      format_func=lambda x: f"{x} — {_SIM_ALLOC[x]['emoji']} {_SIM_ALLOC[x]['label']}",
                                      index=2, key="sim_prev_sc")
+        _sc_default  = _pre_sc if _pre_sc is not None else 2
         _sim_curr_sc = st.selectbox("Is Mahine Ka Score (Current)",
                                      options=[0, 1, 2, 3],
                                      format_func=lambda x: f"{x} — {_SIM_ALLOC[x]['emoji']} {_SIM_ALLOC[x]['label']}",
-                                     index=2, key="sim_curr_sc")
-        _sim_vix     = st.number_input("India VIX (current)", min_value=0.0, value=18.0,
+                                     index=_sc_default, key="sim_curr_sc")
+        _vix_default = _pre_vix if _pre_vix is not None else 18.0
+        _sim_vix     = st.number_input("India VIX (current)", min_value=0.0, value=_vix_default,
                                         step=0.5, key="sim_vix")
         _sim_n_exits = st.number_input("Monthly Exits (# stocks)", min_value=0, value=4,
                                         step=1, key="sim_n_exits")
@@ -2090,22 +2098,23 @@ with _tab_sim:
     st.markdown("**⚡ Quick Scenario Presets**")
     _preset_cols = st.columns(6)
     _presets = [
-        ("Same Score",    None, None, 18),
-        ("Score -1",      None, -1,   18),
-        ("Score +1",      None, +1,   18),
-        ("Score -2",      None, -2,   18),
-        ("VIX Spike",     None, None, 34),
-        ("DD Override",   0.78, None, 18),
+        ("Same Score",    None, None, 18.0),
+        ("Score -1",      None, -1,   18.0),
+        ("Score +1",      None, +1,   18.0),
+        ("Score -2",      None, -2,   18.0),
+        ("VIX Spike",     None, None, 34.0),
+        ("DD Override",   0.78, None, 18.0),
     ]
     for _col, (_plbl, _pdd_ratio, _psc_delta, _pvix) in zip(_preset_cols, _presets):
         with _col:
             if st.button(_plbl, key=f"preset_{_plbl}", use_container_width=True):
-                _new_sc = max(0, min(3, _sim_curr_sc + (_psc_delta or 0)))
-                if _pdd_ratio:
-                    st.session_state["sim_ath"]     = int(_sim_total / _pdd_ratio)
+                # Store in separate override keys — widget keys cannot be set after instantiation
+                st.session_state["_sim_pre_vix"] = _pvix
                 if _psc_delta is not None:
-                    st.session_state["sim_curr_sc"] = _new_sc
-                st.session_state["sim_vix"] = _pvix
+                    _new_idx = max(0, min(3, _sim_curr_sc + _psc_delta))
+                    st.session_state["_sim_pre_sc"] = _new_idx
+                if _pdd_ratio:
+                    st.session_state["_sim_pre_ath"] = int(_sim_total / _pdd_ratio)
                 st.rerun()
 
     st.markdown("---")
@@ -2212,22 +2221,24 @@ with _tab_sim:
         _fc  = _step_fc.get(_act_key, "#374151")
         _gap_txt = (f"Gap: ▲ +₹{_step['gap']:,.0f}" if _step["gap"] > 0
                     else f"Gap: ▼ ₹{abs(_step['gap']):,.0f}" if _step["gap"] < 0 else "")
-        st.markdown(f"""
-        <div style="background:{_bg};border-left:4px solid {_fc};border-radius:8px;
-                    padding:12px 16px;margin:6px 0;display:flex;align-items:flex-start;gap:14px;">
-          <div style="font-size:24px;flex-shrink:0;line-height:1">{_step['icon']}</div>
-          <div style="flex:1;">
-            <div style="font-size:11px;font-weight:700;color:{_fc};text-transform:uppercase;letter-spacing:.5px;">
-              Step {_idx} — {_step['title']}
-            </div>
-            <div style="font-size:15px;font-weight:800;color:{_fc};margin:3px 0;">{_step['action']}</div>
-            <div style="font-size:12px;color:#374151;">
-              Current: <b>{_step['current']}</b> &nbsp;→&nbsp; Target: <b>{_step['target']}</b>
-              {f'&nbsp;|&nbsp; {_gap_txt}' if _gap_txt else ''}
-            </div>
-            {f'<div style="font-size:11px;color:#64748b;margin-top:3px;">💡 {_step["note"]}</div>' if _step['note'] else ''}
-          </div>
-        </div>""", unsafe_allow_html=True)
+        _note_html = (f'<div style="font-size:11px;color:#64748b;margin-top:3px;">💡 {_step["note"]}</div>'
+                      if _step["note"] else "")
+        st.markdown(
+            f'<div style="background:{_bg};border-left:4px solid {_fc};border-radius:8px;'
+            f'padding:12px 16px;margin:6px 0;display:flex;align-items:flex-start;gap:14px;">'
+            f'<div style="font-size:24px;flex-shrink:0;line-height:1">{_step["icon"]}</div>'
+            f'<div style="flex:1;">'
+            f'<div style="font-size:11px;font-weight:700;color:{_fc};text-transform:uppercase;letter-spacing:.5px;">'
+            f'Step {_idx} — {_step["title"]}</div>'
+            f'<div style="font-size:15px;font-weight:800;color:{_fc};margin:3px 0;">{_step["action"]}</div>'
+            f'<div style="font-size:12px;color:#374151;">'
+            f'Current: <b>{_step["current"]}</b> &nbsp;→&nbsp; Target: <b>{_step["target"]}</b>'
+            + (f' &nbsp;|&nbsp; {_gap_txt}' if _gap_txt else '') +
+            f'</div>'
+            + _note_html +
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
 
     # ── Equity drift band check ──────────────────────────────────────
     st.markdown("---")
