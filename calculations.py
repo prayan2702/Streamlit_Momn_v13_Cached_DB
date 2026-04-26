@@ -129,10 +129,33 @@ def build_dfStats(close, high, volume, dates, ranking_method):
 
     dfStats = pd.DataFrame(index=symbol)
     dfStats['Close']   = round(data12M.iloc[-1], 2)
-    # ffill() — market holidays ke NaN ko aage ke close se fill karo
-    # (pehle fillna(0) tha jo 0 price se DMA calculate karta tha — galat!)
-    data12M_Temp = data12M.ffill()
-    dfStats['dma200d'] = round(data12M_Temp.rolling(window=200).mean().iloc[-1], 2)
+
+    # ── 200 DMA — Dedicated buffer (data12M se alag) ─────────────────────────
+    # FIX 1: data12M pe depend karna fragile tha — agar 12M window mein NSE
+    #         holidays zyada hon aur rows < 200 aaye to sab stocks ka dma200d=NaN.
+    #         Ab data20Y se last 290 calendar days ka dedicated slice use karo.
+    #         290 calendar days ≈ 200 NSE trading days + ~45 days buffer
+    #         (NSE ~245 trading days/year; 290 cal days ≈ 207 trading days).
+    #
+    # FIX 2: min_periods=150 — Indian market ke T-group / Z-group / SME stocks
+    #         jo kabhi kabhi weeks ke liye halt hote hain. Unke liye 200 rows
+    #         nahi milte ffill ke baad bhi. min_periods=150 se approximate DMA
+    #         milta hai (NaN se behtar — warna filter mein silently exclude hote hain).
+    #
+    # FIX 3: fillna(0) — agar kisi naye listed stock ka data 150 rows se bhi kam
+    #         ho, dma200d=0 rahega. valid_dma filter (dma200d > 0) already aise
+    #         stocks ko regime breadth calculation se bahar rakhta hai. ✅
+    dma_end   = dates['endDate']
+    dma_start = dma_end - pd.DateOffset(days=290)
+    data_dma  = data20Y.loc[dma_start:dma_end].ffill()
+    dfStats['dma200d'] = (
+        data_dma
+        .rolling(window=200, min_periods=150)
+        .mean()
+        .iloc[-1]
+        .round(2)
+        .fillna(0)
+    )
 
     dfStats['roc12M'] = getAbsReturns(data12M)
     dfStats['roc9M']  = getAbsReturns(data9M)
