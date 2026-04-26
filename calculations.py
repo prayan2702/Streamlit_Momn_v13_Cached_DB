@@ -197,20 +197,29 @@ def build_dfStats(close, high, volume, dates, ranking_method):
     dfStats['ATH']      = round(high20Y.max(), 2)
     dfStats['AWAY_ATH'] = round((dfStats['Close'] / dfStats['ATH'] - 1) * 100, 2)
 
-    dataDaily_pct = round(getDailyReturns(data12M) * 100, 2)
-    dfStats['circuit'] = (
-        (dataDaily_pct ==  4.99).sum() + (dataDaily_pct ==  5.00).sum() +
-        (dataDaily_pct ==  9.99).sum() + (dataDaily_pct == 10.00).sum() +
-        (dataDaily_pct == 19.99).sum() + (dataDaily_pct == 20.00).sum() +
-        (dataDaily_pct == -4.99).sum() + (dataDaily_pct == -5.00).sum() +
-        (dataDaily_pct == -9.99).sum() + (dataDaily_pct == -10.00).sum() +
-        (dataDaily_pct == -19.99).sum() + (dataDaily_pct == -20.00).sum()
+    # ── Circuit detection — tolerance-based (±0.015%) ────────────────────────
+    # FIX: Pehle exact == comparison (4.99, 5.00) use hota tha.
+    #      IEEE 754 floating point mein round(x*100, 2) ke baad bhi
+    #      5.005... → 5.01 ya 4.994... → 4.99 ho sakta hai — exact == miss karta.
+    #      Tolerance ±0.015%: 5.0 ± 0.015 = 4.985 to 5.015. Itna band
+    #      normal returns ko galti se include nahi karta (4.98 = valid return),
+    #      lekin floating point artifacts se koi circuit hit miss nahi hoga.
+    # _CIRCUIT_LEVELS: NSE ke standard upper circuit limits — 5%, 10%, 20%.
+    _CIRCUIT_LEVELS = [5.0, 10.0, 20.0]
+    _TOL = 0.015  # ±0.015% tolerance — float artifact se bada, real gap se chhota
+
+    dataDaily_pct = getDailyReturns(data12M) * 100
+    dfStats['circuit'] = sum(
+        ((dataDaily_pct - lvl).abs() < _TOL).sum() +
+        ((dataDaily_pct + lvl).abs() < _TOL).sum()
+        for lvl in _CIRCUIT_LEVELS
     )
 
-    dataDaily_pct5 = round(getDailyReturns(data3M) * 100, 2)
+    # circuit5 — sirf 5% circuit, last 3M data (recent manipulation filter)
+    dataDaily_pct5 = getDailyReturns(data3M) * 100
     dfStats['circuit5'] = (
-        (dataDaily_pct5 ==  4.99).sum() + (dataDaily_pct5 ==  5.00).sum() +
-        (dataDaily_pct5 == -4.99).sum() + (dataDaily_pct5 == -5.00).sum()
+        ((dataDaily_pct5 - 5.0).abs() < _TOL).sum() +
+        ((dataDaily_pct5 + 5.0).abs() < _TOL).sum()
     )
 
     dfStats = dfStats.reset_index().rename(columns={'index': 'Ticker'})
