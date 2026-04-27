@@ -1655,7 +1655,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
 _tab_screener, _tab_regime, _tab_sim = st.tabs([
     "📊 Screener & Rebalancer",
     "🌡️ Market Regime",
-    "🎮 Multi-Asset Simulator",
+    "🧪 Multi-Asset Simulator",
 ])
 
 # ════════════════════════════════════════════════════
@@ -1854,444 +1854,632 @@ with _tab_regime:
             st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_rt_date_s} | Alloc: {_rt_eq*100:.0f}/{_rt_gd*100:.0f}/{_rt_cs*100:.0f} (Eq/Gold/Cash)")
 
 # ════════════════════════════════════════════════════════════════════
-# MULTI-ASSET SIMULATOR TAB
+# MULTI-ASSET SIMULATOR TAB — full HTML widget (matches rebalancepanel)
 # ════════════════════════════════════════════════════════════════════
 with _tab_sim:
+    import streamlit.components.v1 as _sim_stc
 
-    _SIM_ALLOC = {
-        3: {"label": "Strong Bull", "eq": 0.80, "gd": 0.15, "cs": 0.05, "emoji": "🐂"},
-        2: {"label": "Mild Bull",   "eq": 0.65, "gd": 0.20, "cs": 0.15, "emoji": "📈"},
-        1: {"label": "Neutral",     "eq": 0.45, "gd": 0.25, "cs": 0.30, "emoji": "⚖️"},
-        0: {"label": "Bear",        "eq": 0.25, "gd": 0.30, "cs": 0.45, "emoji": "🐻"},
+    _SIM_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>
+:root{
+  --bg:#f8fafc;--surface:#fff;--surface2:#f1f5f9;--border:#e2e8f0;
+  --text:#1e293b;--text2:#475569;--text3:#94a3b8;
+  --navy:#1a237e;--navy2:#283593;
+  --buy:#2e7d32;--buy-bg:#e8f5e9;--buy-border:#a5d6a7;
+  --sell:#c62828;--sell-bg:#ffebee;--sell-border:#ef9a9a;
+  --blue:#1565c0;--blue-bg:#e3f2fd;--blue-border:#90caf9;
+  --orange:#e65100;--orange-bg:#fff3e0;--orange-border:#ffb74d;
+  --teal:#00695c;--teal-bg:#e0f2f1;--teal-border:#80cbc4;
+  --amber:#ff8f00;--amber-bg:#fffde7;--amber-border:#ffe082;
+  --purple:#6a1b9a;--purple-bg:#f3e5f5;--purple-border:#ce93d8;
+  --shadow:0 2px 8px rgba(0,0,0,.07);--radius:8px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Segoe UI',system-ui,sans-serif;font-size:12.5px;background:var(--bg);color:var(--text);}
+::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+/* INPUT GRID */
+.inp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:2px solid var(--border);background:var(--surface);}
+.inp-col{padding:8px 10px;border-right:1px solid var(--border);}
+.inp-col:last-child{border-right:none;}
+.inp-col-hdr{font-size:9px;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid var(--border);padding-bottom:4px;margin-bottom:7px;}
+.inp-field{display:flex;flex-direction:column;gap:2px;margin-bottom:5px;}
+.inp-lbl{font-size:10px;color:var(--text2);font-weight:600;}
+.inp-ctrl{width:100%;padding:4px 7px;border:1.5px solid var(--border);border-radius:5px;font-size:12px;font-weight:600;background:var(--surface);color:var(--text);outline:none;transition:border-color .15s;}
+.inp-ctrl[type=number]{text-align:right;}
+.inp-ctrl:focus{border-color:var(--navy);}
+select.inp-ctrl{text-align:left;}
+
+/* RESULTS */
+.results{padding:8px;}
+.sim-sec{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:8px;}
+.sim-sec-hdr{padding:7px 12px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);}
+.sim-sec-hdr.navy{background:#e8eaf6;color:var(--navy);}
+.sim-sec-hdr.teal{background:var(--teal-bg);color:var(--teal);}
+.sim-sec-hdr.green{background:var(--buy-bg);color:var(--buy);}
+.sim-sec-hdr.sell{background:var(--sell-bg);color:var(--sell);}
+.sim-sec-hdr.amber{background:var(--amber-bg);color:var(--orange);}
+.sim-sec-hdr.purple{background:var(--purple-bg);color:var(--purple);}
+.sim-sec-body{padding:8px 12px;}
+
+/* SCORE GAUGE */
+.score-gauge{text-align:center;padding:10px 12px;border-radius:8px;border:2px solid var(--border);}
+.score-gauge.s3{background:#e8f5e9;border-color:#a5d6a7;}
+.score-gauge.s2{background:#e3f2fd;border-color:#90caf9;}
+.score-gauge.s1{background:#fffde7;border-color:#ffe082;}
+.score-gauge.s0{background:#ffebee;border-color:#ef9a9a;}
+.score-num{font-size:48px;font-weight:900;line-height:1;}
+.score-gauge.s3 .score-num,.score-gauge.s3 .score-lbl{color:#2e7d32;}
+.score-gauge.s2 .score-num,.score-gauge.s2 .score-lbl{color:#1565c0;}
+.score-gauge.s1 .score-num,.score-gauge.s1 .score-lbl{color:#e65100;}
+.score-gauge.s0 .score-num,.score-gauge.s0 .score-lbl{color:#c62828;}
+.score-lbl{font-size:13px;font-weight:700;margin-top:3px;}
+
+/* ALLOC CARDS */
+.alloc-strip{display:flex;gap:8px;}
+.alloc-card{flex:1;border-radius:8px;padding:9px;text-align:center;border:1.5px solid var(--border);}
+.alloc-card.ac-eq{background:#e8f5e9;border-color:#a5d6a7;}
+.alloc-card.ac-gold{background:#fffde7;border-color:#ffe082;}
+.alloc-card.ac-cash{background:#e3f2fd;border-color:#90caf9;}
+.ac-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2);margin-bottom:2px;}
+.ac-pct{font-size:22px;font-weight:900;}
+.alloc-card.ac-eq .ac-pct{color:#2e7d32;}
+.alloc-card.ac-gold .ac-pct{color:#e65100;}
+.alloc-card.ac-cash .ac-pct{color:#1565c0;}
+.ac-rs{font-size:10.5px;font-weight:700;color:var(--text2);margin-top:2px;}
+
+/* THIS WEEK CARD */
+.tw-card{border-radius:8px;padding:10px 13px;border:2px solid;}
+.tw-card.tw-normal{background:#e0f7fa;border-color:#00838f;}
+.tw-card.tw-pause{background:#fff8e1;border-color:#f9a825;}
+.tw-card.tw-emerg{background:#fbe9e7;border-color:#d84315;}
+.tw-card.tw-complete{background:var(--buy-bg);border-color:var(--buy-border);}
+.tw-hdr{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:7px;}
+.tw-card.tw-normal .tw-hdr{color:#00838f;}
+.tw-card.tw-pause  .tw-hdr{color:#f9a825;}
+.tw-card.tw-emerg  .tw-hdr{color:#d84315;}
+.tw-card.tw-complete .tw-hdr{color:var(--buy);}
+.tw-row{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed rgba(0,0,0,.1);font-size:12px;}
+.tw-row:last-child{border-bottom:none;}
+.tw-lbl{flex:1;font-weight:600;color:var(--text);}
+.tw-val{font-size:12.5px;font-weight:800;}
+.tw-val.buy{color:var(--buy);}  .tw-val.sell{color:var(--sell);}
+.tw-val.hold{color:var(--text2);}  .tw-val.navy{color:var(--navy);}
+
+/* SHIFT TABLE */
+.shift-tbl{width:100%;border-collapse:collapse;font-size:11px;}
+.shift-tbl th{background:#e8eaf6;padding:5px 7px;color:var(--navy);font-weight:700;text-align:center;font-size:10px;text-transform:uppercase;border-bottom:1.5px solid #c5cae9;}
+.shift-tbl td{padding:5px 7px;border-bottom:1px solid var(--border);text-align:center;}
+.shift-tbl tr.cur-week td{background:var(--blue-bg);font-weight:700;}
+.shift-tbl tr.done td{opacity:.5;text-decoration:line-through;}
+.shift-tbl tr.target-row td{background:var(--buy-bg);font-weight:700;}
+
+/* GAP TABLE */
+.gap-tbl{width:100%;border-collapse:collapse;font-size:11.5px;}
+.gap-tbl th{background:var(--surface2);padding:5px 8px;text-align:left;font-weight:700;color:var(--text2);font-size:10px;text-transform:uppercase;border-bottom:1.5px solid var(--border);}
+.gap-tbl td{padding:5px 8px;border-bottom:1px solid var(--border);}
+.gap-tbl tr:hover td{background:var(--surface2);}
+.cell-buy{color:var(--buy);font-weight:700;} .cell-sell{color:var(--sell);font-weight:700;}
+.cell-hold{color:var(--text3);font-style:italic;}
+
+/* PROCEEDS FLOW */
+.pf-flow{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);}
+.pf-step{display:flex;align-items:flex-start;gap:10px;padding:7px 12px;border-bottom:1px solid var(--border);font-size:11.5px;}
+.pf-step:last-child{border-bottom:none;}
+.pf-num{background:var(--navy);color:#fff;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;flex-shrink:0;margin-top:1px;}
+.pf-body{flex:1;}
+.pf-lbl{font-weight:700;color:var(--text);}
+.pf-det{color:var(--text2);font-size:11px;margin-top:1px;line-height:1.5;}
+.pf-amt{font-weight:800;font-size:12.5px;white-space:nowrap;}
+.pf-amt.pos{color:var(--buy);} .pf-amt.neg{color:var(--sell);} .pf-amt.na{color:var(--text3);}
+
+/* WHATS-IF TABLE */
+.wi-tbl{width:100%;border-collapse:collapse;font-size:11px;}
+.wi-tbl th{background:#e8eaf6;padding:5px 7px;color:var(--navy);font-weight:700;text-align:center;font-size:10px;text-transform:uppercase;border-bottom:1.5px solid #c5cae9;}
+.wi-tbl td{padding:5px 8px;border-bottom:1px solid var(--border);text-align:center;}
+.wi-tbl tr.cur td{background:var(--buy-bg);font-weight:700;}
+
+/* BOXES */
+.info-box{background:var(--blue-bg);padding:8px 12px;font-size:11.5px;color:var(--blue);border-radius:6px;margin:6px 0;border-left:3px solid var(--blue-border);}
+.warn-box{background:var(--sell-bg);padding:8px 12px;font-size:11.5px;color:var(--sell);border-radius:6px;margin:6px 0;border-left:3px solid var(--sell-border);}
+.success-box{background:var(--buy-bg);padding:8px 12px;font-size:11.5px;color:var(--buy);border-radius:6px;margin:6px 0;border-left:3px solid var(--buy-border);}
+.suggest-box{background:var(--orange-bg);padding:8px 12px;font-size:11.5px;color:var(--orange);border-radius:6px;margin:6px 0;border-left:3px solid var(--orange-border);}
+.dd-box{border-radius:8px;padding:8px 12px;border:1.5px solid;margin:6px 0;}
+.dd-box.dd-ok{background:var(--buy-bg);border-color:var(--buy-border);}
+.dd-box.dd-watch{background:var(--amber-bg);border-color:var(--amber-border);}
+.dd-box.dd-override{background:var(--sell-bg);border-color:var(--sell-border);}
+.dd-box.dd-emerg{background:#2a0000;border-color:#ef9a9a;}
+.dd-box-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
+.dd-box.dd-ok .dd-box-title{color:var(--buy);}
+.dd-box.dd-watch .dd-box-title{color:var(--orange);}
+.dd-box.dd-override .dd-box-title,.dd-box.dd-emerg .dd-box-title{color:var(--sell);}
+.dd-pct{font-size:20px;font-weight:900;margin-top:2px;}
+.dd-box.dd-ok .dd-pct{color:var(--buy);}
+.dd-box.dd-watch .dd-pct{color:var(--orange);}
+.dd-box.dd-override .dd-pct,.dd-box.dd-emerg .dd-pct{color:var(--sell);}
+.dd-detail{font-size:11px;color:var(--text2);margin-top:2px;line-height:1.5;}
+
+/* BADGE */
+.bdg{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:10.5px;font-weight:700;}
+.bdg-buy{background:var(--buy-bg);color:var(--buy);border:1px solid var(--buy-border);}
+.bdg-sell{background:var(--sell-bg);color:var(--sell);border:1px solid var(--sell-border);}
+.bdg-navy{background:#e8eaf6;color:var(--navy);border:1px solid #c5cae9;}
+.empty{padding:24px;text-align:center;color:var(--text3);font-style:italic;}
+
+.sum-strip{display:flex;gap:8px;flex-wrap:wrap;padding:6px 12px;background:var(--surface2);border-top:1px solid var(--border);}
+.sum-item{display:flex;flex-direction:column;}
+.sum-lbl{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;}
+.sum-val{font-size:12.5px;font-weight:700;}
+.sum-val.g{color:var(--buy);} .sum-val.r{color:var(--sell);}
+.sum-val.b{color:var(--blue);} .sum-val.o{color:var(--orange);}
+</style>
+</head>
+<body>
+
+<!-- INPUT GRID -->
+<div style="background:linear-gradient(90deg,#1a237e,#283593);color:#fff;padding:8px 14px;display:flex;align-items:center;justify-content:space-between;">
+  <div>
+    <div style="font-size:13px;font-weight:800;">🧪 Multi-Asset Regime Simulator</div>
+    <div style="font-size:10px;opacity:.65;">Koi bhi scenario simulate karo — pura deployment plan real-time milega</div>
+  </div>
+  <button onclick="simReset()" style="background:rgba(255,255,255,.15);color:#fff;border:1.5px solid rgba(255,255,255,.35);border-radius:20px;padding:5px 14px;font-size:12px;font-weight:700;cursor:pointer;">🔄 Reset</button>
+</div>
+
+<div class="inp-grid">
+  <!-- PORTFOLIO -->
+  <div class="inp-col">
+    <div class="inp-col-hdr">💼 Portfolio</div>
+    <div class="inp-field"><span class="inp-lbl">Total PF ₹</span><input type="number" id="sim-total" value="2000000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">ATH PF ₹</span><input type="number" id="sim-ath" value="2000000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">Exit Proceeds this Month ₹</span><input type="number" id="sim-exits" value="200000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">Capital Addition ₹</span><input type="number" id="sim-capadd" value="0" class="inp-ctrl" oninput="runSim()"></div>
+  </div>
+  <!-- REGIME -->
+  <div class="inp-col">
+    <div class="inp-col-hdr">🌡️ Regime</div>
+    <div class="inp-field"><span class="inp-lbl">Previous Month Score</span>
+      <select id="sim-prev" class="inp-ctrl" onchange="runSim()">
+        <option value="-1">— First time —</option>
+        <option value="0">0 — 🐻 Bear</option>
+        <option value="1">1 — ⚖️ Neutral</option>
+        <option value="2" selected>2 — 📈 Mild Bull</option>
+        <option value="3">3 — 🐂 Strong Bull</option>
+      </select>
+    </div>
+    <div class="inp-field"><span class="inp-lbl">Current Month Score</span>
+      <select id="sim-cur" class="inp-ctrl" onchange="runSim()">
+        <option value="0">0 — 🐻 Bear</option>
+        <option value="1">1 — ⚖️ Neutral</option>
+        <option value="2">2 — 📈 Mild Bull</option>
+        <option value="3" selected>3 — 🐂 Strong Bull</option>
+      </select>
+    </div>
+    <div class="inp-field"><span class="inp-lbl">India VIX</span><input type="number" id="sim-vix" value="16" step="0.5" class="inp-ctrl" oninput="runSim()"></div>
+  </div>
+  <!-- ASSETS -->
+  <div class="inp-col">
+    <div class="inp-col-hdr">🏦 Current Assets</div>
+    <div class="inp-field"><span class="inp-lbl">Equity ₹</span><input type="number" id="sim-eq-cur" value="1300000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">GOLDBEES ₹</span><input type="number" id="sim-gold-cur" value="400000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">Liquid Fund ₹</span><input type="number" id="sim-liq-cur" value="300000" class="inp-ctrl" oninput="runSim()"></div>
+    <div class="inp-field"><span class="inp-lbl">GOLDBEES CMP ₹/unit</span><input type="number" id="sim-gold-cmp" value="125" step="0.5" class="inp-ctrl" oninput="runSim()"></div>
+  </div>
+  <!-- WEEK -->
+  <div class="inp-col">
+    <div class="inp-col-hdr">📆 Deployment Week</div>
+    <div class="inp-field"><span class="inp-lbl">Deploying which week?</span>
+      <select id="sim-week" class="inp-ctrl" onchange="runSim()">
+        <option value="0">Month start / Week 1</option>
+        <option value="1">✅ Week 1 done → Now Week 2</option>
+        <option value="2">✅ Weeks 1–2 done → Now Week 3</option>
+        <option value="3">✅ Weeks 1–3 done → Now Week 4</option>
+      </select>
+    </div>
+    <div class="inp-field"><span class="inp-lbl">Weekly NAV Return % (this Friday)</span><input type="number" id="sim-nav-ret" value="0" step="0.1" class="inp-ctrl" oninput="runSim()"></div>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div class="results" id="simResults">
+  <div class="empty">Values enter karo — results yahan automatically aayenge</div>
+</div>
+
+<script>
+var ALLOC={3:[80,15,5],2:[65,20,15],1:[45,25,30],0:[25,30,45]};
+var LBLS={3:'🐂 Strong Bull',2:'📈 Mild Bull',1:'⚖️ Neutral',0:'🐻 Bear'};
+var SCLS={3:'s3',2:'s2',1:'s1',0:'s0'};
+
+function fmt(n){return isNaN(n)?'0':Math.round(n).toLocaleString('en-IN');}
+function fmtD(n){return isNaN(n)?'0':parseFloat(n).toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:2});}
+function gv(id){return parseFloat(document.getElementById(id).value)||0;}
+function gi(id){return parseInt(document.getElementById(id).value);}
+
+function runSim(){
+  var tot=gv('sim-total'),ath=gv('sim-ath'),exits=gv('sim-exits'),capadd=gv('sim-capadd');
+  var prevScore=gi('sim-prev'),curScore=gi('sim-cur');
+  var vix=gv('sim-vix'),eqCur=gv('sim-eq-cur'),goldCur=gv('sim-gold-cur');
+  var liqCur=gv('sim-liq-cur'),goldCmp=gv('sim-gold-cmp')||125;
+  var weekNum=gi('sim-week'),navRet=gv('sim-nav-ret');
+
+  if(tot<=0){document.getElementById('simResults').innerHTML='<div class="empty">Total PF ₹ enter karo</div>';return;}
+
+  // ── DD Check ──
+  var ddPct=0,ddCls='dd-ok',ddDetail='Normal.',ddOverride=false,ddEmerg=false,score=curScore;
+  if(ath>0){
+    ddPct=(tot/ath-1)*100;
+    if(ddPct>=-15){ddCls='dd-ok';ddDetail='Normal — weekly check as usual.';}
+    else if(ddPct>-20){ddCls='dd-watch';ddDetail='⚠️ DD '+Math.abs(ddPct).toFixed(1)+'% ≥ 15% — Pause capital adds. Weekly mandatory check.';}
+    else if(ddPct>-30){ddCls='dd-override';ddOverride=true;score=0;ddDetail='🔴 DD Override: Score forced → 0 (Bear). 4-week defensive shift.';}
+    else{ddCls='dd-emerg';ddOverride=true;ddEmerg=true;score=0;ddDetail='🚨 Emergency DD ≥ 30%: SINGLE WEEK → Eq 20% | Gold 30% | Cash 50%.';}
+  }
+
+  // ── VIX Overlay ──
+  var base=ALLOC[score].slice();
+  var vixAdj=vix>30?5:vix>20?3:0;
+  var goldPct=ddEmerg?30:Math.min(30,base[1]+vixAdj);
+  var eqPct=ddEmerg?20:base[0];
+  var cashPct=ddEmerg?50:100-eqPct-goldPct;
+  var eqBudget=tot*eqPct/100,goldTgt=tot*goldPct/100,liqTgt=tot*cashPct/100;
+  var goldDiff=goldTgt-goldCur,liqDiff=liqTgt-liqCur;
+  var isPause=(vix>30&&navRet<-5);
+  var scoreChanged=(prevScore>=0&&prevScore!==score);
+  var isRec=score>prevScore;
+  var totalWeeks=scoreChanged?(Math.abs(score-prevScore)===1?2:Math.abs(score-prevScore)===2?3:4):0;
+  var thisWeek=weekNum+1;
+
+  var html='';
+
+  // ════ 1. SCORE + DD ════
+  html+='<div class="sim-sec"><div class="sim-sec-hdr navy">🌡️ Regime Score &amp; Allocation</div><div class="sim-sec-body">';
+  html+='<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;">';
+  html+='<div class="score-gauge '+SCLS[score]+'" style="min-width:120px;flex:0 0 auto;padding:10px 12px;">'+
+    '<div style="font-size:9px;opacity:.6;font-weight:700;text-transform:uppercase;margin-bottom:2px;">SCORE</div>'+
+    '<div class="score-num">'+score+(ddOverride?'*':'')+'</div>'+
+    '<div class="score-lbl">'+LBLS[score]+'</div>'+
+    (ddOverride?'<div style="font-size:10px;color:var(--sell);font-weight:700;margin-top:3px;">'+(ddEmerg?'Emergency 🚨':'DD Override 🔴')+'</div>':'')+
+  '</div>';
+  html+='<div style="flex:1;min-width:200px;">';
+  html+='<div class="alloc-strip" style="margin-bottom:8px;">'+
+    '<div class="alloc-card ac-eq"><div class="ac-label">📈 Equity</div><div class="ac-pct">'+eqPct+'%</div><div class="ac-rs">₹'+fmt(eqBudget)+'</div></div>'+
+    '<div class="alloc-card ac-gold"><div class="ac-label">🥇 GOLDBEES</div><div class="ac-pct">'+goldPct+'%</div><div class="ac-rs">₹'+fmt(goldTgt)+'</div></div>'+
+    '<div class="alloc-card ac-cash"><div class="ac-label">💵 Liquid</div><div class="ac-pct">'+cashPct+'%</div><div class="ac-rs">₹'+fmt(liqTgt)+'</div></div>'+
+  '</div>';
+  // DD box
+  var ddBanner=ath>0?('<div class="dd-box '+ddCls+'"><div class="dd-box-title">📉 Drawdown from ATH ₹'+fmt(ath)+'</div>'+
+    '<div class="dd-pct">'+Math.abs(ddPct).toFixed(1)+'%</div><div class="dd-detail">'+ddDetail+'</div></div>'):'';
+  html+=ddBanner;
+  // VIX overlay
+  if(vixAdj>0){
+    html+='<div class="'+(vix>30?'warn-box':'info-box')+'">⚡ <strong>VIX Overlay:</strong> VIX '+fmtD(vix)+' → Gold +'+vixAdj+'% (base '+base[1]+'%→'+goldPct+'%). Funded from Liquid. Equity NAHI badla.</div>';
+  }
+  if(scoreChanged){
+    var sc_dir=isRec?'📈 Recovery':'📉 Defensive';
+    var sc_msg=isRec?'Exit proceeds → Equity (Liquid se fund). '+totalWeeks+'-week plan.':'Natural exits → Liquid + Gold. '+totalWeeks+'-week plan.';
+    html+='<div class="'+(isRec?'success-box':'warn-box')+'"><strong>'+sc_dir+': Score '+prevScore+' → '+score+'</strong><br><span style="font-size:11px;">'+sc_msg+'</span></div>';
+  }
+  html+='</div></div></div></div>';
+
+  // ════ 2. CURRENT vs TARGET GAP ════
+  html+='<div class="sim-sec"><div class="sim-sec-hdr teal">📊 Current vs Target — Asset Gap</div><div class="sim-sec-body">';
+  html+='<table class="gap-tbl"><thead><tr>'+
+    '<th>Asset</th><th>Current ₹</th><th>Current %</th>'+
+    '<th>Target %</th><th>Target ₹</th><th>Gap ₹</th><th>Drift %</th><th>Action</th></tr></thead><tbody>';
+
+  function assetRow(name,cur,tgt,tpct){
+    var gap=tgt-cur,drift=tot>0?Math.abs(cur-tgt)/tot*100:0;
+    var acCls=Math.abs(gap)<15000?'cell-hold':gap>0?'cell-buy':'cell-sell';
+    var acTxt=Math.abs(gap)<15000?'HOLD &lt;₹15K':gap>0?'🟢 BUY / ADD':'🔴 SELL / REDEEM';
+    return '<tr><td><strong>'+name+'</strong></td><td>₹'+fmt(cur)+'</td>'+
+      '<td>'+((cur/tot)*100).toFixed(1)+'%</td>'+
+      '<td>'+tpct+'%</td><td>₹'+fmt(tgt)+'</td>'+
+      '<td class="'+(gap>=0?'cell-buy':'cell-sell')+'">'+fmt(gap)+'</td>'+
+      '<td class="'+(drift>7?'cell-sell':drift>3?'cell-buy':'cell-hold')+'">'+drift.toFixed(1)+'%</td>'+
+      '<td class="'+acCls+'">'+acTxt+'</td></tr>';
+  }
+  html+=assetRow('📈 Equity',eqCur,eqBudget,eqPct);
+  html+=assetRow('🥇 GOLDBEES',goldCur,goldTgt,goldPct);
+  html+=assetRow('💵 Liquid',liqCur,liqTgt,cashPct);
+  html+='</tbody></table>';
+  if(Math.abs(goldDiff)>=15000&&goldCmp>0){
+    var units=Math.floor(Math.abs(goldDiff)/goldCmp);
+    html+='<div style="margin-top:6px;font-size:11.5px;color:var(--text2);">🥇 ≈ <strong>'+units+' GOLDBEES units</strong> @ ₹'+fmtD(goldCmp)+'/unit</div>';
+  }
+  html+='<div class="sum-strip">'+
+    '<div class="sum-item"><span class="sum-lbl">Eq Budget</span><span class="sum-val b">₹'+fmt(eqBudget)+'</span></div>'+
+    '<div class="sum-item"><span class="sum-lbl">Per Stock (÷30)</span><span class="sum-val g">₹'+fmt(eqBudget/30)+'</span></div>'+
+    '<div class="sum-item"><span class="sum-lbl">Gold Gap</span><span class="sum-val '+(goldDiff>0?'g':'r')+'">'+fmt(goldDiff)+'</span></div>'+
+    '<div class="sum-item"><span class="sum-lbl">Liquid Gap</span><span class="sum-val '+(liqDiff>0?'g':'r')+'">'+fmt(liqDiff)+'</span></div>'+
+  '</div></div></div>';
+
+  // ════ 3. THIS WEEK'S ACTIONS ════
+  html+=buildThisWeekSection(prevScore,score,tot,weekNum,navRet,vix,isPause,goldCur,goldCmp,liqCur,eqPct,goldPct,cashPct,eqBudget,ddOverride,ddEmerg,thisWeek,totalWeeks,isRec);
+
+  // ════ 4. FULL SHIFT TABLE ════
+  if(scoreChanged&&totalWeeks>0){
+    html+=buildShiftSection(prevScore,score,tot,weekNum,navRet,vix,isPause,totalWeeks,isRec);
+  }
+
+  // ════ 5. PROCEEDS ALLOCATION ════
+  html+=buildProceedsSection(prevScore,score,tot,exits,capadd,eqPct,goldPct,cashPct,goldCur,liqCur,eqBudget,goldDiff,liqDiff,scoreChanged,isRec);
+
+  // ════ 6. WHAT-IF NEXT MONTH ════
+  html+=buildWhatIfSection(score,tot,prevScore);
+
+  // ════ 7. GUARDRAILS ════
+  html+='<div class="sim-sec"><div class="sim-sec-hdr purple">📐 SOP v2026 Quick Reference</div><div class="sim-sec-body">';
+  html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:11.5px;line-height:1.8;">';
+  html+='<div><div style="font-weight:700;color:var(--navy);margin-bottom:4px;">Allocation Table</div>'+
+    '<table style="width:100%;border-collapse:collapse;font-size:11px;">'+
+    '<tr style="background:#e8eaf6;"><td style="padding:3px 6px;font-weight:700;color:var(--navy);">Score</td><td style="padding:3px 6px;font-weight:700;color:var(--buy);">Eq%</td><td style="padding:3px 6px;font-weight:700;color:var(--orange);">Gold%</td><td style="padding:3px 6px;font-weight:700;color:var(--blue);">Cash%</td></tr>'+
+    '<tr style="'+(score===3?'background:var(--buy-bg);font-weight:700;':'')+'"><td style="padding:3px 6px;">3 🐂 Strong Bull</td><td>80%</td><td>15%</td><td>5%</td></tr>'+
+    '<tr style="'+(score===2?'background:var(--blue-bg);font-weight:700;':'')+'"><td style="padding:3px 6px;">2 📈 Mild Bull</td><td>65%</td><td>20%</td><td>15%</td></tr>'+
+    '<tr style="'+(score===1?'background:var(--amber-bg);font-weight:700;':'')+'"><td style="padding:3px 6px;">1 ⚖️ Neutral</td><td>45%</td><td>25%</td><td>30%</td></tr>'+
+    '<tr style="'+(score===0?'background:var(--sell-bg);font-weight:700;':'')+'"><td style="padding:3px 6px;">0 🐻 Bear</td><td>25%</td><td>30%</td><td>45%</td></tr>'+
+    '</table></div>';
+  html+='<div><div style="font-weight:700;color:var(--navy);margin-bottom:4px;">Guardrails</div>'+
+    '• Min ₹15K per Gold/Liquid transaction<br>'+
+    '• Gold drift band ±7% of total PF<br>'+
+    '• Equity drift: ±₹20,000 per stock<br>'+
+    '• Standalone equity sells: <strong>KABHI NAHI</strong><br>'+
+    '• DD ≥20% → Score forced 0 (Bear)<br>'+
+    '• DD ≥30% → Emergency single-week move<br>'+
+    '• VIX ≤20: No overlay | 20-30: +3% Gold | >30: +5% Gold<br>'+
+    '• Pause week: VIX>30 <strong>AND</strong> NAV &lt; -5% both<br>'+
+    '• Score ±1 → 2-week plan | ±2 → 3-week | ±3 → 4-week'+
+    '</div></div></div></div>';
+
+  document.getElementById('simResults').innerHTML=html;
+}
+
+function buildThisWeekSection(prev,score,tot,weekNum,navRet,vix,isPause,goldCur,goldCmp,liqCur,eqPct,goldPct,cashPct,eqBudget,ddOverride,ddEmerg,thisWeek,totalWeeks,isRec){
+  var goldTgt=tot*goldPct/100,liqTgt=tot*cashPct/100;
+  var goldDiff=goldTgt-goldCur,liqDiff=liqTgt-liqCur;
+  var scoreChanged=(prev>=0&&prev!==score);
+
+  var cls='tw-normal',hdrTxt='',rows='';
+
+  if(ddEmerg){
+    cls='tw-emerg'; hdrTxt='🚨 EMERGENCY — DD≥30% — SINGLE WEEK MOVE';
+    rows=tw('Equity → target 20%','₹'+fmt(tot*0.20),'sell')+
+      tw('GOLDBEES → target 30%','₹'+fmt(tot*0.30),'hold')+
+      tw('Liquid → target 50%','₹'+fmt(tot*0.50),'buy')+
+      tw('⚠️ No phasing — execute ALL in one week','Sabse urgent action','sell');
+  } else if(isPause&&scoreChanged){
+    cls='tw-pause'; hdrTxt='⏸ WEEK '+thisWeek+' PAUSED — VIX>30 AND Weekly NAV<−5%';
+    rows=tw('VIX',fmtD(vix),'sell')+tw('Weekly NAV Return',navRet.toFixed(1)+'%','sell')+
+      tw('This week deployment','HOLD — Carry forward to next Friday','hold')+
+      tw('Reason','BOTH conditions met: VIX>30 AND NAV<−5%','hold');
+  } else if(!scoreChanged||prev<0){
+    cls='tw-normal'; hdrTxt='📅 Score Same ('+score+'→'+score+') — Normal Monthly Rebalance';
+    var gA=Math.abs(goldDiff)<15000?'HOLD (<₹15K)':goldDiff>0?'BUY ₹'+fmt(goldDiff)+' (≈'+Math.floor(goldDiff/(gv("sim-gold-cmp")||125))+' units)':'SELL ₹'+fmt(Math.abs(goldDiff));
+    var lA=Math.abs(liqDiff)<15000?'HOLD (<₹15K)':liqDiff>0?'ADD ₹'+fmt(liqDiff):'REDEEM ₹'+fmt(Math.abs(liqDiff));
+    rows=tw('1️⃣ Equity — sell exits, buy new stocks at target','Budget ₹'+fmt(eqBudget)+' | Per stock ₹'+fmt(eqBudget/30),'navy')+
+      tw('2️⃣ GOLDBEES (drift ±7% check)',gA,(Math.abs(goldDiff)<15000?'hold':goldDiff>0?'buy':'sell'))+
+      tw('3️⃣ Liquid Fund',lA,(Math.abs(liqDiff)<15000?'hold':liqDiff>0?'buy':'sell'))+
+      tw('4️⃣ Drift check — any stock ±₹20K from target?','Surplus bachhe to 1–2 correct karo. No surplus → skip.','hold');
+  } else if(thisWeek>totalWeeks){
+    cls='tw-complete'; hdrTxt='✅ Shift Plan Complete — All '+totalWeeks+' weeks done!';
+    rows=tw('Status','Target allocation reached ✅','buy')+
+      tw('Next Friday','Fresh score check → Normal monthly mode','hold');
+  } else {
+    var fa=ALLOC[prev],ta=ALLOC[score];
+    var p=thisWeek/totalWeeks,pP=(thisWeek-1)/totalWeeks;
+    var eq=Math.round(fa[0]+(ta[0]-fa[0])*p),gold=Math.round(fa[1]+(ta[1]-fa[1])*p),cash=100-eq-gold;
+    var pEq=thisWeek===1?fa[0]:Math.round(fa[0]+(ta[0]-fa[0])*pP);
+    var pGold=thisWeek===1?fa[1]:Math.round(fa[1]+(ta[1]-fa[1])*pP);
+    var pCash=100-pEq-pGold;
+    var eqD=Math.round((eq-pEq)*tot/100),goldD=Math.round((gold-pGold)*tot/100),cashD=Math.round((cash-pCash)*tot/100);
+    var isFin=thisWeek===totalWeeks;
+    cls=isRec?'tw-normal':'tw-pause';
+    hdrTxt=(isRec?'📈':'📉')+' Week '+thisWeek+' of '+totalWeeks+(isFin?' — FINAL 🎯':'')+' | Score '+prev+'→'+score;
+    rows=tw('🎯 Target this Friday','Eq '+eq+'% | Gold '+gold+'% | Cash '+cash+'%','navy')+
+      tw('📈 Equity ₹','₹'+fmt(tot*eq/100),'navy')+
+      tw('🥇 GOLDBEES ₹','₹'+fmt(tot*gold/100)+(goldD!==0?' ('+(goldD>0?'+':'')+fmt(goldD)+')'  :''),goldD>0?'buy':goldD<0?'sell':'hold')+
+      tw('💵 Liquid ₹','₹'+fmt(tot*cash/100)+(cashD!==0?' ('+(cashD>0?'+':'')+fmt(cashD)+')':''),cashD>0?'buy':cashD<0?'sell':'hold');
+    if(isRec){
+      rows+=tw('💵 Redeem from Liquid','₹'+fmt(Math.abs(cashD)),'sell')+
+        tw('📈 Buy Equity (new entries)','₹'+fmt(Math.abs(eqD))+' | Per stock: ₹'+fmt(tot*eq/100/30),'buy');
+      if(goldD<0) rows+=tw('🥇 Trim Gold → Liquid','₹'+fmt(Math.abs(goldD)),'sell');
+    } else {
+      rows+=tw('🔴 Sell Equity → Liquid','₹'+fmt(Math.abs(eqD)),'sell');
+      if(goldD>0) rows+=tw('🥇 Buy GOLDBEES','₹'+fmt(goldD),'buy');
+      rows+=tw('💵 Liquid target','₹'+fmt(tot*cash/100),'buy');
     }
+    rows+=tw('⚠️ Next Friday: Score re-check',isFin?'Target reached ✅':'If same → Week '+(thisWeek+1)+'. Changed? → Fresh plan.','hold');
+  }
 
-    def _sim_vix_overlay(base_gd, base_cs, vix):
-        if vix is None or vix <= 20:
-            return base_gd, base_cs, 0.0, "No VIX overlay (VIX ≤ 20)"
-        elif vix <= 30:
-            shift = min(0.03, base_cs - 0.02)
-            return base_gd + shift, base_cs - shift, shift, f"VIX {vix:.1f} (20–30) → Gold +{shift*100:.0f}% from Liquid"
-        else:
-            shift = min(0.05, base_cs - 0.02)
-            return base_gd + shift, base_cs - shift, shift, f"VIX {vix:.1f} (>30) → Gold +{shift*100:.0f}% from Liquid"
+  return '<div class="sim-sec"><div class="sim-sec-hdr '+(cls==='tw-emerg'?'sell':cls==='tw-pause'?'amber':'green')+'">'+
+    '⚡ Week '+thisWeek+' — This Week\'s Actions</div>'+
+    '<div class="sim-sec-body"><div class="tw-card '+cls+'">'+
+    '<div class="tw-hdr">'+hdrTxt+'</div>'+rows+
+    '</div></div></div>';
+}
 
-    def _sim_dd_check(curr_pf, ath_pf):
-        if ath_pf <= 0 or curr_pf <= 0:
-            return 0.0, False, False
-        dd = (curr_pf / ath_pf - 1) * 100
-        return dd, dd <= -20, -20 < dd <= -15
+function tw(lbl,val,cls){
+  return '<div class="tw-row"><span class="tw-lbl">'+lbl+'</span><span class="tw-val '+cls+'">'+val+'</span></div>';
+}
 
-    def _sim_proceeds_plan(prev_sc, curr_sc, total_pf, curr_eq, curr_gd, curr_cs,
-                            n_exits, exit_pf, capital_add, vix, num_stocks=30):
-        alloc        = _SIM_ALLOC[curr_sc]
-        adj_gd, adj_cs, vix_shift, vix_msg = _sim_vix_overlay(alloc["gd"], alloc["cs"], vix)
-        tgt_eq       = total_pf * alloc["eq"]
-        tgt_gd       = total_pf * adj_gd
-        tgt_cs       = total_pf * adj_cs
-        gd_gap       = tgt_gd - curr_gd
-        cs_gap       = tgt_cs - curr_cs
-        gd_drift_pct = abs(curr_gd - total_pf * alloc["gd"]) / total_pf if total_pf > 0 else 0
-        cs_drift_pct = abs(curr_cs - total_pf * alloc["cs"]) / total_pf if total_pf > 0 else 0
-        exit_proceeds = n_exits * exit_pf + capital_add
-        remaining     = exit_proceeds
-        per_stock_tgt = (total_pf * alloc["eq"]) / num_stocks if num_stocks > 0 else 0
+function buildShiftSection(prev,score,tot,weekNum,navRet,vix,isPause,totalWeeks,isRec){
+  var fa=ALLOC[prev],ta=ALLOC[score];
+  var h='<div class="sim-sec"><div class="sim-sec-hdr '+(isRec?'green':'sell')+'">📆 Full '+(isRec?'Recovery':'Defensive')+' Shift Plan — Score '+prev+' → '+score+' ('+totalWeeks+'-week plan)</div><div class="sim-sec-body">';
+  h+='<div class="'+(isRec?'success-box':'warn-box')+'" style="margin-bottom:8px;">'+
+    '<strong>'+(isRec?'📈 Recovery: ':'📉 Defensive: ')+totalWeeks+'-Friday plan.</strong> '+
+    (Math.abs(score-prev)>=2?'Score Δ≥2: 2-month phased. Month 2 pe fresh check — changed? Restart plan. ':'Natural exits fund shift. No standalone sells. ')+
+    'Pause condition: VIX>30 <strong>AND</strong> Weekly NAV&lt;−5% (both zaruri).</div>';
 
-        # Gold action
-        gd_action = "HOLD"
-        gd_amt    = 0.0
-        if vix_shift > 0 and gd_gap > 15000:
-            gd_action, gd_amt = "BUY (VIX overlay)", gd_gap
-        elif gd_drift_pct > 0.07 or prev_sc != curr_sc:
-            if gd_gap > 15000:
-                gd_action, gd_amt = "BUY", gd_gap
-            elif gd_gap < -15000:
-                gd_action, gd_amt = "SELL", abs(gd_gap)
-            else:
-                gd_action = f"HOLD (gap ₹{abs(gd_gap):,.0f} < ₹15K min)"
-        else:
-            gd_action = f"HOLD (drift {gd_drift_pct*100:.1f}% ≤ 7%)"
-        gd_from_proc = 0.0
-        if "BUY" in gd_action and remaining > 0:
-            gd_from_proc = min(gd_amt, remaining); remaining -= gd_from_proc
-        elif "SELL" in gd_action:
-            remaining += gd_amt
+  h+='<table class="shift-tbl"><thead><tr>'+
+    '<th>Week</th><th>Eq%</th><th>Gold%</th><th>Cash%</th>'+
+    '<th>Eq ₹</th><th>Gold ₹</th><th>Cash ₹</th>'+
+    '<th>Per Stock ₹</th><th>Action This Friday</th></tr></thead><tbody>';
 
-        # Liquid action
-        cs_action = "HOLD"
-        cs_amt    = 0.0
-        if cs_drift_pct > 0.07 or prev_sc != curr_sc:
-            if cs_gap > 15000:
-                cs_action, cs_amt = "ADD", cs_gap
-            elif cs_gap < -15000:
-                cs_action, cs_amt = "REDEEM", abs(cs_gap)
-            else:
-                cs_action = f"HOLD (gap ₹{abs(cs_gap):,.0f} < ₹15K min)"
-        else:
-            cs_action = f"HOLD (drift {cs_drift_pct*100:.1f}% ≤ 7%)"
-        cs_from_proc = 0.0
-        if cs_action == "ADD" and remaining > 0:
-            cs_from_proc = min(cs_amt, remaining); remaining -= cs_from_proc
-        elif cs_action == "REDEEM":
-            remaining += cs_amt
+  // Baseline row
+  h+='<tr><td style="color:var(--text2);font-weight:700;">Start</td>'+
+    '<td>'+fa[0]+'%</td><td>'+fa[1]+'%</td><td>'+fa[2]+'%</td>'+
+    '<td style="color:var(--buy)">₹'+fmt(tot*fa[0]/100)+'</td>'+
+    '<td style="color:var(--orange)">₹'+fmt(tot*fa[1]/100)+'</td>'+
+    '<td style="color:var(--blue)">₹'+fmt(tot*fa[2]/100)+'</td>'+
+    '<td style="color:var(--buy)">₹'+fmt(tot*fa[0]/100/30)+'</td>'+
+    '<td style="font-size:10px;color:var(--text2);">Baseline (current)</td></tr>';
 
-        eq_from_proc  = max(0.0, remaining)
-        n_new_entries = int(eq_from_proc / per_stock_tgt) if per_stock_tgt > 0 else 0
-        surplus       = eq_from_proc - n_new_entries * per_stock_tgt
+  for(var w=1;w<=totalWeeks;w++){
+    var p=w/totalWeeks,pP=(w-1)/totalWeeks;
+    var eq=Math.round(fa[0]+(ta[0]-fa[0])*p),gold=Math.round(fa[1]+(ta[1]-fa[1])*p),cash=100-eq-gold;
+    var pEq=w===1?fa[0]:Math.round(fa[0]+(ta[0]-fa[0])*pP);
+    var pGold=w===1?fa[1]:Math.round(fa[1]+(ta[1]-fa[1])*pP),pCash=100-pEq-pGold;
+    var eqD=Math.round((eq-pEq)*tot/100),goldD=Math.round((gold-pGold)*tot/100),cashD=Math.round((cash-pCash)*tot/100);
+    var done=w<=weekNum,isCur=w===weekNum+1,isFin=w===totalWeeks;
+    var rowCls=done?'done':isCur?'cur-week':isFin?'target-row':'';
+    var isWkPause=isCur&&isPause;
+    var act=isWkPause?'<strong style="color:#f9a825;">⏸ PAUSE — VIX>30 AND NAV&lt;−5%</strong>':
+      isRec?'Redeem ₹'+fmt(Math.abs(cashD))+' Liquid → ₹'+fmt(Math.abs(eqD))+' Equity ('+eq+'% Eq, '+gold+'% Gold, '+cash+'% Cash)'+(goldD<0?' + Trim Gold ₹'+fmt(Math.abs(goldD)):''):
+            'Sell ₹'+fmt(Math.abs(eqD))+' Equity → Liquid'+(goldD>0?' + Buy Gold ₹'+fmt(goldD):'');
+    h+='<tr class="'+rowCls+'">'+
+      '<td><strong>Fri '+w+(done?' ✅':isCur?' 👈':isFin&&!done?' 🎯':'')+'</strong></td>'+
+      '<td><strong>'+eq+'%</strong></td><td><strong>'+gold+'%</strong></td><td><strong>'+cash+'%</strong></td>'+
+      '<td style="color:var(--buy)">₹'+fmt(tot*eq/100)+'</td>'+
+      '<td style="color:var(--orange)">₹'+fmt(tot*gold/100)+'</td>'+
+      '<td style="color:var(--blue)">₹'+fmt(tot*cash/100)+'</td>'+
+      '<td style="color:var(--buy)">₹'+fmt(tot*eq/100/30)+'</td>'+
+      '<td style="font-size:10.5px;">'+act+'</td></tr>';
+  }
+  h+='<tr class="target-row"><td><strong>✅ Target</strong></td>'+
+    '<td>'+ta[0]+'%</td><td>'+ta[1]+'%</td><td>'+ta[2]+'%</td>'+
+    '<td style="color:var(--buy)">₹'+fmt(tot*ta[0]/100)+'</td>'+
+    '<td style="color:var(--orange)">₹'+fmt(tot*ta[1]/100)+'</td>'+
+    '<td style="color:var(--blue)">₹'+fmt(tot*ta[2]/100)+'</td>'+
+    '<td style="color:var(--buy)">₹'+fmt(tot*ta[0]/100/30)+'</td>'+
+    '<td style="font-size:10px;color:var(--buy);font-weight:700;">Final allocation reached ✅</td></tr>';
+  h+='</tbody></table>';
+  h+='<div class="info-box" style="margin-top:6px;font-size:11px;">⚠️ Har Friday: Score re-check karo. Changed? → Plan restart. Same? → Next week ke liye plan continue karo.</div>';
+  h+='</div></div>';
+  return h;
+}
 
-        steps = [
-            {"icon": "🥇", "title": "GOLDBEES Action",    "action": gd_action,
-             "target": f"₹{tgt_gd:,.0f} ({adj_gd*100:.0f}%)",
-             "current": f"₹{curr_gd:,.0f} ({curr_gd/total_pf*100:.1f}%)" if total_pf else "—",
-             "gap": gd_gap, "funded": gd_from_proc,
-             "note": vix_msg if vix_shift > 0 else ""},
-            {"icon": "💵", "title": "Liquid Fund Action", "action": cs_action,
-             "target": f"₹{tgt_cs:,.0f} ({adj_cs*100:.0f}%)",
-             "current": f"₹{curr_cs:,.0f} ({curr_cs/total_pf*100:.1f}%)" if total_pf else "—",
-             "gap": cs_gap, "funded": cs_from_proc, "note": ""},
-            {"icon": "📈", "title": "Equity New Entries",
-             "action": f"BUY {n_new_entries} stocks @ ₹{per_stock_tgt:,.0f} each",
-             "target": f"₹{tgt_eq:,.0f} ({alloc['eq']*100:.0f}%)",
-             "current": f"₹{curr_eq:,.0f} ({curr_eq/total_pf*100:.1f}%)" if total_pf else "—",
-             "gap": tgt_eq - curr_eq, "funded": n_new_entries * per_stock_tgt,
-             "note": f"Eq Budget ÷ {num_stocks} = ₹{per_stock_tgt:,.0f}/stock"},
-            {"icon": "💰", "title": "Surplus / Leftover",
-             "action": "→ Liquid Fund (park) ya drift correction",
-             "target": "—", "current": "—", "gap": surplus, "funded": 0,
-             "note": f"Surplus ₹{surplus:,.0f} → underweight stocks mein daalo ya Liquid park karo."},
-        ]
-        summary = {
-            "exit_proceeds": exit_proceeds, "gd_from_proc": gd_from_proc,
-            "cs_from_proc": cs_from_proc,   "eq_from_proc": eq_from_proc,
-            "n_new_entries": n_new_entries,  "per_stock_tgt": per_stock_tgt,
-            "surplus": surplus, "tgt_eq": tgt_eq, "tgt_gd": tgt_gd, "tgt_cs": tgt_cs,
-            "adj_gd_pct": adj_gd, "adj_cs_pct": adj_cs, "vix_shift": vix_shift,
-        }
-        return steps, summary
+function buildProceedsSection(prev,score,tot,exits,capadd,eqPct,goldPct,cashPct,goldCur,liqCur,eqBudget,goldDiff,liqDiff,scoreChanged,isRec){
+  var totalProc=exits+capadd;
+  var h='<div class="sim-sec"><div class="sim-sec-hdr green">💰 Proceeds Allocation — ₹'+fmt(totalProc)+' (exits ₹'+fmt(exits)+' + capital ₹'+fmt(capadd)+')</div><div class="sim-sec-body">';
+  var perStock=eqBudget/30;
+  var isNeutralBear=(score<=1);
 
-    def _sim_weekly_plan(prev_sc, curr_sc, total_pf):
-        if prev_sc == curr_sc:
-            return []
-        a0, a1 = _SIM_ALLOC[max(0,min(3,prev_sc))], _SIM_ALLOC[max(0,min(3,curr_sc))]
-        sc_diff = abs(curr_sc - prev_sc)
-        n_weeks = {1: 2, 2: 3, 3: 4}.get(sc_diff, 2)
-        weeks = []
-        for wk in range(1, n_weeks + 1):
-            frac = wk / n_weeks
-            eq_t = total_pf * (a0["eq"] + frac * (a1["eq"] - a0["eq"]))
-            gd_t = total_pf * (a0["gd"] + frac * (a1["gd"] - a0["gd"]))
-            cs_t = total_pf * (a0["cs"] + frac * (a1["cs"] - a0["cs"]))
-            weeks.append({
-                "week": wk, "n": n_weeks,
-                "eq_tgt": eq_t, "gd_tgt": gd_t, "cs_tgt": cs_t,
-                "eq_pct": eq_t/total_pf*100, "gd_pct": gd_t/total_pf*100, "cs_pct": cs_t/total_pf*100,
-                "per_stock": eq_t / 30,
-                "note": (f"{int(frac*100)}% target reached. Natural exits fund shift — no standalone sells."
-                         if wk < n_weeks else "Final target allocation. Shift complete."),
-            })
-        return weeks
+  // Step-by-step flow
+  h+='<div class="pf-flow">';
+  var rem=totalProc,sn=0;
+  function step(lbl,det,amt,cls){
+    sn++;
+    return '<div class="pf-step"><div class="pf-num">'+sn+'</div>'+
+      '<div class="pf-body"><div class="pf-lbl">'+lbl+'</div><div class="pf-det">'+det+'</div></div>'+
+      '<div class="pf-amt '+cls+'">'+amt+'</div></div>';
+  }
 
-    # ── UI ───────────────────────────────────────────────────────────
-    st.markdown('<div class="section-hdr">🎮 Multi-Asset Regime Simulator — SOP v2026.06</div>',
-                unsafe_allow_html=True)
-    st.markdown(
-        '<div class="workflow-box">📚 <b>Sirf samajhne ke liye</b> — real portfolio se pehle '
-        'SOP ke concepts practice karo. Koi bhi inputs dalo → full execution plan ₹ values ke saath milega.</div>',
-        unsafe_allow_html=True)
+  var liqFirst=0;
+  if(isNeutralBear&&exits>0){
+    liqFirst=Math.round(exits*0.25);
+    rem-=liqFirst;
+    h+=step('25% Exits → Liquid Reserve','Bear/Neutral: exit proceeds ka 25% pehle liquid reserve mein rakho. Capital add separate hai.','₹'+fmt(liqFirst),'pos');
+  }
 
-    # Read preset overrides BEFORE widgets instantiate
-    _pre_vix = st.session_state.pop("_sim_pre_vix", None)
-    _pre_sc  = st.session_state.pop("_sim_pre_sc",  None)
-    _pre_ath = st.session_state.pop("_sim_pre_ath", None)
+  var goldFund=0;
+  if(scoreChanged&&goldDiff>15000){
+    goldFund=Math.min(rem,goldDiff);rem-=goldFund;
+    h+=step('🥇 Gold Gap Fund (1st PRIORITY)','Regime shift → Gold target badla. ALWAYS equity se pehle fund karo. Drift >7% OR shift.','₹'+fmt(goldFund),'pos');
+  } else if(Math.abs(goldDiff)/tot*100>7){
+    goldFund=Math.abs(goldDiff)>15000?Math.min(rem,Math.abs(goldDiff)):0;
+    if(goldFund>0){rem-=goldFund;h+=step('🥇 Gold Drift >7% Correction','Monthly RB pe action needed.',goldDiff>0?'₹'+fmt(goldFund):'-₹'+fmt(goldFund),goldDiff>0?'pos':'neg');}
+    else{h+=step('🥇 Gold','Drift >7% but diff &lt;₹15K — HOLD.','HOLD','na');}
+  } else {
+    h+=step('🥇 Gold','Drift ≤7% AND diff &lt;₹15K — HOLD. No action.','HOLD','na');
+  }
 
-    _sc1, _sc2 = st.columns(2)
-    with _sc1:
-        st.markdown("#### 📊 Portfolio State")
-        _sim_total   = st.number_input("Total Portfolio ₹ (Equity + Gold + Cash)",
-                                        min_value=100000, value=2000000, step=50000, key="sim_total")
-        _sim_curr_eq = st.number_input("Current Equity ₹", min_value=0,
-                                        value=int(_sim_total * 0.65), step=10000, key="sim_curr_eq")
-        _sim_curr_gd = st.number_input("Current GOLDBEES ₹", min_value=0,
-                                        value=int(_sim_total * 0.20), step=10000, key="sim_curr_gd")
-        _sim_curr_cs = st.number_input("Current Liquid Fund ₹", min_value=0,
-                                        value=int(_sim_total * 0.15), step=10000, key="sim_curr_cs")
-        _sim_ath     = st.number_input("ATH Portfolio Value ₹",
-                                        min_value=100000,
-                                        value=_pre_ath if _pre_ath is not None else int(_sim_total * 1.05),
-                                        step=50000, key="sim_ath",
-                                        help="DD = (Current ÷ ATH − 1) × 100")
+  var liqFund=0;
+  if(scoreChanged&&liqDiff>15000){
+    liqFund=Math.min(rem,liqDiff);rem-=liqFund;
+    h+=step('💵 Liquid Gap Fund','Regime shift → Liquid target badla. Remaining se fund.','₹'+fmt(liqFund),'pos');
+  } else if(Math.abs(liqDiff)>15000){
+    h+=step('💵 Liquid','Diff ₹'+fmt(Math.abs(liqDiff))+' (non-shift drift). Adjust if surplus bachhe.','If surplus','na');
+  } else {
+    h+=step('💵 Liquid','Diff &lt;₹15K — HOLD.','HOLD','na');
+  }
 
-    with _sc2:
-        st.markdown("#### 🌡️ Regime & Market")
-        _sim_prev_sc = st.selectbox("Pichle Mahine Ka Score", options=[0,1,2,3],
-                                     format_func=lambda x: f"{x} — {_SIM_ALLOC[x]['emoji']} {_SIM_ALLOC[x]['label']}",
-                                     index=2, key="sim_prev_sc")
-        _sim_curr_sc = st.selectbox("Is Mahine Ka Score (Current)", options=[0,1,2,3],
-                                     format_func=lambda x: f"{x} — {_SIM_ALLOC[x]['emoji']} {_SIM_ALLOC[x]['label']}",
-                                     index=_pre_sc if _pre_sc is not None else 2,
-                                     key="sim_curr_sc")
-        _sim_vix     = st.number_input("India VIX (current)", min_value=0.0,
-                                        value=_pre_vix if _pre_vix is not None else 18.0,
-                                        step=0.5, key="sim_vix")
-        _sim_n_exits = st.number_input("Monthly Exits (# stocks)", min_value=0,
-                                        value=4, step=1, key="sim_n_exits")
-        _sim_exit_pf = st.number_input("Avg Exit Proceeds / Stock ₹", min_value=0,
-                                        value=int(_sim_total * 0.65 / 30),
-                                        step=5000, key="sim_exit_pf",
-                                        help="Approx = Equity Budget ÷ 30")
-        _sim_capadd  = st.number_input("Capital Addition ₹ (if any)", min_value=0,
-                                        value=0, step=10000, key="sim_capadd")
+  var eqFund=Math.max(0,rem);
+  var nEntries=perStock>0?Math.floor(eqFund/perStock):0;
+  h+=step('📈 New Equity Entries (target weight ÷30)','Remaining → new momentum stocks at new per-stock target. Weight = Equity Budget ÷ 30.','₹'+fmt(eqFund)+' → '+nEntries+' stocks','pos');
 
-    st.markdown("---")
+  var surplus=eqFund-nEntries*perStock;
+  h+=step('🎯 Drift Band + Surplus','Koi existing stock ±₹20K drift + surplus? → 1–2 correct. No surplus? SKIP. Standalone sells KABHI NAHI.','₹'+fmt(surplus)>500?'₹'+fmt(surplus)+' surplus':'₹0','na');
+  h+='</div>';
 
-    # Quick presets
-    st.markdown("**⚡ Quick Scenario Presets**")
-    _pcols = st.columns(6)
-    _presets_def = [
-        ("Same Score",  None,  None, 18.0),
-        ("Score −1",    None,  -1,   18.0),
-        ("Score +1",    None,  +1,   18.0),
-        ("Score −2",    None,  -2,   18.0),
-        ("VIX Spike",   None,  None, 34.0),
-        ("DD 22%",      0.78,  None, 18.0),
-    ]
-    for _pc, (_pl, _pdd, _psc, _pv) in zip(_pcols, _presets_def):
-        with _pc:
-            if st.button(_pl, key=f"preset_{_pl}", use_container_width=True):
-                st.session_state["_sim_pre_vix"] = _pv
-                if _psc is not None:
-                    st.session_state["_sim_pre_sc"] = max(0, min(3, _sim_curr_sc + _psc))
-                if _pdd:
-                    st.session_state["_sim_pre_ath"] = int(_sim_total / _pdd)
-                st.rerun()
+  // Actual breakdown table
+  h+='<div style="margin-top:10px;background:var(--blue-bg);border:1px solid var(--blue-border);border-radius:6px;padding:8px 12px;">';
+  h+='<div style="font-weight:700;color:var(--blue);margin-bottom:6px;font-size:12px;">📋 ₹'+fmt(totalProc)+' ka breakdown:</div>';
+  if(liqFirst>0) h+='<div style="font-size:11.5px;margin-bottom:2px;">→ Liquid reserve (25% of exits): <strong style="color:var(--blue)">₹'+fmt(liqFirst)+'</strong></div>';
+  if(goldFund>0) h+='<div style="font-size:11.5px;margin-bottom:2px;">→ Gold gap: <strong style="color:var(--orange)">₹'+fmt(goldFund)+'</strong></div>';
+  if(liqFund>0)  h+='<div style="font-size:11.5px;margin-bottom:2px;">→ Liquid gap: <strong style="color:var(--blue)">₹'+fmt(liqFund)+'</strong></div>';
+  h+='<div style="font-size:11.5px;margin-bottom:2px;">→ Equity entries: <strong style="color:var(--buy)">₹'+fmt(eqFund)+'</strong> → '+nEntries+' stocks @ ₹'+fmt(perStock)+'/stock</div>';
+  if(surplus>500) h+='<div style="font-size:11.5px;">→ Surplus: <strong style="color:var(--purple)">₹'+fmt(surplus)+'</strong> → Liquid park karo</div>';
+  h+='</div>';
+  h+='</div></div>';
+  return h;
+}
 
-    st.markdown("---")
+function buildWhatIfSection(score,tot,prevScore){
+  var h='<div class="sim-sec"><div class="sim-sec-hdr amber">🔮 What If — Next Month Score Changes?</div><div class="sim-sec-body">';
+  h+='<table class="wi-tbl"><thead><tr>'+
+    '<th>Next Score</th><th>Regime</th><th>Equity Target</th>'+
+    '<th>Gold Target</th><th>Cash Target</th><th>Weeks</th><th>Main Action</th></tr></thead><tbody>';
+  [0,1,2,3].forEach(function(ns){
+    var na=ALLOC[ns],isCur=ns===score;
+    var weeks=isCur?0:(ns>score?3:Math.abs(ns-score)===2?3:ns<score?4:0);
+    if(Math.abs(ns-score)>=2) weeks=Math.abs(ns-score)===2?3:4;
+    var action=isCur?'Normal monthly RB only (no shift)':
+      ns>score?'Redeem Liquid → Equity ('+weeks+' Fridays)':
+               'Sell Equity → Liquid'+(na[1]>ALLOC[score][1]?' + Buy Gold':'')+'('+weeks+' Fridays)';
+    h+='<tr class="'+(isCur?'cur':'')+'">'+
+      '<td><strong>'+(isCur?'✅ ':'')+(ns===prevScore?'⬅️ ':'')+''+ns+'</strong></td>'+
+      '<td>'+LBLS[ns]+'</td>'+
+      '<td style="color:var(--buy)">'+na[0]+'% — ₹'+fmt(tot*na[0]/100)+'</td>'+
+      '<td style="color:var(--orange)">'+na[1]+'% — ₹'+fmt(tot*na[1]/100)+'</td>'+
+      '<td style="color:var(--blue)">'+na[2]+'% — ₹'+fmt(tot*na[2]/100)+'</td>'+
+      '<td>'+(isCur?'—':weeks+' wks')+'</td>'+
+      '<td style="font-size:10.5px;text-align:left;">'+action+'</td></tr>';
+  });
+  h+='</tbody></table>';
+  h+='<div class="info-box" style="font-size:11px;margin-top:6px;">💡 ✅ = current score | ⬅️ = prev score. Score change pe plan restart hota hai fresh score se. Incomplete weeks abandon nahi hote — fresh plan shuru hota hai.</div>';
+  h+='</div></div>';
+  return h;
+}
 
-    # DD check
-    _dd_pct, _dd_override, _dd_warn = _sim_dd_check(_sim_total, _sim_ath)
-    _eff_sc = 0 if _dd_override else _sim_curr_sc
+function gv(id){var el=document.getElementById(id);return el?parseFloat(el.value)||0:0;}
 
-    if _dd_override:
-        st.error(f"🚨 **DD Override Active** — DD = {abs(_dd_pct):.1f}% (≥20% from ATH ₹{_sim_ath:,.0f}). "
-                  f"Score forced to **0 — Bear**. Equity mein koi nayi entries NAHI.")
-    elif _dd_warn:
-        st.warning(f"⚠️ DD = {abs(_dd_pct):.1f}% (15–20% from ATH). Capital addition tranches mein karo.")
-    else:
-        st.success(f"✅ Portfolio healthy — DD = {abs(_dd_pct):.1f}% from ATH ₹{_sim_ath:,.0f}.")
+function simReset(){
+  document.getElementById('sim-total').value=2000000;
+  document.getElementById('sim-ath').value=2000000;
+  document.getElementById('sim-exits').value=200000;
+  document.getElementById('sim-capadd').value=0;
+  document.getElementById('sim-prev').value=2;
+  document.getElementById('sim-cur').value=3;
+  document.getElementById('sim-vix').value=16;
+  document.getElementById('sim-eq-cur').value=1300000;
+  document.getElementById('sim-gold-cur').value=400000;
+  document.getElementById('sim-liq-cur').value=300000;
+  document.getElementById('sim-gold-cmp').value=125;
+  document.getElementById('sim-week').value=0;
+  document.getElementById('sim-nav-ret').value=0;
+  runSim();
+}
+window.onload=function(){runSim();};
+</script>
+</body>
+</html>"""
 
-    # Allocation snapshot
-    _eff_alloc = _SIM_ALLOC[_eff_sc]
-    _adj_gd_p, _adj_cs_p, _vix_sft, _vix_msg_d = _sim_vix_overlay(
-        _eff_alloc["gd"], _eff_alloc["cs"], _sim_vix)
+    _sim_stc.html(_SIM_HTML, height=1100, scrolling=True)
 
-    st.markdown("#### 📊 Current vs Target Allocation")
-    _snap_cols = st.columns(3)
-    _snap_items = [
-        ("📈 Equity",      _sim_curr_eq, _sim_total * _eff_alloc["eq"], "#2563eb", "#dbeafe"),
-        ("🥇 GOLDBEES",    _sim_curr_gd, _sim_total * _adj_gd_p,        "#b45309", "#fef3c7"),
-        ("💵 Liquid Fund", _sim_curr_cs, _sim_total * _adj_cs_p,        "#475569", "#f1f5f9"),
-    ]
-    for _col, (_lbl, _cv, _tv, _fc, _bg) in zip(_snap_cols, _snap_items):
-        with _col:
-            _gv     = _tv - _cv
-            _in_band = abs(_gv) < _sim_total * 0.07
-            _gc      = "#16a34a" if _in_band else ("#dc2626" if _gv < 0 else "#b45309")
-            _verdict = "✅ On Target" if _in_band else (f"▲ +₹{abs(_gv):,.0f}" if _gv > 0 else f"▼ −₹{abs(_gv):,.0f}")
-            st.markdown(
-                f'<div style="background:{_bg};border:1.5px solid {_fc}44;border-radius:10px;'
-                f'padding:14px;text-align:center;">'
-                f'<div style="font-size:11px;font-weight:700;color:{_fc};text-transform:uppercase;'
-                f'letter-spacing:.4px;margin-bottom:4px;">{_lbl}</div>'
-                f'<div style="font-size:11px;color:#64748b;">Current: <b style="color:{_fc}">'
-                f'₹{_cv:,.0f}</b> ({_cv/_sim_total*100:.1f}%)</div>'
-                f'<div style="font-size:11px;color:#64748b;">Target: <b style="color:{_fc}">'
-                f'₹{_tv:,.0f}</b> ({_tv/_sim_total*100:.1f}%)</div>'
-                f'<div style="font-size:14px;font-weight:800;color:{_gc};margin-top:6px;">{_verdict}</div>'
-                f'</div>',
-                unsafe_allow_html=True)
-
-    if _vix_sft > 0:
-        st.markdown(
-            f'<div style="background:#fef3c7;border-left:4px solid #b45309;border-radius:6px;'
-            f'padding:8px 14px;font-size:12px;color:#78350f;margin:10px 0;">'
-            f'⚡ VIX Overlay: {_vix_msg_d}. Equity disturbed NAHI hoga.</div>',
-            unsafe_allow_html=True)
-
-    st.markdown("---")
-
-    # Score change banner
-    _sc_diff = _eff_sc - _sim_prev_sc
-    if _sc_diff == 0:
-        st.markdown(
-            f'<div style="background:#dcfce7;border-left:4px solid #16a34a;border-radius:8px;'
-            f'padding:10px 16px;font-size:13px;color:#15803d;margin-bottom:12px;">'
-            f'✅ <b>Score Same ({_sim_prev_sc}→{_eff_sc})</b> — Normal monthly rebalance. '
-            f'Gold/Liquid drift ±7% check karo. New entries at Eq Budget ÷ 30.</div>',
-            unsafe_allow_html=True)
-    elif abs(_sc_diff) == 1:
-        _dir = "defensive 📉" if _sc_diff < 0 else "bullish 📈"
-        st.markdown(
-            f'<div style="background:#dbeafe;border-left:4px solid #2563eb;border-radius:8px;'
-            f'padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:12px;">'
-            f'🔄 <b>Minor Shift ({_sim_prev_sc}→{_eff_sc}) — {_dir}</b> — '
-            f'Natural exits fund Gold/Liquid gap. 2-tranche plan (is mahine + agla).</div>',
-            unsafe_allow_html=True)
-    else:
-        _dir = "major defensive 🚨" if _sc_diff < 0 else "major recovery 🚀"
-        n_tr = 3 if abs(_sc_diff) == 2 else 4
-        st.markdown(
-            f'<div style="background:#fef3c7;border-left:4px solid #b45309;border-radius:8px;'
-            f'padding:10px 16px;font-size:13px;color:#78350f;margin-bottom:12px;">'
-            f'⚠️ <b>Major Shift ({_sim_prev_sc}→{_eff_sc}) — {_dir}</b> — '
-            f'Phased {n_tr}-tranche plan, 2 mahine mein complete karo.</div>',
-            unsafe_allow_html=True)
-
-    # Monthly execution plan
-    st.markdown("#### 🗓️ Is Mahine Ka Execution Plan")
-    _steps, _summary = _sim_proceeds_plan(
-        prev_sc=_sim_prev_sc, curr_sc=_eff_sc, total_pf=_sim_total,
-        curr_eq=_sim_curr_eq, curr_gd=_sim_curr_gd, curr_cs=_sim_curr_cs,
-        n_exits=_sim_n_exits, exit_pf=_sim_exit_pf, capital_add=_sim_capadd,
-        vix=_sim_vix)
-
-    st.markdown(
-        f'<div class="reb-strip">'
-        f'<div class="reb-stat"><div class="label">🔴 Exit Proceeds</div>'
-        f'<div class="val r">₹{_sim_n_exits * _sim_exit_pf:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">+ Capital Add</div>'
-        f'<div class="val g">₹{_sim_capadd:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">= Gross Pool</div>'
-        f'<div class="val b">₹{_sim_n_exits * _sim_exit_pf + _sim_capadd:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">🥇 Gold Funded</div>'
-        f'<div class="val" style="color:#b45309">₹{_summary["gd_from_proc"]:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">💵 Liquid Funded</div>'
-        f'<div class="val" style="color:#475569">₹{_summary["cs_from_proc"]:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">📈 Equity Pool</div>'
-        f'<div class="val g">₹{_summary["eq_from_proc"]:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">Surplus</div>'
-        f'<div class="val p">₹{_summary["surplus"]:,.0f}</div></div>'
-        f'</div>',
-        unsafe_allow_html=True)
-
-    _step_bg = {"BUY": "#dcfce7", "ADD": "#dcfce7", "SELL": "#fee2e2",
-                "REDEEM": "#fee2e2", "HOLD": "#f1f5f9"}
-    _step_fc = {"BUY": "#16a34a", "ADD": "#16a34a", "SELL": "#dc2626",
-                "REDEEM": "#dc2626", "HOLD": "#64748b"}
-    for _idx, _step in enumerate(_steps, 1):
-        _ak   = _step["action"].split()[0].upper()
-        _sbg  = _step_bg.get(_ak, "#f8fafc")
-        _sfc  = _step_fc.get(_ak, "#374151")
-        _gtxt = (f"Gap: ▲ +₹{_step['gap']:,.0f}" if _step["gap"] > 500
-                 else f"Gap: ▼ −₹{abs(_step['gap']):,.0f}" if _step["gap"] < -500 else "")
-        _note = (f'<div style="font-size:11px;color:#64748b;margin-top:3px;">💡 {_step["note"]}</div>'
-                 if _step["note"] else "")
-        st.markdown(
-            f'<div style="background:{_sbg};border-left:4px solid {_sfc};border-radius:8px;'
-            f'padding:12px 16px;margin:6px 0;display:flex;align-items:flex-start;gap:14px;">'
-            f'<div style="font-size:24px;flex-shrink:0;line-height:1">{_step["icon"]}</div>'
-            f'<div style="flex:1;">'
-            f'<div style="font-size:11px;font-weight:700;color:{_sfc};text-transform:uppercase;'
-            f'letter-spacing:.5px;">Step {_idx} — {_step["title"]}</div>'
-            f'<div style="font-size:15px;font-weight:800;color:{_sfc};margin:3px 0;">{_step["action"]}</div>'
-            f'<div style="font-size:12px;color:#374151;">Current: <b>{_step["current"]}</b>'
-            f' &nbsp;→&nbsp; Target: <b>{_step["target"]}</b>'
-            + (f' &nbsp;|&nbsp; {_gtxt}' if _gtxt else '') +
-            f'</div>' + _note + f'</div></div>',
-            unsafe_allow_html=True)
-
-    # Equity drift band
-    st.markdown("---")
-    st.markdown("#### 📐 Existing Equity Drift Band Check")
-    _old_ps  = _sim_curr_eq / 30 if _sim_curr_eq > 0 else 0
-    _new_ps  = _summary["per_stock_tgt"]
-    _in_band = abs(_new_ps - _old_ps) <= 20000
-    st.markdown(
-        f'<div class="reb-strip">'
-        f'<div class="reb-stat"><div class="label">Old Per-Stock</div>'
-        f'<div class="val b">₹{_old_ps:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">New Target/Stock</div>'
-        f'<div class="val g">₹{_new_ps:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">Band Low (−₹20K)</div>'
-        f'<div class="val" style="color:#64748b">₹{max(0,_new_ps-20000):,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">Band High (+₹20K)</div>'
-        f'<div class="val" style="color:#64748b">₹{_new_ps+20000:,.0f}</div></div>'
-        f'<div class="reb-stat"><div class="label">Verdict</div>'
-        f'<div class="val {"g" if _in_band else "r"}">{"✅ Within ±₹20K" if _in_band else "⚠️ Outside Band"}</div></div>'
-        f'</div>',
-        unsafe_allow_html=True)
-    if _in_band:
-        st.success("✅ Existing holdings drift within ±₹20K band — koi standalone sell/buy nahi karna. "
-                    "Natural monthly turnover se adjust hoga.")
-    else:
-        st.warning(f"⚠️ Drift ₹{abs(_new_ps - _old_ps):,.0f} > ₹20,000 — agar surplus available hai to "
-                    "underweight stocks mein daalo. Standalone sells kabhi mat karo.")
-
-    # Weekly plan (if score changed)
-    _weeks = _sim_weekly_plan(_sim_prev_sc, _eff_sc, _sim_total)
-    if _weeks:
-        st.markdown("---")
-        st.markdown(f"#### 📅 Weekly Deployment Plan — Score {_sim_prev_sc}→{_eff_sc} ({len(_weeks)}-Tranche)")
-        _wk_colors = ["#2563eb", "#0891b2", "#059669", "#7c3aed"]
-        for _wk in _weeks:
-            _wc = _wk_colors[(_wk["week"] - 1) % len(_wk_colors)]
-            _wk_note = f'<div style="font-size:11px;color:#64748b;margin-top:4px;">💡 {_wk["note"]}</div>'
-            st.markdown(
-                f'<div style="background:#f8fafc;border:1.5px solid {_wc}44;border-left:4px solid {_wc};'
-                f'border-radius:8px;padding:12px 16px;margin:6px 0;">'
-                f'<div style="font-size:12px;font-weight:700;color:{_wc};margin-bottom:6px;">'
-                f'Tranche {_wk["week"]}/{_wk["n"]}</div>'
-                f'<div style="display:flex;gap:24px;flex-wrap:wrap;">'
-                f'<span style="font-size:12px;color:#374151;">📈 Equity: <b style="color:#2563eb">'
-                f'₹{_wk["eq_tgt"]:,.0f}</b> ({_wk["eq_pct"]:.0f}%)</span>'
-                f'<span style="font-size:12px;color:#374151;">🥇 Gold: <b style="color:#b45309">'
-                f'₹{_wk["gd_tgt"]:,.0f}</b> ({_wk["gd_pct"]:.0f}%)</span>'
-                f'<span style="font-size:12px;color:#374151;">💵 Cash: <b style="color:#475569">'
-                f'₹{_wk["cs_tgt"]:,.0f}</b> ({_wk["cs_pct"]:.0f}%)</span>'
-                f'<span style="font-size:12px;color:#374151;">Per Stock: <b style="color:#16a34a">'
-                f'₹{_wk["per_stock"]:,.0f}</b></span>'
-                f'</div>' + _wk_note + '</div>',
-                unsafe_allow_html=True)
-        if _sim_vix > 30:
-            st.error("⏸ **Tranche 1 PAUSED** — VIX > 30. Deployment roko. "
-                      "VIX ≤ 25 hone par resume karo. Gold/Liquid maintain karo, equity entries NAHI.")
-
-    # SOP Reference
-    with st.expander("📖 Quick SOP Reference — Allocation Table & Rules", expanded=False):
-        st.markdown("""
-**Allocation Table (SOP v2026.06):**
-| Score | Regime | Equity | Gold | Liquid |
-|---|---|---|---|---|
-| 3 | 🐂 Strong Bull | 80% | 15% | 5% |
-| 2 | 📈 Mild Bull | 65% | 20% | 15% |
-| 1 | ⚖️ Neutral | 45% | 25% | 30% |
-| 0 | 🐻 Bear | 25% | 30% | 45% |
-
-**Execution Sequence (Har Month):**
-`SELL` → `Proceeds Pool` → `DD Check` → `VIX Check` → `🥇 GOLDBEES` → `💵 Liquid` → `📈 Equity Entries` → `Surplus Park`
-
-**VIX Overlay (sirf Liquid→Gold, Equity never touched):**
-- VIX ≤ 20 → No overlay
-- 20 < VIX ≤ 30 → Gold +3% (Liquid se)
-- VIX > 30 → Gold +5% (Liquid se)
-
-**Guardrails:**
-- Gold/Liquid drift ≤ 7% of portfolio → HOLD
-- Min transaction: ₹15,000
-- Equity drift band: ±₹20,000 per stock
-- Standalone equity sells: **KABHI NAHI** — sirf exit-funded
-
-**DD Protocol:**
-- DD < 15% → Normal
-- DD 15–20% → Tranches mein capital add karo
-- DD ≥ 20% → Bear mode override, no equity entries
-
-**Score Shift Tranches:**
-- Same → 1 tranche (normal month)
-- ±1 → 2 tranches (2 months)
-- ±2 → 3 tranches (2 months)
-- ±3 → 4 tranches (2–3 months)
-        """)
-
-
+# ════════════════════════════════════════════════════════════════════
+# SCREENER TAB — all step content
+# ════════════════════════════════════════════════════════════════════
 with _tab_screener:
     st.session_state["_curr_tab"] = "screener"
     # ── Step progress bar ──────────────────────────────────────────
