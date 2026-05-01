@@ -49,6 +49,7 @@ _GH_REPO  = "Streamlit_Momn_v13_Cached_DB"
 _WF_YFINANCE = "daily_cache.yml"
 _WF_UPSTOX   = "daily_cache_upstox.yml"
 _WF_ANGEL    = "daily_cache_angelone.yml"
+_WF_FII      = "fetch_fii_data.yml"
 
 
 def _get_secret(key: str, default: str = "") -> str:
@@ -1473,7 +1474,7 @@ with st.sidebar:
 
         _rs_sb = st.session_state.get("_regime_state")
         if _rs_sb is not None:
-            _rb_notes_inp = st.text_area("Notes (optional):", key="rb_notes_sb", height=50)
+            _rb_notes_inp = st.text_area("Notes (optional):", key="rb_notes_sb", height=100)
             _rb_pin_inp   = st.text_input("🔑 PIN", type="password", max_chars=4, key="rb_pin_sb")
             if st.button("💾 Save Rebalance Memory", use_container_width=True, key="rb_save_sb"):
                 if not _verify_pin(_rb_pin_inp):
@@ -1527,6 +1528,7 @@ with st.sidebar:
             "📦 YFinance":   _WF_YFINANCE,
             "📡 Upstox":     _WF_UPSTOX,
             "🤖 Angel One":  _WF_ANGEL,
+            "📊 FII / DII":  _WF_FII,
         }
         for _lbl, _wf in _wf_map.items():
             if st.button(
@@ -1985,7 +1987,7 @@ with _tab_regime:
                     f'<div style="font-size:11px;color:{_scfc};">/ 8.5 pts · {_rt_lbl}</div>' +
                     '</div>', unsafe_allow_html=True)
             with _s_col:
-                _stc_rt.html(_rt_sig_html, height=520)
+                _stc_rt.html(_rt_sig_html, height=580)
 
             st.markdown("---")
 
