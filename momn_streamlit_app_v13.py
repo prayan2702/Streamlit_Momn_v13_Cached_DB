@@ -1,31 +1,31 @@
 """
 momn_streamlit_app_v14.py
 =========================
-Momentum Screener + Portfolio Rebalancer — v14
+Momentum Screener + Portfolio Rebalancer — v14  (SOP v2026.09)
 
-Changes vs v13:
-  • _verify_pin() bug fix — str() wrap added (TOML integer type mismatch fix)
-  • _pin_secret_exists() helper — debug ke liye
-  • GitHub Actions + ATH push panel: smarter error messages
-    - Secret missing → alag message (TRIGGER_PIN set nahi)
-    - Wrong PIN → alag message
-  • Logic/calculations untouched
+Changes vs v13 (SOP v2026.09):
+  • GOLD FIXED 20% across ALL regime phases (was 15-30% variable)
+  • GOLD DRIFT BAND ±7% → rebalance only when <13% or >27%
+  • EQUITY FIXED 80% always — 0% cash (except DD override)
+  • DD Override: DD≥20% → Equity 60%, Gold 20%, Liquid 20% (temporary)
+  • REGIME SIGNALS → QFSM EQUITY FACTOR WEIGHTS (not asset split)
+  • VIX overlay gold adjustment REMOVED (gold is fixed)
+  • TWO-STAGE EQUITY SELECTION:
+      Stage 1: AllNSE momentum gate → Top 100 (avgZScore)
+      Stage 2: QFSM composite (F1-F5) on Top 100 → final Top 30
+  • RISK PARITY SIZING: inverse-vol position weights (not equal weight)
+  • THRESHOLD EXIT: composite_score < 0.30 (not worst-rank-held)
+  • FACTOR ALLOCATION PANEL: Momentum % gauge (50% = equilibrium)
+  • Weekly deployment plan: DD recovery + factor shift messaging
+  • All v13 automation preserved: GitHub Actions, PIN, ATH memory, etc.
 
-SOP v2026.06 — Multi-Asset Regime Changes (app-level):
-  • Allocation updated: Score3=80/15/5, Score2=65/20/15, Score1=45/25/30, Score0=25/30/45
-  • VIX Overlay panel: VIX>30→+5%Gold, VIX 20-30→+3%Gold (Liquid→Gold, Equity untouched)
-  • Gold drift band: ±7% of PF (was ±5%)
-  • Transaction guardrail: ₹15K minimum per GOLDBEES/Liquid transaction
-  • Drawdown Protocol: DD≥15% warn, DD≥20% override, DD≥30% emergency
-  • Equiweight Maintenance: Proceeds allocation panel — exit-funded regime shift
-    Per-stock target = Equity Budget÷30, drift band ±₹20K
-  • _alloc_start: updated to new allocations
-  • Regime Tab: VIX overlay display on allocation tiles
-
-  NOTE: calculations.py get_regime_score() mein bhi allocation constants update karo:
-    ALLOC = {3:(0.80,0.15,0.05), 2:(0.65,0.20,0.15), 1:(0.45,0.25,0.30), 0:(0.25,0.30,0.45)}
-    GOLD_CAP = 0.30  # hard max
-    GOLD_DRIFT_BAND = 0.07  # ±7% of total portfolio
+calculations.py v2026.09 changes:
+  • GOLD_FIXED_PCT=0.20, EQUITY_FIXED_PCT=0.80, CASH_FIXED_PCT=0.00
+  • GOLD_FLOOR=0.13, GOLD_CEIL=0.27 (±7% drift band)
+  • EQUITY_FACTOR_WEIGHTS by regime (F1-F5)
+  • New functions: check_gold_drift, get_stage1_momentum_candidates,
+    compute_stage2_composite, select_final_portfolio,
+    get_risk_parity_weights, get_exit_list, get_factor_allocation_pct
 """
 
 import io
@@ -159,10 +159,39 @@ warnings.filterwarnings("ignore")
 
 # ── Local modules ──────────────────────────────────────────────
 try:
-    from calculations import build_dfStats, apply_filters
+    from calculations import (
+        build_dfStats, apply_filters,
+        # v2026.09 new imports
+        check_gold_drift,
+        get_equity_factor_weights,
+        get_stage1_momentum_candidates,
+        compute_stage2_composite,
+        select_final_portfolio,
+        get_risk_parity_weights,
+        get_position_values,
+        get_exit_list,
+        get_entry_list,
+        get_factor_allocation_pct,
+        # constants
+        GOLD_FIXED_PCT, EQUITY_FIXED_PCT, CASH_FIXED_PCT,
+        GOLD_FLOOR, GOLD_CEIL, GOLD_TARGET,
+        DD_OVERRIDE_THRESHOLD,
+        STAGE1_TOP_N, PORTFOLIO_SIZE, MIN_TXN_AMOUNT,
+    )
     _CALCS_AVAILABLE = True
 except ImportError:
     _CALCS_AVAILABLE = False
+    # Fallback constants so app doesn't crash
+    GOLD_FIXED_PCT   = 0.20
+    EQUITY_FIXED_PCT = 0.80
+    CASH_FIXED_PCT   = 0.00
+    GOLD_FLOOR       = 0.13
+    GOLD_CEIL        = 0.27
+    GOLD_TARGET      = 0.20
+    DD_OVERRIDE_THRESHOLD = 20.0
+    STAGE1_TOP_N     = 100
+    PORTFOLIO_SIZE   = 30
+    MIN_TXN_AMOUNT   = 15000
 
 import yfinance as yf  # always available (in requirements.txt)
 
@@ -296,7 +325,7 @@ def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
 # PAGE CONFIG
 # ═══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Momn Screener v13",
+    page_title="Momn Screener v14 — SOP v2026.09",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -4116,7 +4145,10 @@ with _tab_screener:
             if _dfS_rg is not None:
                 _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
             else:
-                _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
+                _rg = {"score":2,"regime_band":2,"label":"Mild Bull",
+                       "equity":EQUITY_FIXED_PCT,"gold":GOLD_FIXED_PCT,"cash":CASH_FIXED_PCT,
+                       "factor_weights":{"f1":0.45,"f2":0.25,"f3":0.10,"f4":0.10,"f5":0.10},
+                       "dd_override":False,
                        "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
                        "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
 
@@ -4216,19 +4248,129 @@ with _tab_screener:
                                              value=int(st.session_state.get("regime_prev_score", _sc)),
                                              step=1, key="regime_prev_score")
 
-            # ── Allocation cards ──────────────────────────────────────────
-            _a1,_a2,_a3 = st.columns(3)
+            # ── Allocation cards (v2026.09 — FIXED 80/20/0) ──────────────────
+            st.markdown("""<div style="background:#F0FDF4;border:1px solid #86EFAC;border-left:4px solid #16A34A;
+                border-radius:8px;padding:9px 14px;font-size:12px;color:#14532D;margin-bottom:10px;">
+              <b>⚛ v2026.09 — Fixed Allocation:</b> Equity <b>80%</b> always ·
+              Gold <b>20%</b> always · Cash <b>0%</b> (except DD≥20% override) ·
+              Regime signals → QFSM <b>equity factor weights</b> (not asset split)
+            </div>""", unsafe_allow_html=True)
+
+            # DD override warning
+            if _rg.get("dd_override"):
+                st.error("🚨 **DD OVERRIDE ACTIVE** — Portfolio DD ≥20% from ATH. "
+                         "Temporary: Equity 60% | Gold 20% | Liquid 20%. "
+                         "Regime recovers to Neutral → deploy liquid back to equity.")
+
+            _a1, _a2, _a3 = st.columns(3)
+            # Always 80/20/0
+            _eq = _rg["equity"]; _gd = _rg["gold"]; _cs = _rg["cash"]
             for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
-                ("📈 Equity",_eq,"#2563eb","#dbeafe"),
-                ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
-                ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
+                ("📈 Equity (QFSM)", _eq, "#2563eb","#dbeafe"),
+                ("🥇 GOLDBEES (Fixed 20%)", _gd, "#b45309","#fef3c7"),
+                ("💵 Liquid Fund", _cs, "#475569","#f1f5f9")]):
                 with col:
+                    _badge = ""
+                    if lbl.startswith("🥇"):
+                        _badge = '<div style="font-size:10px;color:#b45309;margin-top:2px">±7% drift band: 13%–27%</div>'
+                    elif lbl.startswith("💵") and _rg.get("dd_override"):
+                        _badge = '<div style="font-size:10px;color:#dc2626;margin-top:2px">DD Override active</div>'
                     st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
                         padding:12px;text-align:center;margin-bottom:8px;">
                       <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
                       <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
                       <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
+                      {_badge}
                     </div>""", unsafe_allow_html=True)
+
+            # ── Gold Drift Check ──────────────────────────────────────────────
+            st.markdown("""<div style="font-size:13px;font-weight:700;color:#b45309;
+                border-left:4px solid #fcd34d;padding:6px 0 6px 12px;
+                background:linear-gradient(90deg,rgba(180,83,9,.05) 0%,transparent 60%);
+                border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+                🥇 Gold Drift Monitor (±7% band)
+            </div>""", unsafe_allow_html=True)
+
+            _gd_inp_c, _gd_res_c = st.columns([1, 2])
+            with _gd_inp_c:
+                _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
+                    value=int(st.session_state.get("_gb_curr_val", 0)),
+                    step=1000, key="goldbees_curr_regime",
+                    help="Current market value of GOLDBEES holdings")
+                st.session_state["_gb_curr_val"] = _gb_curr
+
+            if _total_pf > 0 and _gb_curr >= 0:
+                try:
+                    _gd_result = check_gold_drift(float(_gb_curr), float(_total_pf))
+                except Exception:
+                    _gd_result = {"status":"UNKNOWN","gold_pct":0,"action":"NONE","amount":0,"message":"check_gold_drift unavailable"}
+
+                _gd_status  = _gd_result["status"]
+                _gd_color   = {"IN_BAND":"#15803d","ABOVE_BAND":"#b45309","BELOW_BAND":"#dc2626","UNKNOWN":"#64748b"}.get(_gd_status,"#64748b")
+                _gd_bg      = {"IN_BAND":"#dcfce7","ABOVE_BAND":"#fef3c7","BELOW_BAND":"#fee2e2","UNKNOWN":"#f1f5f9"}.get(_gd_status,"#f1f5f9")
+                with _gd_res_c:
+                    _gd_amt_txt = f" — Action: ₹{_gd_result['amount']:,.0f}" if _gd_result["amount"] > 0 else ""
+                    st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gd_color};
+                        border-radius:10px;padding:12px 16px;margin-top:6px;">
+                      <div style="font-size:16px;font-weight:700;color:{_gd_color}">
+                        {_gd_result['message']}</div>
+                      <div style="font-size:11px;color:#64748b;margin-top:4px;">
+                        Target: 20% (₹{_total_pf*GOLD_TARGET:,.0f}) · Band: 13%–27%
+                        (₹{_total_pf*GOLD_FLOOR:,.0f}–₹{_total_pf*GOLD_CEIL:,.0f})
+                        · Min txn ₹{MIN_TXN_AMOUNT:,.0f}
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+
+                    if _gd_status != "IN_BAND" and _gd_result["amount"] < MIN_TXN_AMOUNT and _gd_result["amount"] > 0:
+                        st.caption(f"⏭ Skip — drift ₹{_gd_result['amount']:,.0f} < ₹{MIN_TXN_AMOUNT:,.0f} minimum. Next month re-check.")
+
+            # ── QFSM Equity Factor Weights Panel ─────────────────────────────
+            st.markdown("""<div style="font-size:13px;font-weight:700;color:#7c3aed;
+                border-left:4px solid #a78bfa;padding:6px 0 6px 12px;
+                background:linear-gradient(90deg,rgba(124,58,237,.05) 0%,transparent 60%);
+                border-radius:0 6px 6px 0;margin:1rem 0 .6rem;">
+                ⚛ QFSM Equity Factor Weights (Regime-Driven)
+            </div>""", unsafe_allow_html=True)
+
+            _fw = _rg.get("factor_weights", {"f1":0.45,"f2":0.25,"f3":0.10,"f4":0.10,"f5":0.10})
+            _fw_cols = st.columns(5)
+            _fw_labels = [
+                ("Momentum\n(F1)", _fw.get("f1",0.45), "#2563eb","#dbeafe"),
+                ("Trend\n(F2)",    _fw.get("f2",0.25), "#0891b2","#e0f2fe"),
+                ("Mean Rev\n(F3)", _fw.get("f3",0.10), "#7c3aed","#ede9fe"),
+                ("Size\n(F4)",     _fw.get("f4",0.10), "#15803d","#dcfce7"),
+                ("Vol\n(F5)",      _fw.get("f5",0.10), "#b45309","#fef3c7"),
+            ]
+            for col, (lbl, val, fc, bg) in zip(_fw_cols, _fw_labels):
+                with col:
+                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
+                        padding:10px;text-align:center;">
+                      <div style="font-size:10px;color:{fc};font-weight:600;white-space:pre-line">{lbl}</div>
+                      <div style="font-size:24px;font-weight:800;color:{fc}">{val*100:.0f}%</div>
+                    </div>""", unsafe_allow_html=True)
+
+            # Momentum equilibrium signal
+            _mom_pct = _fw.get("f1", 0.45) * 100
+            if _mom_pct >= 55:
+                st.success(f"⚡ **Momentum Leading: {_mom_pct:.0f}%** — Strong Bull factor regime confirmed. "
+                           "Stage 2 selects aggressive recent breakout leaders.")
+            elif _mom_pct >= 45:
+                st.info(f"⚖️ **Equilibrium Zone: Momentum {_mom_pct:.0f}%** — Balanced factor regime. "
+                        "Strong catalyst needed to break above 55%.")
+            elif _mom_pct >= 35:
+                st.warning(f"⚠️ **Momentum Fading: {_mom_pct:.0f}%** — Trend + Mean Reversion gaining weight. "
+                           "Stage 2 shifting to defensive quality stocks.")
+            else:
+                st.error(f"🔴 **Bear Mode: Momentum {_mom_pct:.0f}%** — Mean Reversion + Trend dominant. "
+                         "Stage 2 selects quality survivors + oversold recovery candidates.")
+
+            # ── Two-stage equity note ─────────────────────────────────────────
+            st.markdown(f"""<div style="background:#EEF2FF;border:1px solid #6366F1;border-radius:8px;
+                padding:10px 14px;font-size:12px;color:#3730A3;margin-top:8px;">
+              <b>⚛ Two-Stage Equity Selection (v2026.09):</b>
+              Stage 1: AllNSE momentum gate → Top {STAGE1_TOP_N} candidates (avgZScore 12M/6M/3M) ·
+              Stage 2: QFSM composite (F1-F5 with above weights) on Top {STAGE1_TOP_N} → Final Top {PORTFOLIO_SIZE}
+            </div>""", unsafe_allow_html=True)
 
             # ── Shift message ─────────────────────────────────────────────
             _sc_diff = _sc - _prev_sc
@@ -4237,176 +4379,62 @@ with _tab_screener:
         st.session_state["_regime_result"]   = _rg
         st.session_state["_regime_prev_sc"]  = int(_prev_sc)
         st.session_state["_regime_total_pf"] = float(_total_pf)
+
+        # v2026.09: asset allocation fixed — score diff only drives factor weights
+        _sc_diff = _sc - _prev_sc
         if _sc_diff == 0:
-            _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±7% check karo. New entries at new target weight (Eq Budget ÷ 30).","#15803d","#dcfce7"
+            _smsg = ("✅ Score same — normal monthly equity rebalance. "
+                     f"Run Stage 1+2 screener → composite_score se new Top-{PORTFOLIO_SIZE} select karo. "
+                     "Gold drift check karo (13-27% band).")
+            _sfc, _sbg = "#15803d","#dcfce7"
         elif abs(_sc_diff) == 1:
-            _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — exits se Gold/Liquid fund karo, new entries at new target weight. Existing stocks drift band mein rahenge.","#1d4ed8","#dbeafe"
+            _fw_c = _rg.get("factor_weights", {})
+            _smsg = (f"🔄 Factor shift ({_prev_sc}→{_sc}) — Momentum weight: "
+                     f"{_fw_c.get('f1',0.45)*100:.0f}%. "
+                     "Asset allocation UNCHANGED (80/20/0). "
+                     "Monthly screener → Stage 2 composite → naye Top-30 stocks auto-update honge.")
+            _sfc, _sbg = "#1d4ed8","#dbeafe"
         else:
-            _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — phased 2-month plan. Monthly exits se Gold/Liquid fund karo. Weekly plan neeche dekho.","#b45309","#fef3c7"
-            st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
-                        border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
-              {_smsg}</div>""", unsafe_allow_html=True)
+            _fw_c = _rg.get("factor_weights", {})
+            _smsg = (f"⚠️ Major factor shift ({_prev_sc}→{_sc}) — Momentum: "
+                     f"{_fw_c.get('f1',0.45)*100:.0f}%, Mean Rev: {_fw_c.get('f3',0.10)*100:.0f}%. "
+                     "Asset allocation 80/20/0 UNCHANGED. "
+                     "Stage 2 composite score se portfolio composition significantly change hoga.")
+            _sfc, _sbg = "#b45309","#fef3c7"
+        st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
+                    border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
+          {_smsg}</div>""", unsafe_allow_html=True)
 
-            # ── GOLDBEES + Liquid actions — aligned layout ───────────────
-            # Section header
-            st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
-                            border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
-                            background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
-                            border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
-                🏦 Asset Actions
+        # ── Equity budget (v2026.09 — always 80%) ────────────────────────
+        _eq_budget = _total_pf * EQUITY_FIXED_PCT
+        _per_stock_target = _eq_budget / PORTFOLIO_SIZE if _eq_budget > 0 else 0
+        _drift_band_rs = 20000
+        st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
+                    border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
+          <b style="color:#1d4ed8">📈 Equity Budget (Fixed 80%):</b>
+          <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × 80% =
+            <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
+          </span>
+          &nbsp;&nbsp;
+          <span style="color:#475569;font-size:12px;">
+            | Base per stock: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
+            (risk parity adjusts actual sizes)
+            &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
+          </span>
+        </div>""", unsafe_allow_html=True)
+
+        # VIX overlay REMOVED in v2026.09 (gold fixed 20%, VIX → regime score → factor weights)
+        if _vix_curr is not None:
+            _vix_note_col = "#dc2626" if _vix_curr > 25 else ("#d97706" if _vix_curr > 20 else "#15803d")
+            _vix_note_bg  = "#fee2e2" if _vix_curr > 25 else ("#fef3c7" if _vix_curr > 20 else "#dcfce7")
+            _vix_s4 = 0 if _vix_curr > 25 else (0.75 if _vix_curr > 20 else 1.5)
+            st.markdown(f"""<div style="background:{_vix_note_bg};border:1px solid {_vix_note_col};
+                border-radius:8px;padding:8px 14px;font-size:12px;color:{_vix_note_col};margin:4px 0;">
+              <b>VIX {_vix_curr:.1f}</b> → S4 = {_vix_s4} pts → regime score affect → factor weights shift
+              {'⚠️ Bear/Neutral factors dominant' if _vix_curr > 25 else
+              ('⚠️ Mild factor weight impact' if _vix_curr > 20 else '✅ Calm — Momentum at full weight')}.
+              Gold FIXED 20% regardless of VIX.
             </div>""", unsafe_allow_html=True)
-
-            _act_col1, _act_col2 = st.columns(2)
-
-            # ─── GOLDBEES ───────────────────────────────────────────────────
-            with _act_col1:
-                st.markdown('<div style="font-size:13px;font-weight:700;color:#b45309;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fcd34d">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
-                _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
-                                            value=0, step=1000, key="goldbees_curr_val",
-                                            label_visibility="visible")
-                _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0,
-                                            value=0.0, step=0.5, key="goldbees_cmp",
-                                            label_visibility="visible")
-                if _total_pf > 0:
-                    _gd_tgt = _total_pf * _gd
-                    _gd_dif = _gd_tgt - _gb_curr
-                    _gdok   = abs(_gd_dif) / _total_pf < 0.07
-                    _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
-                    _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
-                    _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
-                    _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
-                    # ₹15K min guardrail — sub-₹15K transaction not worth brokerage
-                    _gd_min_ok = abs(_gd_dif) >= 15000
-                    _gact_txt  = "Hold (within ±7%)" if _gdok else (
-                        f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}"
-                    )
-                    if not _gdok and not _gd_min_ok:
-                        _gact_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_gd_dif):,.0f}"
-                        _gdc, _gd_bg = "#64748b", "#f1f5f9"
-                    # VIX overlay adjusted gold target
-                    _vix_ovl_pct = 0
-                    if _vix_curr and _vix_curr > 30: _vix_ovl_pct = 5
-                    elif _vix_curr and _vix_curr > 20: _vix_ovl_pct = 3
-                    _eff_gd_pct = min(_gd + _vix_ovl_pct/100, 0.30)
-                    _gd_tgt_eff = _total_pf * _eff_gd_pct
-                    _ovl_note   = f" (VIX +{_vix_ovl_pct}%)" if _vix_ovl_pct > 0 else ""
-                    st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
-                            border-radius:10px;padding:13px 15px;margin-top:6px;">
-                      <div style="display:flex;justify-content:space-between;align-items:center;
-                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
-                        <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
-                        <span style="font-size:16px;opacity:.4">→</span>
-                        <span>Target: <b style="font-size:14px;">₹{_gd_tgt_eff:,.0f}</b>{_ovl_note}</span>
-                      </div>
-                      <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
-                        {_gact_icon} {_gact_txt}
-                      </div>
-                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_gd_dif):,.0f}" if not _gdok else 'Within band'}
-                      </div>
-                    </div>""", unsafe_allow_html=True)
-
-            # ─── LIQUID FUND ─────────────────────────────────────────────────
-            with _act_col2:
-                st.markdown('<div style="font-size:13px;font-weight:700;color:#475569;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #cbd5e1">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
-                _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
-                                            value=0, step=1000, key="liquid_curr_val",
-                                            label_visibility="visible")
-                if _total_pf > 0:
-                    _cs_tgt = _total_pf * _cs
-                    _cs_dif = _cs_tgt - _lf_curr
-                    _csok   = abs(_cs_dif) / _total_pf < 0.07
-                    _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
-                    _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
-                    _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
-                    # ₹15K min guardrail
-                    _cs_min_ok = abs(_cs_dif) >= 15000
-                    _cs_txt  = "Hold (within ±7%)" if _csok else (
-                        f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}"
-                    )
-                    if not _csok and not _cs_min_ok:
-                        _cs_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_cs_dif):,.0f}"
-                        _csc, _cs_bg = "#64748b", "#f1f5f9"
-                    st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                            border-radius:10px;padding:13px 15px;margin-top:89px;">
-                      <div style="display:flex;justify-content:space-between;align-items:center;
-                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
-                        <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
-                        <span style="font-size:16px;opacity:.4">→</span>
-                        <span>Target: <b style="font-size:14px;">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
-                      </div>
-                      <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
-                        {_cs_icon} {_cs_txt}
-                      </div>
-                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_cs_dif):,.0f}" if not _csok else 'Within band'}
-                      </div>
-                    </div>""", unsafe_allow_html=True)
-
-            # ── Equity budget ─────────────────────────────────────────────
-            _eq_budget = _total_pf * _eq
-            _per_stock_target = _eq_budget / 30 if _eq_budget > 0 else 0
-            _drift_band_rs = 20000  # ±₹20K per stock drift band (SOP 9.5.1)
-            st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
-                        border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
-              <b style="color:#1d4ed8">📈 Equity Budget:</b>
-              <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
-                <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
-              </span>
-              &nbsp;&nbsp;
-              <span style="color:#475569;font-size:12px;">
-                | Per stock target: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
-                &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
-                &nbsp;| Band Low: ₹{max(0,_per_stock_target-_drift_band_rs):,.0f}
-                — High: ₹{_per_stock_target+_drift_band_rs:,.0f}
-              </span>
-            </div>""", unsafe_allow_html=True)
-
-            # ── VIX Overlay Panel (SOP Section 7.5) ──────────────────────
-            if _vix_curr is not None and _total_pf > 0:
-                _base_gold_pct = _gd * 100
-                _vix_overlay_pct = 0
-                _vix_overlay_src = ""
-                if _vix_curr > 30:
-                    _vix_overlay_pct = 5
-                    _vix_overlay_src = "VIX > 30"
-                elif _vix_curr > 20:
-                    _vix_overlay_pct = 3
-                    _vix_overlay_src = "VIX 20-30"
-
-                if _vix_overlay_pct > 0:
-                    _eff_gold_pct = min(_base_gold_pct + _vix_overlay_pct, 30)  # hard cap 30%
-                    _actual_overlay = _eff_gold_pct - _base_gold_pct
-                    _eff_cash_pct   = (_cs * 100) - _actual_overlay  # liquid funds the shift
-                    _eff_gold_rs    = _total_pf * _eff_gold_pct / 100
-                    _eff_cash_rs    = _total_pf * _eff_cash_pct / 100
-                    _overlay_rs     = _total_pf * _actual_overlay / 100
-                    _vix_col = "#dc2626" if _vix_curr > 30 else "#d97706"
-                    _vix_bg  = "#fef2f2" if _vix_curr > 30 else "#fef3c7"
-                    st.markdown(f"""
-                    <div style="background:{_vix_bg};border:1.5px solid {_vix_col};border-left:4px solid {_vix_col};
-                                border-radius:8px;padding:12px 16px;margin:8px 0;">
-                      <div style="font-size:13px;font-weight:700;color:{_vix_col};margin-bottom:6px;">
-                        ⚡ VIX Overlay Active — {_vix_overlay_src} (+{_actual_overlay:.0f}% Gold from Liquid)
-                      </div>
-                      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#374151;">
-                        <span>Base Gold: <b>{_base_gold_pct:.0f}%</b></span>
-                        <span style="color:{_vix_col};">→ Effective Gold: <b>{_eff_gold_pct:.0f}%</b> (₹{_eff_gold_rs:,.0f})</span>
-                        <span>Effective Cash: <b>{_eff_cash_pct:.0f}%</b> (₹{_eff_cash_rs:,.0f})</span>
-                        <span style="color:#6d28d9;font-weight:600;">Move ₹{_overlay_rs:,.0f} from Liquid → GOLDBEES</span>
-                      </div>
-                      <div style="font-size:11px;color:#6b7280;margin-top:6px;">
-                        ⚠️ Equity UNTOUCHED — only Liquid → Gold shift. Apply at monthly RB (VIX 20-30) or this Friday (VIX > 30).
-                        Normalize hone pe (VIX ≤ 20) → excess Gold wapas Liquid mein.
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
-                                padding:8px 14px;font-size:12px;color:#15803d;margin:4px 0;">
-                      ✅ VIX {_vix_curr:.1f} ≤ 20 — No VIX Overlay. Base allocation applies.
-                    </div>""", unsafe_allow_html=True)
 
             # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
             st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
@@ -4485,10 +4513,9 @@ with _tab_screener:
                 </div>""", unsafe_allow_html=True)
 
             if _exit_proceeds > 0 and _total_pf > 0:
-                # VIX overlay adjusted gold gap
-                _vix_adj_gold_pct = min(_gd + (_vix_overlay_pct/100 if '_vix_overlay_pct' in dir() else 0), 0.30)
-                _gold_gap    = max(0, _total_pf * _vix_adj_gold_pct - (_gb_curr if '_gb_curr' in dir() else 0))
-                _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
+                # VIX overlay REMOVED in v2026.09 — gold is fixed 20%
+                _gold_gap    = max(0, _total_pf * GOLD_FIXED_PCT - (_gb_curr if '_gb_curr' in dir() else 0))
+                _liquid_gap  = 0  # v2026.09: cash always 0% — no liquid gap (except DD override)
                 _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
                 _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
                 _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
@@ -4558,8 +4585,8 @@ with _tab_screener:
                 _prev_gd = _plan["weeks"][0]["gd_pct"]
                 _prev_cs = _plan["weeks"][0]["cs_pct"]
                 # Starting point = prev_score allocation
-                _alloc_start = {3:(80,15,5),2:(65,20,15),1:(45,25,30),0:(25,30,45)}
-                _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(65,20,15))
+                _alloc_start = {3:(80,20,0), 2:(80,20,0), 1:(80,20,0), 0:(80,20,0)}
+                _st_e,_st_g,_st_c = _alloc_start.get(_prev_sc,(80,20,0))
 
                 _wk_rows = []
                 for _wi, wd in enumerate(_plan["weeks"]):
@@ -4605,53 +4632,115 @@ with _tab_screener:
             # ══════════════════════════════════════════════════════════════
 
         with _s3_tab_b:
-            # ── Compute rebalance ─────────────────────────────────────
+            # ── v2026.09 Two-Stage QFSM Rebalance ────────────────────────
             if portfolio and st.session_state.dfFiltered is not None:
-                dfFiltered      = st.session_state.dfFiltered
-                dfStats         = st.session_state.dfStats
-                top_n           = st.session_state.top_n_rank
-                rank_threshold  = top_n
+                dfFiltered = st.session_state.dfFiltered
+                dfStats    = st.session_state.dfStats
+                top_n      = st.session_state.top_n_rank
 
-                top_rank_tickers = dfFiltered.reset_index()
-                top_rank_tickers = top_rank_tickers[top_rank_tickers['Rank'] <= rank_threshold]['Ticker']
+                # Get current regime band
+                _rg_cur    = st.session_state.get("_regime_result", {})
+                _regime_bd = int(_rg_cur.get("regime_band", _rg_cur.get("score", 2)))
+
+                # ── STAGE 1: Momentum Gate → Top STAGE1_TOP_N ────────────
+                st.markdown(f"""<div style="background:#DCFCE7;border:1px solid #86EFAC;border-left:4px solid #16A34A;
+                    border-radius:8px;padding:8px 14px;font-size:12px;color:#14532D;margin-bottom:8px;">
+                  <b>⚡ Stage 1 — Momentum Gate:</b> AllNSE filtered stocks → Top {STAGE1_TOP_N} by avgZScore (momentum rank)
+                </div>""", unsafe_allow_html=True)
+
+                try:
+                    stage1 = get_stage1_momentum_candidates(dfFiltered, top_n=STAGE1_TOP_N)
+                except Exception:
+                    stage1 = dfFiltered[dfFiltered.index <= STAGE1_TOP_N].copy()
+
+                # ── STAGE 2: QFSM Composite on Top 100 ───────────────────
+                st.markdown(f"""<div style="background:#EEF2FF;border:1px solid #6366F1;border-left:4px solid #7C3AED;
+                    border-radius:8px;padding:8px 14px;font-size:12px;color:#3730A3;margin-bottom:8px;">
+                  <b>⚛ Stage 2 — QFSM Blend:</b> F1 Momentum + F2 Trend + F3 MeanRev + F4 Size + F5 Vol
+                  (regime {_regime_bd} factor weights) → composite_score → Top {PORTFOLIO_SIZE} stocks
+                </div>""", unsafe_allow_html=True)
+
+                try:
+                    stage2         = compute_stage2_composite(stage1, _regime_bd)
+                    final_pf_df    = select_final_portfolio(stage2, PORTFOLIO_SIZE)
+                    _has_composite = True
+                except Exception as _e2:
+                    st.warning(f"⚠️ Stage 2 composite score error: {_e2}. Falling back to momentum ranking.")
+                    stage2         = dfFiltered.copy()
+                    final_pf_df    = dfFiltered.head(top_n)
+                    _has_composite = False
+
+                # Tickers from final portfolio
+                if 'Ticker' in final_pf_df.columns:
+                    top_rank_tickers = final_pf_df['Ticker']
+                else:
+                    top_rank_tickers = final_pf_df.reset_index()['Ticker'] if 'Ticker' in final_pf_df.reset_index().columns else pd.Series([])
 
                 current_portfolio_tickers = pd.Series(portfolio)
-                entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)]
-                exit_stocks  = current_portfolio_tickers[~current_portfolio_tickers.isin(top_rank_tickers)]
+
+                # ── v2026.09 THRESHOLD EXIT (not worst-rank-held) ─────────
+                if _has_composite:
+                    try:
+                        _exit_list_v09 = get_exit_list(
+                            stage2, portfolio, _regime_bd
+                        )
+                        exit_tickers_v09 = [e['ticker'] for e in _exit_list_v09]
+                    except Exception:
+                        exit_tickers_v09 = []
+                        _exit_list_v09   = []
+                else:
+                    exit_tickers_v09 = []
+                    _exit_list_v09   = []
+
+                # Classic rank-based exits (stocks not in top_rank_tickers)
+                classic_exits = current_portfolio_tickers[
+                    ~current_portfolio_tickers.isin(top_rank_tickers)
+                ].tolist()
+
+                # Merge: threshold exits take priority, then classic
+                all_exit_set = set(exit_tickers_v09) | set(classic_exits)
+                exit_stocks  = pd.Series(sorted(all_exit_set))
                 hold_stocks  = current_portfolio_tickers[current_portfolio_tickers.isin(top_rank_tickers)]
 
-                num_sells = len(exit_stocks)
-                entry_stocks = entry_stocks.head(num_sells)
+                # Entry stocks: top composite score, not already held
+                n_exits = len(exit_stocks)
+                try:
+                    entry_tickers = get_entry_list(final_pf_df, portfolio, n_exits)
+                    entry_stocks  = pd.Series(entry_tickers)
+                except Exception:
+                    entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)].head(n_exits)
 
+                num_sells = n_exits
                 if len(entry_stocks) < num_sells:
-                    entry_stocks = pd.concat([
-                        entry_stocks,
-                        pd.Series([None] * (num_sells - len(entry_stocks)))
-                    ])
+                    entry_stocks = pd.concat([entry_stocks, pd.Series([None]*(num_sells - len(entry_stocks)))])
 
-                # ── Reasons for exit (v10 logic) ──────────────────────
+                # ── Exit reasons ──────────────────────────────────────────
                 reasons_for_exit = []
+                _exit_reason_map = {e['ticker']: e['reason'] for e in _exit_list_v09}
                 for ticker in exit_stocks:
                     if pd.isna(ticker) or ticker == "":
                         reasons_for_exit.append(""); continue
-                    reasons    = []
+                    # v2026.09 reason first
+                    if ticker in _exit_reason_map:
+                        reasons_for_exit.append(f"QFSM: {_exit_reason_map[ticker]}")
+                        continue
+                    reasons = []
                     stock_data = dfStats[dfStats['Ticker'] == ticker] if dfStats is not None else pd.DataFrame()
                     if len(stock_data) > 0:
-                        if stock_data.index[0] > rank_threshold:          reasons.append(f"Rank > {rank_threshold}")
-                        if stock_data['volm_cr'].values[0] <= 1:           reasons.append("Volume ≤ 1 Cr")
-                        if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]:
-                                                                           reasons.append("Close ≤ 200-DMA")
-                        if stock_data['roc12M'].values[0] <= 5.5:          reasons.append("12M ROC ≤ 5.5%")
-                        if stock_data['circuit'].values[0] >= 20:          reasons.append("Circuit ≥ 20")
-                        if stock_data['AWAY_ATH'].values[0] <= -25:        reasons.append("Away ATH ≤ -25%")
-                        if stock_data['roc12M'].values[0] >= 1000:         reasons.append("12M ROC ≥ 1000%")
-                        if stock_data['Close'].values[0] <= 30:            reasons.append("Close ≤ ₹30")
-                        if stock_data['circuit5'].values[0] > 10:          reasons.append("5% Circuit > 10")
+                        if stock_data.index[0] > STAGE1_TOP_N:               reasons.append(f"Outside Top-{STAGE1_TOP_N}")
+                        if stock_data['volm_cr'].values[0] <= 1:              reasons.append("Volume ≤ 1 Cr")
+                        if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]: reasons.append("Close ≤ 200-DMA")
+                        if stock_data['roc12M'].values[0] <= 5.5:             reasons.append("12M ROC ≤ 5.5%")
+                        if stock_data['circuit'].values[0] >= 20:             reasons.append("Circuit ≥ 20")
+                        if stock_data['AWAY_ATH'].values[0] <= -25:           reasons.append("Away ATH ≤ -25%")
+                        if stock_data['roc12M'].values[0] >= 1000:            reasons.append("12M ROC ≥ 1000%")
+                        if stock_data['Close'].values[0] <= 30:               reasons.append("Close ≤ ₹30")
+                        if stock_data['circuit5'].values[0] > 10:             reasons.append("5% Circuit > 10")
                     else:
-                        reasons.append("Not in selected universe")
+                        reasons.append("Not in universe")
                     reasons_for_exit.append(", ".join(reasons) if reasons else "Rank dropped")
 
-                reasons_for_exit.extend([""] * (len(entry_stocks) - len(reasons_for_exit)))
+                reasons_for_exit.extend([""] * max(0, len(entry_stocks) - len(reasons_for_exit)))
 
                 rebalance_table = pd.DataFrame({
                     'S.No.':           range(1, num_sells + 1),
@@ -4663,21 +4752,82 @@ with _tab_screener:
                     ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())
                 ]
                 rebalance_table.set_index('S.No.', inplace=True)
-                st.session_state.sell_list = exit_stocks.dropna().tolist()
-                st.session_state.buy_list  = entry_stocks.dropna().tolist()
+                st.session_state.sell_list       = exit_stocks.dropna().tolist()
+                st.session_state.buy_list        = entry_stocks.dropna().tolist()
                 st.session_state.rebalance_table = rebalance_table
                 st.session_state.rebalance_done  = True
 
-                # ── Summary strip ──────────────────────────────────────
+                # ── Risk Parity Weights ───────────────────────────────────
+                _final_portfolio_tickers = (
+                    [t for t in portfolio if t not in exit_stocks.tolist()] +
+                    entry_stocks.dropna().tolist()
+                )
+                try:
+                    _rp_weights = get_risk_parity_weights(stage2, _final_portfolio_tickers)
+                    _eq_budget  = float(st.session_state.get("_regime_total_pf", 1_000_000)) * EQUITY_FIXED_PCT
+                    _rp_values  = get_position_values(_rp_weights, _eq_budget)
+                    _has_rp     = True
+                except Exception:
+                    _has_rp = False
+
+                # ── Factor allocation display ─────────────────────────────
+                if _has_composite and len(portfolio) > 0:
+                    try:
+                        _fa = get_factor_allocation_pct(stage2, portfolio, _regime_bd)
+                        _mom_fa = _fa.get("Momentum (F1)", 0.45) * 100
+                        _fa_html = " · ".join(
+                            [f"<b>{k.split('(')[0].strip()}:</b> {v*100:.0f}%"
+                             for k, v in _fa.items()]
+                        )
+                        st.markdown(f"""<div style="background:#F5F3FF;border:1px solid #A78BFA;border-radius:8px;
+                            padding:8px 14px;font-size:12px;color:#4C1D95;margin-bottom:8px;">
+                          ⚛ <b>Current Portfolio Factor Mix:</b> {_fa_html}
+                          {'&nbsp; <span style="background:#FEF3C7;color:#B45309;border-radius:4px;padding:2px 6px;font-size:11px;">⚖️ Equilibrium Zone</span>' if 40 <= _mom_fa <= 60 else ''}
+                          {'&nbsp; <span style="background:#DCFCE7;color:#15803D;border-radius:4px;padding:2px 6px;font-size:11px;">⚡ Momentum Leading</span>' if _mom_fa > 60 else ''}
+                          {'&nbsp; <span style="background:#FEE2E2;color:#991B1B;border-radius:4px;padding:2px 6px;font-size:11px;">🔴 Bear Mode</span>' if _mom_fa < 30 else ''}
+                        </div>""", unsafe_allow_html=True)
+                    except Exception:
+                        pass
+
+                # ── Summary strip ─────────────────────────────────────────
                 st.markdown(f"""<div class="reb-strip">
                   <div class="reb-stat"><div class="label">Portfolio</div><div class="val b">{len(portfolio)}</div></div>
-                  <div class="reb-stat"><div class="label">Top-{rank_threshold} Screener</div><div class="val b">{len(top_rank_tickers)}</div></div>
-                  <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{len(exit_stocks)}</div></div>
+                  <div class="reb-stat"><div class="label">Stage1 Top-{STAGE1_TOP_N}</div><div class="val b">{len(stage1)}</div></div>
+                  <div class="reb-stat"><div class="label">Stage2 Top-{PORTFOLIO_SIZE}</div><div class="val b">{len(final_pf_df)}</div></div>
+                  <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{num_sells}</div></div>
                   <div class="reb-stat"><div class="label">BUY (Entry)</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
                   <div class="reb-stat"><div class="label">HOLD</div><div class="val p">{len(hold_stocks)}</div></div>
                 </div>""", unsafe_allow_html=True)
 
-                # ── Sell / Buy / Hold columns ──────────────────────────
+                # ── Stage 2 composite table (expandable) ─────────────────
+                if _has_composite:
+                    with st.expander(f"📊 Stage 2 — Top {PORTFOLIO_SIZE} QFSM Composite Scores", expanded=False):
+                        _s2_cols = ['Ticker','Close','composite_score','composite_rank',
+                                    'f1_momentum','f2_trend','f3_mean_rev',
+                                    'avgZScore12_6_3','AWAY_ATH','vol']
+                        _s2_show = [c for c in _s2_cols if c in final_pf_df.columns]
+                        if 'Ticker' not in final_pf_df.columns:
+                            _s2_disp = final_pf_df.reset_index()[_s2_show] if _s2_show else final_pf_df.head(20)
+                        else:
+                            _s2_disp = final_pf_df[_s2_show]
+                        st.dataframe(_s2_disp.sort_values('composite_score', ascending=False)
+                                     if 'composite_score' in _s2_disp.columns else _s2_disp,
+                                     use_container_width=True, hide_index=True)
+
+                    # Risk parity weights table
+                    if _has_rp:
+                        with st.expander("⚖️ Risk Parity Position Sizes", expanded=False):
+                            _rp_rows = [{"Ticker": t, "Weight %": round(w*100, 2),
+                                         "₹ Position": f"₹{v:,.0f}"}
+                                        for t, (w, v) in zip(
+                                            _rp_weights.keys(),
+                                            zip(_rp_weights.values(), _rp_values.values())
+                                        )]
+                            st.dataframe(pd.DataFrame(_rp_rows).sort_values("Weight %", ascending=False),
+                                         use_container_width=True, hide_index=True)
+                            st.caption("Risk parity: lower vol stocks get larger positions. Equal risk contribution across all holdings.")
+
+                # ── Sell / Buy / Hold columns ─────────────────────────────
                 col_sell, col_buy, col_hold = st.columns(3)
                 with col_sell:
                     st.markdown('<div class="section-hdr" style="border-left-color:var(--red)">🔴 SELL List</div>', unsafe_allow_html=True)
@@ -4688,28 +4838,12 @@ with _tab_screener:
                         cmp_map = {}
                         if dfStats is not None:
                             cmp_map = dict(zip(dfStats['Ticker'], dfStats['Close']))
-                        # Also try dfFiltered for CMP (in case stock is in filtered but not dfStats)
-                        if dfFiltered is not None:
-                            for t, c in zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Close']):
-                                if t not in cmp_map:
-                                    cmp_map[t] = c
                         sell_df = pd.DataFrame({
-                            "Stock": sell_list,
-                            "CMP ₹": [
-                                round(cmp_map[s], 2) if s in cmp_map and cmp_map[s] > 0
-                                else "N/A *"
-                                for s in sell_list
-                            ],
+                            "Stock":  sell_list,
+                            "CMP ₹":  [round(cmp_map[s],2) if s in cmp_map and cmp_map[s]>0 else "N/A" for s in sell_list],
                             "Reason": reasons_for_exit[:len(sell_list)]
                         })
                         st.dataframe(sell_df, hide_index=True, use_container_width=True)
-                        missing_cmp = [s for s in sell_list if s not in cmp_map or cmp_map.get(s, 0) == 0]
-                        if missing_cmp:
-                            st.caption(
-                                f"* {', '.join(missing_cmp)} — CMP unavailable "
-                                f"(stock selected universe ({st.session_state.universe}) mein nahi hai). "
-                                "Broker app se manually CMP check karo."
-                            )
                     else:
                         st.success("Koi sell nahi hai!")
 
@@ -4719,24 +4853,30 @@ with _tab_screener:
                     if buy_list:
                         chips = " ".join([f'<span class="chip chip-buy">{s}</span>' for s in buy_list])
                         st.markdown(chips, unsafe_allow_html=True)
-                        rank_map = dict(zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Rank']))
-                        cmp_map2 = {}
-                        if dfStats is not None:
-                            cmp_map2 = dict(zip(dfStats['Ticker'], dfStats['Close']))
+                        if 'Ticker' in final_pf_df.columns:
+                            cs_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_score', pd.Series())))
+                            rk_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_rank', pd.Series())))
+                            cl_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('Close', pd.Series())))
+                        else:
+                            cs_map = rk_map = cl_map = {}
                         buy_df = pd.DataFrame({
-                            "Stock":        buy_list,
-                            "Screener Rank":[rank_map.get(s, "—") for s in buy_list],
-                            "CMP ₹":        [round(cmp_map2.get(s, 0), 2) for s in buy_list],
+                            "Stock":            buy_list,
+                            "CMP ₹":            [round(cl_map.get(s,0),2) if cl_map.get(s,0)>0 else "N/A" for s in buy_list],
+                            "Composite Score":  [round(cs_map.get(s,0),3) if s in cs_map else "N/A" for s in buy_list],
+                            "Composite Rank":   [rk_map.get(s,"N/A") for s in buy_list],
                         })
                         st.dataframe(buy_df, hide_index=True, use_container_width=True)
                     else:
-                        st.info("Koi buy nahi hai.")
+                        st.success("Koi entry nahi hai!")
 
                 with col_hold:
-                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🔵 HOLD (Retain)</div>', unsafe_allow_html=True)
-                    if not hold_stocks.empty:
-                        chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_stocks.tolist()])
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🟣 HOLD</div>', unsafe_allow_html=True)
+                    hold_list = hold_stocks.dropna().tolist()
+                    if hold_list:
+                        chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_list])
                         st.markdown(chips, unsafe_allow_html=True)
+                    else:
+                        st.info("Koi hold nahi.")
 
                 # ── Rebalance table ────────────────────────────────────
                 st.markdown('<div class="section-hdr">📋 Rebalance Table (Sell → Buy mapping)</div>', unsafe_allow_html=True)
@@ -4916,35 +5056,64 @@ with _tab_screener:
                                 </div>""", unsafe_allow_html=True)
 
                     else:
-                        # ── MULTI-ASSET MODE — SOP v2026.06 ──────────
+                        # ── MULTI-ASSET MODE — SOP v2026.09 (Fixed 80/20/0) ─
                         _oc_rg       = st.session_state.get("_regime_result", {})
-                        _oc_sc       = int(_oc_rg.get("score",  _sc))
-                        _oc_lbl      = _oc_rg.get("label",  _lbl)
-                        _oc_eq_pct   = float(_oc_rg.get("equity", _eq))
-                        _oc_gd_pct   = float(_oc_rg.get("gold",   _gd))
-                        _oc_cs_pct   = float(_oc_rg.get("cash",   _cs))
+                        _oc_sc       = int(_oc_rg.get("score", 2))
+                        _oc_lbl      = _oc_rg.get("label", "Mild Bull")
+                        # v2026.09: always fixed
+                        _oc_eq_pct   = float(EQUITY_FIXED_PCT)   # 0.80
+                        _oc_gd_pct   = float(GOLD_FIXED_PCT)     # 0.20
+                        _oc_cs_pct   = float(CASH_FIXED_PCT)     # 0.00
                         _oc_total_pf = float(st.session_state.get("_regime_total_pf", _total_pf))
-                        _oc_prev_sc  = int(st.session_state.get("_regime_prev_sc",   _prev_sc))
+                        _oc_prev_sc  = int(st.session_state.get("_regime_prev_sc", _sc))
                         if _oc_total_pf == 0:
                             st.warning("⚠️ 'Regime & Allocation' tab mein Total Portfolio Value enter karo.")
+
+                        # Check for DD override
+                        if _oc_rg.get("dd_override"):
+                            _oc_eq_pct = 0.60
+                            _oc_cs_pct = 0.20
+                            st.warning("🚨 DD Override active — Equity 60%, Liquid 20% (temporary)")
+
                         _ma_c1, _ma_c2 = st.columns(2)
                         with _ma_c1:
                             _oc_gd_curr = st.number_input("🥇 Current GOLDBEES ₹", min_value=0,
                                 value=int(st.session_state.get("_gb_curr_val", 0)), step=1000, key="oc_gd_curr")
                         with _ma_c2:
                             _oc_lf_curr = st.number_input("💵 Current Liquid Fund ₹", min_value=0,
-                                value=int(st.session_state.get("_lf_curr_val", 0)), step=1000, key="oc_lf_curr")
-                        _oc_gd_gap     = max(0.0, _oc_total_pf * _oc_gd_pct - _oc_gd_curr)
+                                value=0, step=1000, key="oc_lf_curr")
+
+                        # Gold drift gap (v2026.09: gold fixed 20%, check drift band)
+                        try:
+                            _oc_gd_drift = check_gold_drift(float(_oc_gd_curr), float(_oc_total_pf))
+                            _oc_gd_gap   = _oc_gd_drift["amount"] if _oc_gd_drift["action"] == "TOP_UP" else 0
+                        except Exception:
+                            _oc_gd_gap = max(0.0, _oc_total_pf * _oc_gd_pct - _oc_gd_curr)
+
                         _oc_cs_gap     = max(0.0, _oc_total_pf * _oc_cs_pct - _oc_lf_curr)
                         _oc_for_gold   = min(_oc_gd_gap, gross_pool)
                         _oc_rem1       = gross_pool - _oc_for_gold
                         _oc_for_liquid = min(_oc_cs_gap, _oc_rem1)
                         _oc_for_equity = max(0.0, _oc_rem1 - _oc_for_liquid - buy_brk)
                         _oc_eq_budget  = _oc_total_pf * _oc_eq_pct
-                        _oc_per_stock_tgt = _oc_eq_budget / 30 if _oc_eq_budget > 0 else 0
+
+                        # v2026.09: Risk parity sizing (not equal weight)
+                        _oc_per_stock_tgt = _oc_eq_budget / PORTFOLIO_SIZE if _oc_eq_budget > 0 else 0
                         _oc_final_per_stock = _oc_per_stock_tgt
                         _oc_final_stocks    = buy_list_local
                         _oc_final_pool      = _oc_for_equity
+
+                        st.markdown(f"""<div class="reb-strip">
+                          <div class="reb-stat"><div class="label">Sell Value</div><div class="val b">₹{sell_val_input:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">→ Gold Gap</div><div class="val" style="color:#b45309">₹{_oc_for_gold:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">→ Liquid Gap</div><div class="val" style="color:#475569">₹{_oc_for_liquid:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Equity Pool</div><div class="val g">₹{_oc_for_equity:,.0f}</div></div>
+                          <div class="reb-stat"><div class="label">Per Stock (Equal Base)</div><div class="val b">₹{_oc_per_stock_tgt:,.0f}</div></div>
+                        </div>""", unsafe_allow_html=True)
+                        st.caption(
+                            f"v2026.09 Fixed: Eq {_oc_eq_pct*100:.0f}% / Gold {_oc_gd_pct*100:.0f}% / Liquid {_oc_cs_pct*100:.0f}% · "
+                            f"Per-stock = Eq Budget ÷ {PORTFOLIO_SIZE} = ₹{_oc_per_stock_tgt:,.0f} (base — risk parity adjusts final sizes)"
+                        )
                         _wdp_mode = False
 
                         st.markdown("---")
