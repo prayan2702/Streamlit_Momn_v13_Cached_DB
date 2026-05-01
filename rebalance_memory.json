@@ -1,0 +1,24 @@
+{
+  "last_rebalance_date": "2026-05-01",
+  "regime_band": 2,
+  "weighted_score": 6.0,
+  "qfsm_mode": "BLEND",
+  "status": "STABLE",
+  "allocation": {
+    "equity_pct": 65.0,
+    "gold_pct": 20.0,
+    "cash_pct": 15.0
+  },
+  "signals": {
+    "s1_nav": 1.5,
+    "s2_breadth": 0.0,
+    "s3_roc": 1.0,
+    "s4_vix": 1.5,
+    "s5_nifty": 0.0,
+    "s6_ad": 1.0,
+    "s7_rank": 0.5,
+    "s_fii": 0.5
+  },
+  "vix_overlay_pct": 0,
+  "notes": "rebalance date:01.05.2026"
+}
