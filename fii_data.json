@@ -1,6 +1,17 @@
 {
-  "stale": true,
   "last_updated": "2026-05-01",
-  "last_updated_ts": "2026-05-01T11:24:54",
-  "fetch_failed": true
+  "last_updated_ts": "2026-05-01T14:37:28",
+  "source": "nse_api",
+  "fii_net_30d": 0.0,
+  "fii_net_5d": 0.0,
+  "fii_buy_30d": 0.0,
+  "fii_sell_30d": 0.0,
+  "dii_net_30d": 0.0,
+  "dii_net_5d": 0.0,
+  "fii_ema5_gt_ema20": false,
+  "signal": "NEUTRAL",
+  "score": 0.0,
+  "stale": false,
+  "consecutive_bull_days": 0,
+  "fetch_failed": false
 }
