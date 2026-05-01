@@ -4478,8 +4478,14 @@ with _tab_screener:
             # ── Shift message ─────────────────────────────────────────────
             _sc_diff = _sc - _prev_sc
 
-        # Persist for Order Calculator
-        st.session_state["_regime_result"]   = _rg
+        # Persist for Order Calculator (compatible dict from RegimeState)
+        st.session_state["_regime_result"]   = {
+            "score":  _rs_rg.effective_band,
+            "label":  _rs_rg.label(),
+            "equity": _rs_rg.equity,
+            "gold":   _rs_rg.gold,
+            "cash":   _rs_rg.cash,
+        }
         st.session_state["_regime_prev_sc"]  = int(_prev_sc)
         st.session_state["_regime_total_pf"] = float(_total_pf)
         if _sc_diff == 0:
