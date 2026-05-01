@@ -1,5 +1,5 @@
 """
-momn_streamlit_app_v14.py
+momn_streamlit_app_v14.py  (SOP v2026.08 — Phase 1 update)
 =========================
 Momentum Screener + Portfolio Rebalancer — v14
 
@@ -907,6 +907,14 @@ _defaults = {
     # ── ATH Override Memory (persisted in ath_memory.json) ──────
     "_ath_memory":             {},     # loaded from file on first cross-review run
     "_ath_memory_loaded":      False,  # sentinel to load from file exactly once
+    # ── Phase 1: Regime state (7-signal weighted, QFSM) ─────────
+    "_regime_state":           None,   # RegimeState object
+    "_regime_prev_state":      None,   # previous RegimeState (for confirmation tracking)
+    "_rt_nifty_close":         None,   # fetched Nifty close
+    "_rt_nifty_dma200":        None,   # fetched Nifty 200DMA
+    "_rt_rank_history":        [],     # list of weekly top-50 dicts
+    "_rb_memory_loaded":       False,  # rebalance_memory.json loaded flag
+    "_rb_memory":              {},     # last rebalance memory dict
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -943,6 +951,36 @@ def _save_ath_memory(mem: dict) -> bool:
     Returns True on success, False on error."""
     try:
         with open(_ATH_MEMORY_FILE, "w") as f:
+            json.dump(mem, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+# ── Rebalance Memory helpers ─────────────────────────────────────
+_RB_MEMORY_FILE = "rebalance_memory.json"
+
+def _load_rb_memory() -> dict:
+    """Load rebalance memory from local JSON, fallback GitHub."""
+    try:
+        if os.path.exists(_RB_MEMORY_FILE):
+            with open(_RB_MEMORY_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    try:
+        r = requests.get(
+            f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main/rebalance_memory.json",
+            timeout=8,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+def _save_rb_memory(mem: dict) -> bool:
+    try:
+        with open(_RB_MEMORY_FILE, "w") as f:
             json.dump(mem, f, indent=2, ensure_ascii=False)
         return True
     except Exception:
@@ -1416,6 +1454,64 @@ with st.sidebar:
     else:
         st.caption("Abhi koi ATH review save nahi hua. Cross-source review karke 'Apply' karo.")
 
+    # ── Rebalance Memory Panel ───────────────────────────────────────
+    st.divider()
+    st.markdown("### 💾 Rebalance Memory", unsafe_allow_html=True)
+    with st.expander("Save / View Rebalance Memory", expanded=False):
+        st.caption("Monthly rebalance ke baad state save karo (PIN-protected — same PIN as ATH).")
+        _rb_mem_sb = st.session_state.get("_rb_memory", {})
+        if _rb_mem_sb:
+            _rb_al = _rb_mem_sb.get("allocation", {})
+            st.markdown(
+                f"📅 **{_rb_mem_sb.get('last_rebalance_date','—')}** &nbsp;|&nbsp; "
+                f"Band **{_rb_mem_sb.get('regime_band','—')}** &nbsp;|&nbsp; "
+                f"Score **{_rb_mem_sb.get('weighted_score','—')}**\n\n"
+                f"Eq **{_rb_al.get('equity_pct','—')}%** / Gold **{_rb_al.get('gold_pct','—')}%** / Cash **{_rb_al.get('cash_pct','—')}%**"
+            )
+        else:
+            st.info("No rebalance memory saved yet.")
+
+        _rs_sb = st.session_state.get("_regime_state")
+        if _rs_sb is not None:
+            _rb_notes_inp = st.text_area("Notes (optional):", key="rb_notes_sb", height=50)
+            _rb_pin_inp   = st.text_input("🔑 PIN", type="password", max_chars=4, key="rb_pin_sb")
+            if st.button("💾 Save Rebalance Memory", use_container_width=True, key="rb_save_sb"):
+                if not _verify_pin(_rb_pin_inp):
+                    if not _pin_secret_exists():
+                        st.error("❌ TRIGGER_PIN secret set nahi hai")
+                    else:
+                        st.error("❌ Wrong PIN")
+                else:
+                    _rb_data = {
+                        "last_rebalance_date": str(datetime.date.today()),
+                        "regime_band":         _rs_sb.effective_band,
+                        "weighted_score":      round(_rs_sb.raw_score, 3),
+                        "qfsm_mode":           _rs_sb.qfsm_mode,
+                        "status":              _rs_sb.status,
+                        "allocation": {
+                            "equity_pct":  round(_rs_sb.equity * 100, 1),
+                            "gold_pct":    round(_rs_sb.gold   * 100, 1),
+                            "cash_pct":    round(_rs_sb.cash   * 100, 1),
+                        },
+                        "signals":           _rs_sb.signals,
+                        "vix_overlay_pct":   _rs_sb.vix_overlay_pct,
+                        "notes":             _rb_notes_inp,
+                    }
+                    _save_rb_memory(_rb_data)
+                    st.session_state["_rb_memory"] = _rb_data
+                    if _get_secret("GITHUB_PAT", ""):
+                        with st.spinner("☁️ GitHub pe push ho raha hai..."):
+                            _ok2, _msg2 = _push_json_to_github(
+                                path="rebalance_memory.json",
+                                content_dict=_rb_data,
+                                commit_msg=f"auto: rebalance memory {_rb_data['last_rebalance_date']}",
+                            )
+                        st.success(_msg2 if _ok2 else f"Local saved. GitHub: {_msg2}")
+                    else:
+                        st.success("✅ Saved locally. (Set GITHUB_PAT to also push to GitHub.)")
+        else:
+            st.caption("Market Regime tab mein refresh karo → tab state load hogi → phir save karo.")
+
     # ── GitHub Actions Trigger Panel ─────────────────────────────
     st.divider()
     st.markdown("### ⚡ GitHub Actions", unsafe_allow_html=True)
@@ -1659,19 +1755,23 @@ _tab_screener, _tab_regime, _tab_sim = st.tabs([
 ])
 
 # ════════════════════════════════════════════════════
-# REGIME TAB — auto-loads best cache, shows gauge
+# REGIME TAB — v2026.08  (7-signal weighted, QFSM)
 # ════════════════════════════════════════════════════
 with _tab_regime:
     st.session_state["_curr_tab"] = "regime"
     try:
-        from calculations import get_regime_score, get_next_rebalance_dates
+        from calculations import (
+            get_full_regime_result, get_next_rebalance_dates,
+            RegimeState, score_to_band,
+        )
         import streamlit.components.v1 as _stc_rt
         _rt_calcs_ok = True
-    except ImportError:
-        st.warning("⚠️ calculations.py nahi mili.")
+    except ImportError as _imp_err:
+        st.warning(f"⚠️ calculations.py import failed: {_imp_err}")
         _rt_calcs_ok = False
 
     if _rt_calcs_ok:
+
         @st.cache_data(ttl=3600, show_spinner=False)
         def _load_best_cache_regime():
             try:
@@ -1692,168 +1792,265 @@ with _tab_regime:
             return None,None,None,"None"
 
         @st.cache_data(ttl=1800, show_spinner=False)
-        def _fetch_dash_rt(api_url):
-            import requests as _r2
+        def _fetch_nifty_rt():
+            """^NSEI close + 200DMA from yfinance (cached 30 min)."""
             try:
-                resp = _r2.get(api_url+"?action=all",timeout=15,headers={"User-Agent":"Mozilla/5.0"})
-                if resp.status_code==200:
-                    j=resp.json()
-                    if j.get("ok"): return j.get("data",{})
-            except Exception: pass
-            return {}
+                import yfinance as _yf2
+                _nf = _yf2.download("^NSEI", period="300d", progress=False)["Close"].dropna()
+                if len(_nf) < 5: return None, None
+                return (round(float(_nf.iloc[-1]),2),
+                        round(float(_nf.rolling(200, min_periods=150).mean().iloc[-1]),2))
+            except Exception:
+                return None, None
 
-        _rt_hc1,_rt_hc2 = st.columns([5,1])
+        # ── Refresh ────────────────────────────────────────────────────────────
+        _rt_hc1, _rt_hc2 = st.columns([5, 1])
         with _rt_hc2:
-            if st.button("🔄 Refresh",key="rt_refresh_btn"):
-                _load_best_cache_regime.clear(); _fetch_dash_rt.clear()
-                for k in ["_rt_dfS","_rt_src","_rt_navs","_rt_vx","_rt_wret"]:
-                    st.session_state.pop(k,None)
+            if st.button("🔄 Refresh", key="rt_refresh_btn"):
+                _load_best_cache_regime.clear()
+                _fetch_nifty_rt.clear()
+                for _k in ["_rt_dfS","_rt_src","_rt_navs","_rt_vx","_rt_wret",
+                           "_rt_nifty_close","_rt_nifty_dma200","_regime_state"]:
+                    st.session_state.pop(_k, None)
                 st.rerun()
 
+        # ── Load dfStats (once per session) ────────────────────────────────────
         if st.session_state.get("_rt_dfS") is None:
             with st.spinner("⚡ Best cache loading (Upstox → Angel One → YFinance)..."):
-                _rt_cl,_rt_hi,_rt_vo,_rt_src_l = _load_best_cache_regime()
+                _rt_cl, _rt_hi, _rt_vo, _rt_src_l = _load_best_cache_regime()
             if _rt_cl is not None:
                 try:
                     from calculations import build_dfStats as _bds_rt
                     from dateutil.relativedelta import relativedelta as _rdelta
                     import datetime as _dtb2
-                    _rt_end_d = _rt_cl.index[-1].date() if hasattr(_rt_cl.index[-1],'date') else _dt_rt.date.today()
-                    _rt_ed_dt = _dtb2.datetime.combine(_rt_end_d,_dtb2.time())
-                    _rt_dts   = {'startDate':_dtb2.datetime(2000,1,1),'endDate':_rt_ed_dt,
-                                 'date12M':_rt_ed_dt-_rdelta(months=12),'date9M':_rt_ed_dt-_rdelta(months=9),
-                                 'date6M':_rt_ed_dt-_rdelta(months=6),'date3M':_rt_ed_dt-_rdelta(months=3),
-                                 'date1M':_rt_ed_dt-_rdelta(months=1)}
-                    _rt_dfS_obj = _bds_rt(_rt_cl,_rt_hi,_rt_vo,_rt_dts,"avgZScore12_6_3")
-                    st.session_state["_rt_dfS"]  = _rt_dfS_obj
-                    st.session_state["_rt_src"]  = _rt_src_l
+                    _rt_end_d = (_rt_cl.index[-1].date()
+                                 if hasattr(_rt_cl.index[-1],'date')
+                                 else _dt_rt.date.today())
+                    _rt_ed_dt = _dtb2.datetime.combine(_rt_end_d, _dtb2.time())
+                    _rt_dts   = {
+                        'startDate': _dtb2.datetime(2000,1,1), 'endDate': _rt_ed_dt,
+                        'date12M': _rt_ed_dt-_rdelta(months=12),
+                        'date9M':  _rt_ed_dt-_rdelta(months=9),
+                        'date6M':  _rt_ed_dt-_rdelta(months=6),
+                        'date3M':  _rt_ed_dt-_rdelta(months=3),
+                        'date1M':  _rt_ed_dt-_rdelta(months=1),
+                    }
+                    _rt_dfS_obj = _bds_rt(_rt_cl, _rt_hi, _rt_vo, _rt_dts, "avgZScore12_6_3")
+                    st.session_state["_rt_dfS"] = _rt_dfS_obj
+                    st.session_state["_rt_src"] = _rt_src_l
                     st.success(f"✅ {_rt_src_l} cache loaded · {len(_rt_dfS_obj):,} stocks · {_rt_end_d}")
                 except Exception as _e_rt2:
                     st.error(f"Calculation error: {_e_rt2}")
             else:
                 st.warning("⚠️ Koi cache available nahi. Screener tab mein pehle run karo.")
 
+        # ── Load live signals (VIX, NAV, Nifty) ───────────────────────────────
         if st.session_state.get("_rt_navs") is None:
-            # VIX from yfinance (fast, no auth)
             _rtv = _fetch_vix_yf()
-            # NAV from Google Sheet CSV (fast direct fetch)
             _rtn = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
             _rtw = round((_rtn[-1]/_rtn[-6]-1)*100,2) if len(_rtn)>=6 else None
             st.session_state["_rt_navs"] = _rtn
             st.session_state["_rt_vx"]   = _rtv
             st.session_state["_rt_wret"] = _rtw
-            if _rtv:
-                st.caption(f"⚡ VIX: {_rtv} | NAV: {len(_rtn)} pts")
 
+        if st.session_state.get("_rt_nifty_close") is None:
+            _nc_rt, _nd_rt = _fetch_nifty_rt()
+            st.session_state["_rt_nifty_close"]  = _nc_rt
+            st.session_state["_rt_nifty_dma200"] = _nd_rt
+
+        # ── Pull cached values ─────────────────────────────────────────────────
         _rt_dfS  = st.session_state.get("_rt_dfS")
-        _rt_navs = st.session_state.get("_rt_navs",[])
+        _rt_navs = st.session_state.get("_rt_navs", [])
         _rt_vx   = st.session_state.get("_rt_vx")
         _rt_wret = st.session_state.get("_rt_wret")
-        _rt_src  = st.session_state.get("_rt_src","—")
+        _rt_src  = st.session_state.get("_rt_src", "—")
+        _rt_nc   = st.session_state.get("_rt_nifty_close")
+        _rt_nd   = st.session_state.get("_rt_nifty_dma200")
+        _rt_rk_h = st.session_state.get("_rt_rank_history", [])
+        _prev_rs = st.session_state.get("_regime_prev_state")
 
         if _rt_dfS is not None:
-            _rt_rg   = get_regime_score(_rt_dfS, equity_nav_series=_rt_navs or None)
-            _rt_dts2 = get_next_rebalance_dates()
-            _rt_sc   = _rt_rg["score"];  _rt_lbl  = _rt_rg["label"]
-            _rt_eq   = _rt_rg["equity"]; _rt_gd   = _rt_rg["gold"]; _rt_cs = _rt_rg["cash"]
-            _rt_sigs = _rt_rg["signals"]
-            _rt_brd  = _rt_rg["breadth_pct"]; _rt_roc = _rt_rg["median_roc3m"]
-            _rt_nc   = _rt_rg.get("nav_current"); _rt_nd  = _rt_rg.get("nav_dma200")
-            _rt_fc,_rt_bc,_rt_em = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
-                                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}[_rt_sc]
-            _rt_nf   = _rt_dts2["next_friday"]; _rt_nr = _rt_dts2["next_monthly_rb"]
-            _rt_df   = (_rt_nf - _dt_rt.date.today()).days
-            _rt_ntxt = f"NAV {_rt_nc:.2f} vs DMA {_rt_nd:.2f}" if _rt_nc and _rt_nd else ("Refresh karo" if not _rt_navs else "NAV < 200DMA")
-            _rt_s1ok = _rt_sigs.get("s1_equity_curve",1); _rt_s2ok = _rt_sigs.get("s2_breadth",0); _rt_s3ok = _rt_sigs.get("s3_momentum",0)
-            _rt_s1c="#00d09e" if _rt_s1ok else "#f87171"; _rt_s1bg="#0a2a1f" if _rt_s1ok else "#2d0909"
-            _rt_s2c="#00d09e" if _rt_s2ok else "#f87171"; _rt_s2bg="#0a2a1f" if _rt_s2ok else "#2d0909"
-            _rt_s3c="#00d09e" if _rt_s3ok else "#f87171"; _rt_s3bg="#0a2a1f" if _rt_s3ok else "#2d0909"
-            # Banner
-            _rt_vix_div = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:6px 12px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>{round(_rt_vx,1)}</b>' + (' 🔴' if _rt_vx and _rt_vx>20 else '') + '</div>') if _rt_vx else ''
-            st.markdown(f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
-                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:6px 12px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>'
-                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 12px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>'
-                f'{_rt_vix_div}'
-                f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>'
-                '</div>',
-                unsafe_allow_html=True)
-            # ── MMI-style gauge + signal cards ────────────────
-            _rt_date_s = _dt_rt.date.today().strftime('%d %b %Y')
-            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s)
-            _rt_sig_html = (
-                f'<style>body{{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}}'
-                f'.sigs{{display:flex;flex-direction:column;gap:10px;}}'
-                f'.sig{{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}}'
-                f'.si{{font-size:24px;flex-shrink:0;}}'
-                f'.sb{{flex:1;}}'
-                f'.st{{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}}'
-                f'.sc{{font-size:12px;margin-bottom:4px;}}'
-                f'.sv{{font-size:15px;font-weight:800;}}'
-                f'.sbg{{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}}'
-                f'</style>'
-                f'<div class="sigs">'
-                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s1ok else "#fef2f2"};border-color:{"#86efac" if _rt_s1ok else "#fca5a5"}">'
-                f'<div class="si">{"✅" if _rt_s1ok else "❌"}</div>'
-                f'<div class="sb"><div class="st" style="color:{_rt_s1c}">S1 — Equity Curve Trend</div>'
-                f'<div class="sc" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
-                f'<div class="sv" style="color:{_rt_s1c}">{_rt_ntxt}</div></div>'
-                f'<div class="sbg" style="background:{_rt_s1c};color:white">{"PASS" if _rt_s1ok else "FAIL"}</div>'
-                f'</div>'
-                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s2ok else "#fef2f2"};border-color:{"#86efac" if _rt_s2ok else "#fca5a5"}">'
-                f'<div class="si">{"✅" if _rt_s2ok else "❌"}</div>'
-                f'<div class="sb"><div class="st" style="color:{_rt_s2c}">S2 — Market Breadth</div>'
-                f'<div class="sc" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
-                f'<div class="sv" style="color:{_rt_s2c}">{_rt_brd}% above DMA</div></div>'
-                f'<div class="sbg" style="background:{_rt_s2c};color:white">{"PASS" if _rt_s2ok else "FAIL"}</div>'
-                f'</div>'
-                f'<div class="sig" style="background:{"#e8fdf2" if _rt_s3ok else "#fef2f2"};border-color:{"#86efac" if _rt_s3ok else "#fca5a5"}">'
-                f'<div class="si">{"✅" if _rt_s3ok else "❌"}</div>'
-                f'<div class="sb"><div class="st" style="color:{_rt_s3c}">S3 — Universe Momentum</div>'
-                f'<div class="sc" style="color:#374151">Median 3M ROC &gt; 0%</div>'
-                f'<div class="sv" style="color:{_rt_s3c}">{_rt_roc:+.1f}% median 3M return</div></div>'
-                f'<div class="sbg" style="background:{_rt_s3c};color:white">{"PASS" if _rt_s3ok else "FAIL"}</div>'
-                f'</div>'
-                f'</div>'
+
+            # ── Compute full regime result ──────────────────────────────────────
+            _rs = get_full_regime_result(
+                dfStats=_rt_dfS,
+                equity_nav_series=_rt_navs or None,
+                vix_value=_rt_vx,
+                nifty_close=_rt_nc,
+                nifty_dma200=_rt_nd,
+                rank_history=_rt_rk_h or None,
+                fii_score=0.5,
+                prev_state=_prev_rs,
+                total_capital=0.0,
+                dd_pct=0.0,
             )
-            _g_col, _s_col = st.columns([1, 1.6])
+            st.session_state["_regime_state"] = _rs
+
+            _rt_dts2   = get_next_rebalance_dates()
+            _rt_date_s = _dt_rt.date.today().strftime("%d %b %Y")
+            _rt_sc     = _rs.effective_band
+            _rt_lbl    = _rs.label()
+            _rt_fc, _rt_em = {
+                3: ("#00d09e", "🟢"), 2: ("#38bdf8", "🔵"),
+                1: ("#f59e0b", "🟡"), 0: ("#f87171", "🔴"),
+            }[_rt_sc]
+            _rt_nf = _rt_dts2["next_friday"]
+            _rt_nr = _rt_dts2["next_monthly_rb"]
+            _rt_df = (_rt_nf - _dt_rt.date.today()).days
+
+            # Status + date banner
+            _st_c  = {"STABLE":"#15803d","PENDING":"#d97706","CONFIRMED":"#1d4ed8",
+                      "DD_OVERRIDE":"#dc2626"}.get(_rs.status, "#6b7280")
+            _st_bg = {"STABLE":"#dcfce7","PENDING":"#fef3c7","CONFIRMED":"#dbeafe",
+                      "DD_OVERRIDE":"#fee2e2"}.get(_rs.status, "#f1f5f9")
+            _vix_d = ""
+            if _rt_vx:
+                _vc0 = "#dc2626" if _rt_vx > 20 else "#15803d"
+                _vix_d = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;'
+                           f'border-radius:8px;padding:6px 12px;font-size:12px;'
+                           f'color:{_vc0};font-family:DM Mono,monospace;">'
+                           f'VIX: <b>{round(_rt_vx,1)}</b>{"  🔴" if _rt_vx>20 else ""}</div>')
+
+            st.markdown(
+                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
+                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:6px 12px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>' +
+                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 12px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>' +
+                f'<div style="background:{_st_bg};border:1px solid;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;color:{_st_c};font-family:DM Mono,monospace;">⚡ {_rs.status} ({_rs.confirmation_count}/2)</div>' +
+                _vix_d +
+                f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>' +
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+            if _rs.dd_override_active:
+                st.error("🚨 DD OVERRIDE — Portfolio DD ≥ 20%. Bear allocation forced (25/30/45). All signals bypassed.")
+
+            # ── Gauge (reuses existing _build_mmi_gauge) ───────────────────────
+            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s)
+
+            # ── Signal card helper ─────────────────────────────────────────────
+            def _mk_sig(icon, title, sub, val_txt, score_val, weight, ok, partial=False):
+                c  = "#f59e0b" if partial else ("#00d09e" if ok else "#f87171")
+                bg = "#fef3c7" if partial else ("#e8fdf2" if ok else "#fef2f2")
+                bd = "#fcd34d" if partial else ("#86efac" if ok else "#fca5a5")
+                return (f'<div class="sig" style="background:{bg};border-color:{bd}">' +
+                        f'<div class="si">{icon}</div>' +
+                        f'<div class="sb"><div class="st" style="color:{c}">{title}</div>' +
+                        f'<div class="sc" style="color:#374151">{sub}</div>' +
+                        f'<div class="sv" style="color:{c}">{val_txt}</div></div>' +
+                        f'<div class="sbg" style="background:{c};color:white">{score_val:.2g}/{weight}pt</div>' +
+                        '</div>')
+
+            _sigs  = _rs.signals
+            _smeta = _rs.signal_meta
+            _s1v   = _sigs.get("s1_nav",0)
+            _s2v   = _sigs.get("s2_breadth",0)
+            _s3v   = _sigs.get("s3_roc",0)
+            _s4v   = _sigs.get("s4_vix",0)
+            _s5v   = _sigs.get("s5_nifty",0)
+            _s6v   = _sigs.get("s6_ad",0)
+            _s7v   = _sigs.get("s7_rank",0)
+
+            _nav_txt = (f'NAV {_smeta["nav_current"]:.2f} vs DMA {_smeta["nav_dma200"]:.2f} ({_smeta.get("gap_pct",0):+.1f}%)' if _smeta.get("nav_current") else "NAV data loading...")
+            _nif_txt = (f'Nifty {_rt_nc:,.0f} vs DMA {_rt_nd:,.0f} (ratio {_smeta.get("nifty_ratio",1):.3f})' if _rt_nc else "Nifty: loading...")
+
+            _rt_sig_html = (
+                '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}' +
+                '.sigs{display:flex;flex-direction:column;gap:8px;}' +
+                '.sig{border-radius:10px;padding:11px 14px;border:1.5px solid;display:flex;align-items:center;gap:12px;}' +
+                '.si{font-size:20px;flex-shrink:0;}.sb{flex:1;}' +
+                '.st{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px;}' +
+                '.sc{font-size:11px;margin-bottom:3px;}.sv{font-size:13px;font-weight:800;}' +
+                '.sbg{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;flex-shrink:0;}' +
+                '</style><div class="sigs">' +
+                _mk_sig("✅" if _s1v>0 else "❌","S1 — Equity Curve Trend","NAV > 200-Day Moving Average",_nav_txt,_s1v,1.5,_s1v>0) +
+                _mk_sig("✅" if _s2v>0 else "❌","S2 — Market Breadth","% Stocks > 200DMA > 50%",f'{_smeta.get("breadth_pct",0):.1f}% above DMA',_s2v,1.0,_s2v>0) +
+                _mk_sig("✅" if _s3v>0 else "❌","S3 — Universe Momentum","Median 3M ROC > 0%",f'{_smeta.get("median_roc3m",0):+.1f}% median 3M ROC',_s3v,1.0,_s3v>0) +
+                _mk_sig("⚠️" if 0<_s4v<1.5 else ("✅" if _s4v>0 else "❌"),"S4 — India VIX ★","VIX ≤ 20=PASS | 20-25=Partial | >25=FAIL",f'VIX {round(_rt_vx,1) if _rt_vx else "loading..."}',_s4v,1.5,_s4v>0,0<_s4v<1.5) +
+                _mk_sig("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
+                _mk_sig("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (from 1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
+                _mk_sig("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% vs 4 weeks ago",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
+                '</div>'
+            )
+
+            _g_col, _s_col = st.columns([1, 1.8])
             with _g_col:
-                _stc_rt.html(_rt_gauge_html, height=380)
+                _stc_rt.html(_rt_gauge_html, height=360)
+                _scbg = {3:"#dcfce7",2:"#dbeafe",1:"#fef3c7",0:"#fee2e2"}[_rt_sc]
+                _scfc = {3:"#15803d",2:"#1d4ed8",1:"#d97706",0:"#dc2626"}[_rt_sc]
+                st.markdown(
+                    f'<div style="background:{_scbg};border-radius:8px;padding:10px;text-align:center;margin-top:4px;">' +
+                    f'<div style="font-size:11px;color:{_scfc};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
+                    f'<div style="font-size:36px;font-weight:900;color:{_scfc};line-height:1.1;">{_rs.raw_score:.2f}</div>' +
+                    f'<div style="font-size:11px;color:{_scfc};">/ 8.5 pts · {_rt_lbl}</div>' +
+                    '</div>', unsafe_allow_html=True)
             with _s_col:
-                _stc_rt.html(_rt_sig_html, height=380)
+                _stc_rt.html(_rt_sig_html, height=520)
+
             st.markdown("---")
-            _rta1,_rta2,_rta3 = st.columns(3)
-            for _rtcol,(lbl,pct,fc,bg) in zip([_rta1,_rta2,_rta3],[("📈 Equity",_rt_eq,"#1d4ed8","#dbeafe"),("🥇 GOLDBEES",_rt_gd,"#b45309","#fef3c7"),("💵 Liquid",_rt_cs,"#374151","#f1f5f9")]):
+
+            # ── QFSM Allocation tiles ──────────────────────────────────────────
+            _qc  = "#7c3aed" if _rs.qfsm_mode=="BLEND" else "#15803d"
+            _qbg = "#ede9fe" if _rs.qfsm_mode=="BLEND" else "#dcfce7"
+            _qlbl = (f"⚛ QFSM BLEND — Score {_rs.raw_score:.2f} in transition zone"
+                     if _rs.qfsm_mode=="BLEND" else f"✅ Standard Band {_rs.effective_band} allocation")
+            st.markdown(f'<div style="background:{_qbg};border:1px solid {_qc};border-radius:6px;padding:6px 14px;font-size:12px;color:{_qc};font-weight:700;margin-bottom:8px;">{_qlbl}</div>', unsafe_allow_html=True)
+
+            _rta1, _rta2, _rta3 = st.columns(3)
+            for _rtcol, (lbl, pct, fc, bg) in zip(
+                [_rta1, _rta2, _rta3],
+                [("📈 Equity",_rs.equity,"#1d4ed8","#dbeafe"),
+                 ("🥇 GOLDBEES",_rs.gold,"#b45309","#fef3c7"),
+                 ("💵 Liquid",_rs.cash,"#374151","#f1f5f9")]
+            ):
                 with _rtcol:
                     st.markdown(
-                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;'
-                        f'padding:14px;text-align:center;">'
-                        f'<div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div>'
-                        f'<div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>'
-                        f'</div>', unsafe_allow_html=True)
+                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;padding:14px;text-align:center;">' +
+                        f'<div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div>' +
+                        f'<div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.1f}%</div>' +
+                        '</div>', unsafe_allow_html=True)
 
-            # ── VIX Overlay display in Regime Tab ────────────────────
-            if _rt_vx is not None:
-                _rt_vix_ovl = 0
-                if _rt_vx > 30: _rt_vix_ovl = 5
-                elif _rt_vx > 20: _rt_vix_ovl = 3
-                if _rt_vix_ovl > 0:
-                    _rt_eff_gd  = min(_rt_gd*100 + _rt_vix_ovl, 30)
-                    _rt_act_ovl = _rt_eff_gd - _rt_gd*100
-                    _rt_eff_cs  = _rt_cs*100 - _rt_act_ovl
-                    _rt_vc = "#dc2626" if _rt_vx > 30 else "#d97706"
-                    st.markdown(f"""<div style="background:{'#fef2f2' if _rt_vx>30 else '#fef3c7'};
-                        border:1.5px solid {_rt_vc};border-left:4px solid {_rt_vc};
-                        border-radius:8px;padding:10px 14px;font-size:12px;color:{_rt_vc};margin-top:8px;">
-                      ⚡ <b>VIX Overlay Active (VIX {_rt_vx:.1f}):</b>
-                      Gold {_rt_gd*100:.0f}% → <b>{_rt_eff_gd:.0f}%</b> (+{_rt_act_ovl:.0f}pp) |
-                      Liquid {_rt_cs*100:.0f}% → <b>{_rt_eff_cs:.0f}%</b> |
-                      Equity UNTOUCHED | Source: Liquid → Gold
-                    </div>""", unsafe_allow_html=True)
-                else:
-                    st.caption(f"VIX {_rt_vx:.1f} ≤ 20 — No overlay. Base allocation applies.")
-            st.caption(f"Score {_rt_sc}/3 · {_rt_lbl} · {_rt_src} cache · {_rt_date_s} | Alloc: {_rt_eq*100:.0f}/{_rt_gd*100:.0f}/{_rt_cs*100:.0f} (Eq/Gold/Cash)")
+            # ── VIX overlay display ────────────────────────────────────────────
+            if _rt_vx is not None and _rs.vix_overlay_pct > 0:
+                _vc2 = "#dc2626" if _rt_vx > 30 else "#d97706"
+                st.markdown(
+                    f'<div style="background:{"#fef2f2" if _rt_vx>30 else "#fef3c7"};border:1.5px solid {_vc2};border-left:4px solid {_vc2};border-radius:8px;padding:10px 14px;font-size:12px;color:{_vc2};margin-top:8px;">' +
+                    f'⚡ <b>VIX Overlay Active (VIX {_rt_vx:.1f}):</b> +{_rs.vix_overlay_pct:.1f}pp Gold (Liquid → Gold) | Equity UNTOUCHED' +
+                    '</div>', unsafe_allow_html=True)
+            elif _rt_vx is not None:
+                st.caption(f"VIX {_rt_vx:.1f} ≤ 20 — No overlay. Base allocation applies.")
 
-# ════════════════════════════════════════════════════════════════════
+            # ── Score history ──────────────────────────────────────────────────
+            if _rs.history:
+                with st.expander("📅 Score History (last 8 weeks)", expanded=False):
+                    _hdf = pd.DataFrame(_rs.history)
+                    _hdf.columns = [c.replace("_"," ").title() for c in _hdf.columns]
+                    st.dataframe(_hdf, use_container_width=True, hide_index=True)
+
+            st.caption(
+                f"Score {_rs.raw_score:.2f}/8.5 · {_rt_lbl} · Conf: {_rs.status} · "
+                f"QFSM: {_rs.qfsm_mode} · {_rt_src} · {_rt_date_s} | "
+                f"Alloc: {_rs.equity*100:.1f}/{_rs.gold*100:.1f}/{_rs.cash*100:.1f} (Eq/Gold/Cash)"
+            )
+
+            # ── Last Rebalance Memory display ──────────────────────────────────
+            _rb_mem = st.session_state.get("_rb_memory", {})
+            if _rb_mem:
+                with st.expander("💾 Last Rebalance Memory", expanded=False):
+                    _rb_alloc = _rb_mem.get("allocation", {})
+                    _rb_txt = (
+                        f"**Date:** {_rb_mem.get('last_rebalance_date','—')} | "
+                        f"**Band:** {_rb_mem.get('regime_band','—')} | "
+                        f"**Score:** {_rb_mem.get('weighted_score','—')} | "
+                        f"**QFSM:** {_rb_mem.get('qfsm_mode','—')}\n\n"
+                        f"**Alloc:** Eq {_rb_alloc.get('equity_pct','—')}% / "
+                        f"Gold {_rb_alloc.get('gold_pct','—')}% / "
+                        f"Cash {_rb_alloc.get('cash_pct','—')}%\n\n"
+                        f"**Notes:** {_rb_mem.get('notes','—')}"
+                    )
+                    st.markdown(_rb_txt)
+
+
 # MULTI-ASSET SIMULATOR TAB — full HTML widget (matches rebalancepanel)
 # ════════════════════════════════════════════════════════════════════
 with _tab_sim:

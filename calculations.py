@@ -461,3 +461,293 @@ def get_weekly_deployment_plan(prev_score, curr_score, total_pf,
         'accelerate_msg': accel_msg,
         'vix_curr': vix_curr, 'weekly_nav_ret': weekly_nav_ret,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 1 — v2026.07 + v2026.08 REGIME ENGINE
+# ══════════════════════════════════════════════════════════════════════════════
+# get_regime_score() (3-signal, v2026.06) is KEPT ABOVE for backward compat.
+# New: get_full_regime_result() — 7-signal weighted (0–8.5 pts), QFSM, confirmation.
+
+import math as _math
+from dataclasses import dataclass, field
+from typing import Optional
+
+# ── Constants ────────────────────────────────────────────────────────────────
+_BAND_ALLOC = {
+    3: (0.80, 0.15, 0.05),
+    2: (0.65, 0.20, 0.15),
+    1: (0.45, 0.25, 0.30),
+    0: (0.25, 0.30, 0.45),
+}
+_BAND_LABELS = {3: 'Strong Bull', 2: 'Mild Bull', 1: 'Neutral', 0: 'Bear'}
+_GOLD_FLOOR  = 0.15
+_GOLD_CEIL   = 0.30
+_MAX_SCORE   = 8.5
+_QFSM_TZ     = 0.5
+_QFSM_BOUNDARIES = [(6.5, 3, 2), (4.5, 2, 1), (2.5, 1, 0)]
+_CONFIRM_WEEKS   = 2
+_MAX_SHIFT       = 1
+
+
+# ── RegimeState dataclass ────────────────────────────────────────────────────
+@dataclass
+class RegimeState:
+    """Portable regime state — passed via st.session_state between runs."""
+    raw_score:           float = 5.0
+    raw_band:            int   = 2
+    confirmed_band:      int   = 2
+    confirmation_count:  int   = 0
+    status:              str   = 'STABLE'
+    effective_band:      int   = 2
+    prev_effective_band: int   = 2
+    qfsm_mode:           str   = 'STANDARD'
+    equity:              float = 0.65
+    gold:                float = 0.20
+    cash:                float = 0.15
+    vix_overlay_pct:     float = 0.0
+    signals:             dict  = field(default_factory=dict)
+    signal_meta:         dict  = field(default_factory=dict)
+    dd_override_active:  bool  = False
+    dd_pct:              float = 0.0
+    total_capital:       float = 0.0
+    eq_val:              float = 0.0
+    gld_val:             float = 0.0
+    csh_val:             float = 0.0
+    history:             list  = field(default_factory=list)
+
+    def label(self) -> str:
+        return _BAND_LABELS.get(self.effective_band, 'Mild Bull')
+
+    def to_dict(self) -> dict:
+        import dataclasses
+        return dataclasses.asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'RegimeState':
+        valid = {f.name for f in cls.__dataclass_fields__.values()}
+        return cls(**{k: v for k, v in d.items() if k in valid})
+
+
+# ── Signal helpers ───────────────────────────────────────────────────────────
+def _s1_nav(equity_nav_series) -> tuple:
+    if equity_nav_series is None or len(equity_nav_series) < 5:
+        return 1.5, {'nav_current': None, 'nav_dma200': None, 'gap_pct': None}
+    nav_s      = pd.Series(equity_nav_series).dropna()
+    nav_cur    = round(float(nav_s.iloc[-1]), 4)
+    nav_dma    = round(float(nav_s.rolling(min(200, len(nav_s))).mean().iloc[-1]), 4)
+    gap_pct    = (nav_cur / nav_dma - 1) * 100 if nav_dma > 0 else 0
+    score      = 1.5 if gap_pct >= 2 else (0.75 if gap_pct >= 0 else 0.0)
+    return score, {'nav_current': nav_cur, 'nav_dma200': nav_dma, 'gap_pct': round(gap_pct, 2)}
+
+
+def _s2_s3_s6(dfStats) -> tuple:
+    valid   = dfStats[dfStats['dma200d'] > 0]
+    total   = len(valid)
+    if total == 0:
+        return 0.5, 0.5, 0.5, {}
+    above       = (valid['Close'] > valid['dma200d']).sum()
+    breadth_pct = round(above / total * 100, 1)
+    s2          = 1.0 if breadth_pct > 50 else 0.0
+    med_roc3m   = round(float(dfStats['roc3M'].median()), 2)
+    s3          = 1.0 if med_roc3m > 0 else 0.0
+    if 'roc1M' in dfStats.columns:
+        adv     = (valid['roc1M'] > 0).sum()
+        dec     = (valid['roc1M'] < 0).sum()
+        ad_tot  = adv + dec
+        ad_ratio= round(adv / ad_tot, 3) if ad_tot > 0 else 0.5
+        s6      = 1.0 if ad_ratio > 0.45 else 0.0
+    else:
+        ad_ratio, s6 = 0.5, 0.5
+    return s2, s3, s6, {
+        'breadth_pct': breadth_pct, 'stocks_above_dma': int(above),
+        'total_stocks': total, 'median_roc3m': med_roc3m, 'ad_ratio': ad_ratio,
+    }
+
+
+def _s4_vix(vix_value) -> float:
+    if vix_value is None:  return 0.75
+    if vix_value <= 20:    return 1.5
+    if vix_value <= 25:    return 0.75
+    return 0.0
+
+
+def _s5_nifty(nifty_close, nifty_dma200) -> tuple:
+    if not nifty_close or not nifty_dma200 or nifty_dma200 <= 0:
+        return 0.75, 1.0
+    ratio = nifty_close / nifty_dma200
+    if ratio >= 1.10:   score = 1.5
+    elif ratio >= 1.0:  score = 0.75 + 0.75 * (ratio - 1.0) / 0.10
+    else:               score = 0.0
+    return round(min(1.5, score), 4), round(ratio, 4)
+
+
+def _s7_rank(rank_history) -> tuple:
+    if not rank_history or len(rank_history) < 2:
+        return 0.5, 65.0
+    cur  = set(rank_history[-1].get('top50', []))
+    prev = set(rank_history[-4].get('top50', []) if len(rank_history) >= 4 else rank_history[0].get('top50', []))
+    if not cur or not prev:
+        return 0.5, 65.0
+    overlap = len(cur & prev) / max(len(cur), 1) * 100
+    return (0.5 if overlap > 60 else 0.0), round(overlap, 1)
+
+
+# ── QFSM allocation ──────────────────────────────────────────────────────────
+def get_qfsm_allocation(weighted_score: float, total_capital: float = 0) -> dict:
+    """QFSM transition-zone blending. Use in Regime tab and for monthly RB."""
+    score = max(0.0, min(_MAX_SCORE, weighted_score))
+    for boundary, upper, lower in _QFSM_BOUNDARIES:
+        lo, hi = boundary - _QFSM_TZ, boundary + _QFSM_TZ
+        if lo <= score < hi:
+            w   = max(0.0, min(1.0, (score - lo) / (2 * _QFSM_TZ)))
+            ue, ug, uc = _BAND_ALLOC[upper]
+            le, lg, lc = _BAND_ALLOC[lower]
+            eq  = ue * w + le * (1 - w)
+            gld = max(_GOLD_FLOOR, min(_GOLD_CEIL, ug * w + lg * (1 - w)))
+            csh = max(0.0, 1.0 - eq - gld)
+            return {
+                'equity': round(eq, 4), 'gold': round(gld, 4), 'cash': round(csh, 4),
+                'qfsm_mode': 'BLEND', 'upper_band': upper, 'lower_band': lower,
+                'blend_weight': round(w, 3),
+                'label': f"Blend {_BAND_LABELS[upper]}/{_BAND_LABELS[lower]}",
+                'eq_val': round(total_capital * eq), 'gld_val': round(total_capital * gld),
+                'csh_val': round(total_capital * csh),
+            }
+    band = 3 if score >= 6.5 else (2 if score >= 4.5 else (1 if score >= 2.5 else 0))
+    eq, gld, csh = _BAND_ALLOC[band]
+    return {
+        'equity': eq, 'gold': gld, 'cash': csh,
+        'qfsm_mode': 'STANDARD', 'band': band, 'label': _BAND_LABELS[band],
+        'eq_val': round(total_capital * eq), 'gld_val': round(total_capital * gld),
+        'csh_val': round(total_capital * csh),
+    }
+
+
+def score_to_band(weighted_score: float) -> int:
+    if weighted_score >= 6.5: return 3
+    if weighted_score >= 4.5: return 2
+    if weighted_score >= 2.5: return 1
+    return 0
+
+
+# ── Confirmation + max-shift rules ───────────────────────────────────────────
+def check_regime_confirmation(new_band, prev_confirmed, count):
+    """2-consecutive-week confirmation. Returns (confirmed_band, count, status)."""
+    if new_band == prev_confirmed:
+        return prev_confirmed, 0, 'STABLE'
+    new_count = count + 1
+    if new_count >= _CONFIRM_WEEKS:
+        return new_band, 0, 'CONFIRMED'
+    return prev_confirmed, new_count, 'PENDING'
+
+
+def apply_max_shift_rule(confirmed_band, prev_effective, dd_override=False):
+    """Max ±1 band shift per monthly rebalance. DD override bypasses."""
+    if dd_override:
+        return confirmed_band
+    return max(prev_effective - _MAX_SHIFT, min(prev_effective + _MAX_SHIFT, confirmed_band))
+
+
+def apply_vix_overlay(base_alloc: dict, vix_value) -> dict:
+    """Add gold overlay funded from cash. Equity never touched."""
+    extra = 5.0 if (vix_value and vix_value > 30) else (3.0 if (vix_value and vix_value > 20) else 0.0)
+    if extra == 0:
+        return {**base_alloc, 'vix_overlay_pct': 0}
+    new_gold = min(base_alloc['gold'] + extra / 100, _GOLD_CEIL)
+    actual   = new_gold - base_alloc['gold']
+    new_cash = max(0.0, base_alloc['cash'] - actual)
+    return {**base_alloc, 'gold': round(new_gold, 4), 'cash': round(new_cash, 4),
+            'vix_overlay_pct': round(actual * 100, 1)}
+
+
+# ── Master function ──────────────────────────────────────────────────────────
+def get_full_regime_result(
+    dfStats,
+    equity_nav_series=None,
+    vix_value=None,
+    nifty_close=None,
+    nifty_dma200=None,
+    rank_history=None,
+    fii_score: float = 0.5,
+    prev_state=None,
+    total_capital: float = 0.0,
+    dd_pct: float = 0.0,
+) -> 'RegimeState':
+    """
+    Full v2026.08 regime pipeline:
+    Signals → weighted score → confirmation → max-shift → QFSM → VIX overlay.
+    Pass prev_state=st.session_state['_regime_prev_state'] for confirmation tracking.
+    """
+    import datetime as _dtm
+    if prev_state is None:
+        prev_state = RegimeState()
+
+    state              = RegimeState()
+    state.total_capital = total_capital
+    state.dd_pct       = dd_pct
+
+    # DD override
+    if dd_pct <= -20.0:
+        state.dd_override_active = True
+        state.raw_score = state.confirmed_band = state.effective_band = 0
+        state.status = 'DD_OVERRIDE'
+        a = get_qfsm_allocation(0.0, total_capital)
+        state.equity, state.gold, state.cash = a['equity'], a['gold'], a['cash']
+        state.eq_val, state.gld_val, state.csh_val = a['eq_val'], a['gld_val'], a['csh_val']
+        state.signals = {'dd_override': True}
+        state.history = list(prev_state.history)
+        return state
+
+    # Compute signals
+    meta = {}
+    s1, s1m = _s1_nav(equity_nav_series);  meta.update(s1m)
+    if dfStats is not None and len(dfStats) > 0:
+        s2, s3, s6, bm = _s2_s3_s6(dfStats); meta.update(bm)
+    else:
+        s2 = s3 = s6 = 0.5
+    s4        = _s4_vix(vix_value);        meta['vix'] = vix_value
+    s5, ratio = _s5_nifty(nifty_close, nifty_dma200); meta['nifty_ratio'] = ratio
+    s7, ovlap = _s7_rank(rank_history);    meta['rank_overlap_pct'] = ovlap
+    sfii      = float(fii_score)
+
+    signals = {'s1_nav': s1, 's2_breadth': s2, 's3_roc': s3, 's4_vix': s4,
+               's5_nifty': s5, 's6_ad': s6, 's7_rank': s7, 's_fii': sfii}
+    raw_score = round(min(sum(signals.values()), _MAX_SCORE), 3)
+    raw_band  = score_to_band(raw_score)
+
+    state.raw_score = raw_score;  state.raw_band = raw_band
+    state.signals   = signals;    state.signal_meta = meta
+
+    # Confirmation
+    conf_band, conf_cnt, status = check_regime_confirmation(
+        raw_band, prev_state.confirmed_band, prev_state.confirmation_count)
+    state.confirmed_band     = conf_band
+    state.confirmation_count = conf_cnt
+    state.status             = status
+
+    # Max-shift
+    eff_band = apply_max_shift_rule(conf_band, prev_state.effective_band)
+    state.effective_band      = eff_band
+    state.prev_effective_band = prev_state.effective_band
+
+    # QFSM allocation
+    alloc_score = raw_score if eff_band == raw_band else {3:7.5, 2:5.5, 1:3.5, 0:1.2}[eff_band]
+    a = get_qfsm_allocation(alloc_score, total_capital)
+    state.qfsm_mode = a['qfsm_mode']
+    state.equity    = a['equity'];  state.gold    = a['gold'];    state.cash    = a['cash']
+    state.eq_val    = a['eq_val'];  state.gld_val = a['gld_val']; state.csh_val = a['csh_val']
+
+    # VIX overlay
+    ov = apply_vix_overlay({'equity': state.equity, 'gold': state.gold, 'cash': state.cash}, vix_value)
+    state.gold = ov['gold'];  state.cash = ov['cash'];  state.vix_overlay_pct = ov.get('vix_overlay_pct', 0)
+    if total_capital > 0:
+        state.gld_val = round(total_capital * state.gold)
+        state.csh_val = round(total_capital * state.cash)
+
+    # History
+    hist = list(prev_state.history)
+    hist.append({'date': _dtm.date.today().isoformat(), 'raw_score': raw_score,
+                 'confirmed_band': conf_band, 'status': status})
+    state.history = hist[-8:]
+    return state
