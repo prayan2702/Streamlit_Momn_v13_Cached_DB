@@ -1475,7 +1475,7 @@ with st.sidebar:
         _rs_sb = st.session_state.get("_regime_state")
         if _rs_sb is not None:
             _rb_notes_inp = st.text_area("Notes (optional):", key="rb_notes_sb", height=100)
-            _rb_pin_inp   = st.text_input("🔑 PIN", type="password", max_chars=4, key="rb_pin_sb")
+            _rb_pin_inp   = st.text_input("🔑 PIN", type="password", max_chars=6, key="rb_pin_sb")
             if st.button("💾 Save Rebalance Memory", use_container_width=True, key="rb_save_sb"):
                 if not _verify_pin(_rb_pin_inp):
                     if not _pin_secret_exists():
@@ -4310,124 +4310,170 @@ with _tab_screener:
                 _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
                 st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh button se update karo")
 
-            # ── Regime score ──────────────────────────────────────────────
-            _dfS_rg = st.session_state.get("dfStats")
-            if _dfS_rg is not None:
-                _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
-            else:
-                _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
-                       "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
-                       "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
+            # ── Regime score (7-signal QFSM v2026.08) ────────────────────
+            from calculations import get_full_regime_result, RegimeState
+            _dfS_rg   = st.session_state.get("dfStats")
+            _prev_rs  = st.session_state.get("_regime_prev_state")
+            _rt_nc_rg = st.session_state.get("_rt_nifty_close")
+            _rt_nd_rg = st.session_state.get("_rt_nifty_dma200")
+            _rt_rk_rg = st.session_state.get("_rt_rank_history", [])
 
-            _sc   = _rg["score"];  _lbl  = _rg["label"]
-            _eq   = _rg["equity"]; _gd   = _rg["gold"];  _cs   = _rg["cash"]
-            _sigs = _rg["signals"]
-            _brd  = _rg["breadth_pct"]; _roc3 = _rg["median_roc3m"]
-            _nav_c= _rg.get("nav_current"); _nav_d= _rg.get("nav_dma200")
+            _rs_rg = get_full_regime_result(
+                dfStats=_dfS_rg,
+                equity_nav_series=_nav_series or None,
+                vix_value=_vix_curr,
+                nifty_close=_rt_nc_rg,
+                nifty_dma200=_rt_nd_rg,
+                rank_history=_rt_rk_rg or None,
+                fii_score=0.5,
+                prev_state=_prev_rs,
+                total_capital=0.0,
+                dd_pct=0.0,
+            )
+            st.session_state["_regime_state"] = _rs_rg
 
-            _COL  = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
-                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}
-            _fc,_bc,_em = _COL[_sc]
+            _sc   = _rs_rg.effective_band
+            _lbl  = _rs_rg.label()
+            _eq   = _rs_rg.equity
+            _gd   = _rs_rg.gold
+            _cs   = _rs_rg.cash
+            _sigs = _rs_rg.signals
+            _smeta= _rs_rg.signal_meta
 
-            # ── Next dates banner ─────────────────────────────────────────
-            _dates_rg    = get_next_rebalance_dates()
-            _nxt_fri     = _dates_rg["next_friday"]
-            _nxt_rb      = _dates_rg["next_monthly_rb"]
-            _days_fri    = (_nxt_fri - _dt_regime.date.today()).days
+            _fc,_em = {3:("#00d09e","🟢"),2:("#38bdf8","🔵"),
+                       1:("#f59e0b","🟡"),0:("#f87171","🔴")}[_sc]
 
-            st.markdown(f"""
-            <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
-              <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;
-                          padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:'DM Mono',monospace;">
-                📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
-                <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
-              </div>
-              <div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
-                          padding:7px 14px;font-size:12px;color:#15803d;font-family:'DM Mono',monospace;">
-                📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
-              </div>
-              {('<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 14px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>' + str(round(_vix_curr,1)) + ('</b> 🔴' if _vix_curr>20 else '</b>') + '</div>') if _vix_curr else '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: N/A</div>'}
-            </div>
-            """, unsafe_allow_html=True)
+            # ── Next dates + status banner ────────────────────────────────
+            _dates_rg = get_next_rebalance_dates()
+            _nxt_fri  = _dates_rg["next_friday"]
+            _nxt_rb   = _dates_rg["next_monthly_rb"]
+            _days_fri = (_nxt_fri - _dt_regime.date.today()).days
 
-            # ── Gauge + Signals ───────────────────────────────────────────
-            _s1ok  = _sigs.get("s1_equity_curve", 1)
-            _s2ok  = _sigs.get("s2_breadth", 0)
-            _s3ok  = _sigs.get("s3_momentum", 0)
-            _s1c   = "#16a34a" if _s1ok else "#dc2626"
-            _s2c   = "#16a34a" if _s2ok else "#dc2626"
-            _s3c   = "#16a34a" if _s3ok else "#dc2626"
-            _nav_txt = (f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d
-                        else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA"))
+            _st_c  = {"STABLE":"#15803d","PENDING":"#d97706","CONFIRMED":"#1d4ed8",
+                      "DD_OVERRIDE":"#dc2626"}.get(_rs_rg.status,"#6b7280")
+            _st_bg = {"STABLE":"#dcfce7","PENDING":"#fef3c7","CONFIRMED":"#dbeafe",
+                      "DD_OVERRIDE":"#fee2e2"}.get(_rs_rg.status,"#f1f5f9")
+
+            _vix_div_rg = ""
+            if _vix_curr:
+                _vc_rg = "#dc2626" if _vix_curr > 20 else "#15803d"
+                _vix_div_rg = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;'
+                               f'padding:7px 14px;font-size:12px;color:{_vc_rg};font-family:DM Mono,monospace;">'
+                               f'VIX: <b>{round(_vix_curr,1)}</b>{"  🔴" if _vix_curr>20 else ""}</div>')
+
+            st.markdown(
+                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday Check:</b> {_nxt_fri.strftime("%d %b %Y")} ({_days_fri}d)</div>'
+                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:7px 14px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_nxt_rb.strftime("%d %b %Y")}</div>'
+                f'<div style="background:{_st_bg};border:1px solid;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;color:{_st_c};font-family:DM Mono,monospace;">⚡ {_rs_rg.status} ({_rs_rg.confirmation_count}/2)</div>'
+                f'{_vix_div_rg}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+            # ── 7-Signal cards ─────────────────────────────────────────────
+            _s1v = _sigs.get("s1_nav",0);     _s2v = _sigs.get("s2_breadth",0)
+            _s3v = _sigs.get("s3_roc",0);     _s4v = _sigs.get("s4_vix",0)
+            _s5v = _sigs.get("s5_nifty",0);   _s6v = _sigs.get("s6_ad",0)
+            _s7v = _sigs.get("s7_rank",0)
+
+            _nav_txt = (f'NAV {_smeta["nav_current"]:.2f} vs DMA {_smeta["nav_dma200"]:.2f} ({_smeta.get("gap_pct",0):+.1f}%)'
+                        if _smeta.get("nav_current") else "NAV data loading...")
+            _nif_txt = (f'Nifty {_rt_nc_rg:,.0f} vs DMA {_rt_nd_rg:,.0f} (ratio {_smeta.get("nifty_ratio",1):.3f})'
+                        if _rt_nc_rg else "Nifty: loading (Market Regime tab refresh karo)")
+
+            def _mk_sig_rg(icon, title, sub, val_txt, score_val, weight, ok, partial=False):
+                c  = "#f59e0b" if partial else ("#00d09e" if ok else "#f87171")
+                bg = "#fef3c7" if partial else ("#e8fdf2" if ok else "#fef2f2")
+                bd = "#fcd34d" if partial else ("#86efac" if ok else "#fca5a5")
+                return (f'<div class="sig" style="background:{bg};border-color:{bd}">' +
+                        f'<div class="si">{icon}</div>' +
+                        f'<div class="sb"><div class="st" style="color:{c}">{title}</div>' +
+                        f'<div class="sc_t" style="color:#374151">{sub}</div>' +
+                        f'<div class="sv" style="color:{c}">{val_txt}</div></div>' +
+                        f'<div class="sbg" style="background:{c};color:white">{score_val:.2g}/{weight}pt</div>' +
+                        '</div>')
+
             _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
             _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
-            _sig_html = (
-            '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}'
-            '.sigs{display:flex;flex-direction:column;gap:10px;}'
-            '.sig{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}'
-            '.si{font-size:24px;flex-shrink:0;}'
-            '.sb{flex:1;}'
-            '.st{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}'
-            '.sc_t{font-size:12px;margin-bottom:4px;}'
-            '.sv{font-size:15px;font-weight:800;}'
-            '.sbg{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}'
-            '</style>'
-            '<div class="sigs">'
-            f'<div class="sig" style="background:{"#e8fdf2" if _s1ok else "#fef2f2"};border-color:{"#86efac" if _s1ok else "#fca5a5"}">'
-            f'<div class="si">{"✅" if _s1ok else "❌"}</div>'
-            f'<div class="sb"><div class="st" style="color:{_s1c}">S1 — Equity Curve Trend</div>'
-            '<div class="sc_t" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
-            f'<div class="sv" style="color:{_s1c}">{_nav_txt}</div></div>'
-            f'<div class="sbg" style="background:{_s1c};color:white">{"PASS" if _s1ok else "FAIL"}</div>'
-            '</div>'
-            f'<div class="sig" style="background:{"#e8fdf2" if _s2ok else "#fef2f2"};border-color:{"#86efac" if _s2ok else "#fca5a5"}">'
-            f'<div class="si">{"✅" if _s2ok else "❌"}</div>'
-            f'<div class="sb"><div class="st" style="color:{_s2c}">S2 — Market Breadth</div>'
-            '<div class="sc_t" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
-            f'<div class="sv" style="color:{_s2c}">{_brd}% above DMA</div></div>'
-            f'<div class="sbg" style="background:{_s2c};color:white">{"PASS" if _s2ok else "FAIL"}</div>'
-            '</div>'
-            f'<div class="sig" style="background:{"#e8fdf2" if _s3ok else "#fef2f2"};border-color:{"#86efac" if _s3ok else "#fca5a5"}">'
-            f'<div class="si">{"✅" if _s3ok else "❌"}</div>'
-            f'<div class="sb"><div class="st" style="color:{_s3c}">S3 — Universe Momentum</div>'
-            '<div class="sc_t" style="color:#374151">Median 3M ROC &gt; 0%</div>'
-            f'<div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median 3M return</div></div>'
-            f'<div class="sbg" style="background:{_s3c};color:white">{"PASS" if _s3ok else "FAIL"}</div>'
-            '</div>'
-            '</div>'
+            _sig_html_rg = (
+                '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}' +
+                '.sigs{display:flex;flex-direction:column;gap:8px;}' +
+                '.sig{border-radius:10px;padding:11px 14px;border:1.5px solid;display:flex;align-items:center;gap:12px;}' +
+                '.si{font-size:20px;flex-shrink:0;}.sb{flex:1;}' +
+                '.st{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px;}' +
+                '.sc_t{font-size:11px;margin-bottom:3px;}.sv{font-size:13px;font-weight:800;}' +
+                '.sbg{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;flex-shrink:0;}' +
+                '</style><div class="sigs">' +
+                _mk_sig_rg("✅" if _s1v>0 else "❌","S1 — Equity Curve Trend","NAV > 200-Day Moving Average",_nav_txt,_s1v,1.5,_s1v>0) +
+                _mk_sig_rg("✅" if _s2v>0 else "❌","S2 — Market Breadth","% Stocks > 200DMA > 50%",f'{_smeta.get("breadth_pct",0):.1f}% above DMA',_s2v,1.0,_s2v>0) +
+                _mk_sig_rg("✅" if _s3v>0 else "❌","S3 — Universe Momentum","Median 3M ROC > 0%",f'{_smeta.get("median_roc3m",0):+.1f}% median 3M ROC',_s3v,1.0,_s3v>0) +
+                _mk_sig_rg("⚠️" if 0<_s4v<1.5 else ("✅" if _s4v>0 else "❌"),"S4 — India VIX ★","VIX ≤ 20=PASS | 20-25=Partial | >25=FAIL",f'VIX {round(_vix_curr,1) if _vix_curr else "N/A"}',_s4v,1.5,_s4v>0,0<_s4v<1.5) +
+                _mk_sig_rg("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
+                _mk_sig_rg("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
+                _mk_sig_rg("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% (4-week)",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
+                '</div>'
             )
+
             _g_col, _s_col = st.columns([1, 1.6])
             with _g_col:
-                _stc_regime.html(_gauge_html, height=380)
+                _stc_regime.html(_gauge_html, height=360)
+                # Score X.XX/8.5 below gauge
+                _scbg2 = {3:"#dcfce7",2:"#dbeafe",1:"#fef3c7",0:"#fee2e2"}[_sc]
+                _scfc2 = {3:"#15803d",2:"#1d4ed8",1:"#d97706",0:"#dc2626"}[_sc]
+                st.markdown(
+                    f'<div style="background:{_scbg2};border-radius:8px;padding:8px;text-align:center;margin-top:4px;">' +
+                    f'<div style="font-size:10px;color:{_scfc2};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
+                    f'<div style="font-size:32px;font-weight:900;color:{_scfc2};line-height:1.1;">{_rs_rg.raw_score:.2f}</div>' +
+                    f'<div style="font-size:10px;color:{_scfc2};">/ 8.5 pts · {_lbl}</div>' +
+                    '</div>', unsafe_allow_html=True)
+
+                # QFSM mode badge
+                _qc2  = "#7c3aed" if _rs_rg.qfsm_mode=="BLEND" else "#15803d"
+                _qbg2 = "#ede9fe" if _rs_rg.qfsm_mode=="BLEND" else "#dcfce7"
+                st.markdown(
+                    f'<div style="background:{_qbg2};border:1px solid {_qc2};border-radius:6px;padding:5px 10px;font-size:11px;color:{_qc2};font-weight:700;margin-top:6px;text-align:center;">' +
+                    f'{"⚛ QFSM BLEND" if _rs_rg.qfsm_mode=="BLEND" else "✅ Standard Band"} {_rs_rg.effective_band}' +
+                    '</div>', unsafe_allow_html=True)
             with _s_col:
-                _stc_regime.html(_sig_html, height=380)
+                _stc_regime.html(_sig_html_rg, height=580)
+
+            # VIX overlay notice
+            if _vix_curr is not None and _rs_rg.vix_overlay_pct > 0:
+                _vc3 = "#dc2626" if _vix_curr > 30 else "#d97706"
+                st.markdown(
+                    f'<div style="background:{"#fef2f2" if _vix_curr>30 else "#fef3c7"};border:1.5px solid {_vc3};border-left:4px solid {_vc3};border-radius:8px;padding:8px 14px;font-size:12px;color:{_vc3};margin-bottom:8px;">' +
+                    f'⚡ <b>VIX Overlay (VIX {_vix_curr:.1f}):</b> +{_rs_rg.vix_overlay_pct:.1f}pp Gold (Liquid → Gold) | Equity UNTOUCHED' +
+                    '</div>', unsafe_allow_html=True)
 
             st.markdown("---")
 
-            # ── Portfolio value + prev score ──────────────────────────────
+            # ── Portfolio value input ─────────────────────────────────────
             _pv1, _pv2 = st.columns(2)
             with _pv1:
                 _total_pf = st.number_input("💼 Total Portfolio Value ₹ (Equity + Gold + Cash)",
                                              min_value=0, value=int(st.session_state.get("regime_pf_val",1000000)),
                                              step=10000, key="regime_pf_val")
             with _pv2:
-                _prev_sc  = st.number_input("📅 Pichle Mahine Ka Score (0-3)", min_value=0, max_value=3,
-                                             value=int(st.session_state.get("regime_prev_score", _sc)),
-                                             step=1, key="regime_prev_score")
+                _prev_sc_input = st.number_input("📅 Pichle Mahine Ka Band (0-3)",
+                                                  min_value=0, max_value=3,
+                                                  value=int(st.session_state.get("regime_prev_score", _sc)),
+                                                  step=1, key="regime_prev_score")
+                _prev_sc = _prev_sc_input
 
-            # ── Allocation cards ──────────────────────────────────────────
+            # ── Allocation cards (QFSM values) ────────────────────────────
             _a1,_a2,_a3 = st.columns(3)
             for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
                 ("📈 Equity",_eq,"#2563eb","#dbeafe"),
                 ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
                 ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
                 with col:
-                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
-                        padding:12px;text-align:center;margin-bottom:8px;">
-                      <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
-                      <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
-                      <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
-                    </div>""", unsafe_allow_html=True)
+                    st.markdown(f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;' +
+                                f'padding:12px;text-align:center;margin-bottom:8px;">' +
+                                f'<div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>' +
+                                f'<div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.1f}%</div>' +
+                                f'<div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>' +
+                                '</div>', unsafe_allow_html=True)
 
             # ── Shift message ─────────────────────────────────────────────
             _sc_diff = _sc - _prev_sc
