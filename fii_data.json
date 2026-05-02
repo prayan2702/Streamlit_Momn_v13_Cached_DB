@@ -1,6 +1,6 @@
 {
-  "last_updated": "2026-05-01",
-  "last_updated_ts": "2026-05-01T14:37:28",
+  "last_updated": "2026-05-02",
+  "last_updated_ts": "2026-05-02T05:53:06",
   "source": "nse_api",
   "fii_net_30d": 0.0,
   "fii_net_5d": 0.0,
@@ -11,7 +11,7 @@
   "fii_ema5_gt_ema20": false,
   "signal": "NEUTRAL",
   "score": 0.0,
-  "stale": false,
+  "stale": true,
   "consecutive_bull_days": 0,
-  "fetch_failed": false
+  "fetch_failed": true
 }
