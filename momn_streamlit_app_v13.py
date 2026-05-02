@@ -1807,10 +1807,10 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
 
     # Score placed in SVG below pivot at y=cy+22, sub at cy+36
     score_svg = (
-        f'<text x="{cx}" y="{cy+22}" text-anchor="middle" '
+        f'<text x="{cx}" y="{cy+35}" text-anchor="middle" '
         f'font-size="26" font-weight="900" fill="white" opacity="0.65" '
         f'font-family="Segoe UI,sans-serif">{score_str}</text>'
-        f'<text x="{cx}" y="{cy+39}" text-anchor="middle" '
+        f'<text x="{cx}" y="{cy+52}" text-anchor="middle" '
         f'font-size="9" font-weight="500" fill="#475569" '
         f'font-family="Segoe UI,sans-serif">/ 9.0 pts</text>'
     )
