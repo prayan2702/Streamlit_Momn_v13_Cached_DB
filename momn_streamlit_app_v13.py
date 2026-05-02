@@ -1765,10 +1765,10 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
 
     # ── Band labels outside arc
     lbl_defs = [
-        (175, "Bear",       "#ef4444", "end"),
-        (115, "Neutral",    "#f97316", "end"),
-        ( 72, "Mild Bull",  "#eab308", "middle"),
-        ( 35, "Strong",     "#10b981", "start"),
+        (174, "Bear",      "#ef4444", "end"),
+        (113, "Neutral",   "#f97316", "end"),
+        ( 72, "Mild Bull", "#eab308", "middle"),
+        ( 40, "Strong",    "#10b981", "start"),
     ]
     lbl_svg = ""
     for i,(la,lt,lc,anc) in enumerate(lbl_defs):
@@ -1781,8 +1781,8 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
 
     # ── Continuous needle from raw_score (0-8.5 → 180°→0°)
     rs = raw_score if raw_score is not None else {3:7.5,2:5.5,1:3.5,0:1.2}[active_idx]
-    rs = max(0.0, min(8.5, float(rs)))
-    needle_angle = 180.0 - (rs / 8.5) * 180.0
+    rs = max(0.0, min(9.0, float(rs)))
+    needle_angle = 180.0 - (rs / 9.0) * 180.0
     ntx,nty = _pt(needle_angle, r_needle)
     cnx,cny = _pt(needle_angle+180, 18)
     # Needle tip color — purple if BLEND (transition zone)
@@ -1797,12 +1797,12 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
     # ── Score in center — show raw_score/8.5
     score_str = f"{rs:.2f}" if raw_score is not None else str(sc)
     score_svg = (
-        f'<text x="{cx}" y="{cy+20}" text-anchor="middle" '
-        f'font-family="Segoe UI,sans-serif" font-size="26" font-weight="900" '
-        f'fill="white" opacity="0.55">{score_str}</text>'
-        f'<text x="{cx}" y="{cy+36}" text-anchor="middle" '
-        f'font-family="Segoe UI,sans-serif" font-size="9" font-weight="600" '
-        f'fill="#64748b">/ 8.5 pts</text>'
+        f'<text x="{cx}" y="{cy+15}" text-anchor="middle" '
+        f'font-family="Segoe UI,sans-serif" font-size="24" font-weight="900" '
+        f'fill="white" opacity="0.6">{score_str}</text>'
+        f'<text x="{cx}" y="{cy+30}" text-anchor="middle" '
+        f'font-family="Segoe UI,sans-serif" font-size="9" font-weight="500" '
+        f'fill="#475569">/ 9.0 pts</text>'
     )
 
     src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>') if src_lbl else ""
@@ -1813,19 +1813,19 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
         '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
         '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
-        'padding:20px 28px 16px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
-        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:2px;}'
-        '.gsubtitle{font-size:8px;color:#475569;letter-spacing:.8px;margin-bottom:4px;}'
-        f'.gname{{font-size:20px;font-weight:800;color:{fc};margin-top:4px;}}'
-        '.leg{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
-        '.li{display:flex;align-items:center;gap:4px;font-size:9px;color:#94a3b8;}'
+        'padding:16px 20px 14px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
+        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:1px;}'
+        '.gsub{font-size:8px;color:#475569;letter-spacing:.6px;margin-bottom:6px;}'
+        f'.gname{{font-size:20px;font-weight:800;color:{fc};margin-top:6px;}}'
+        '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
+        '.li{display:flex;align-items:center;gap:3px;font-size:9px;color:#94a3b8;}'
         '.ld{width:7px;height:7px;border-radius:2px;flex-shrink:0;}'
         'svg{display:block;margin:0 auto;overflow:visible;}'
         '</style>'
         '<div class="gcard">'
         '<div class="gtitle">MARKET REGIME</div>'
-        '<div class="gsubtitle">Multi-factor · QFSM Weighted</div>'
-        f'<svg width="340" height="200" viewBox="5 50 330 155">'
+        '<div class="gsub">Multi-factor · QFSM Weighted · 0-9.0 pts</div>'
+        f'<svg width="320" height="185" viewBox="0 45 320 150">'
         f'{bg_svg}{segs_svg}{ticks_svg}{lbl_svg}{score_svg}{needle_svg}'
         '</svg>'
         f'<div class="gname">{em} {lbl}</div>'
@@ -1834,7 +1834,7 @@ def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, q
         '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear 0-2.5</div>'
         '<div class="li"><div class="ld" style="background:#f97316"></div>Neutral 2.5-4.5</div>'
         '<div class="li"><div class="ld" style="background:#eab308"></div>Mild Bull 4.5-6.5</div>'
-        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull 6.5-8.5</div>'
+        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong 6.5-9.0</div>'
         '</div></div>'
     )
 
@@ -2102,7 +2102,7 @@ with _tab_regime:
                     f'<div style="background:{_scbg};border-radius:8px;padding:10px;text-align:center;margin-top:4px;">' +
                     f'<div style="font-size:11px;color:{_scfc};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
                     f'<div style="font-size:36px;font-weight:900;color:{_scfc};line-height:1.1;">{_rs.raw_score:.2f}</div>' +
-                    f'<div style="font-size:11px;color:{_scfc};">/ 8.5 pts · {_rt_lbl}</div>' +
+                    f'<div style="font-size:11px;color:{_scfc};">/ 9.0 pts · {_rt_lbl}</div>' +
                     '</div>', unsafe_allow_html=True)
             with _s_col:
                 _stc_rt.html(_rt_sig_html, height=660)
@@ -2164,7 +2164,7 @@ with _tab_regime:
                     st.dataframe(_hdf, use_container_width=True, hide_index=True)
 
             st.caption(
-                f"Score {_rs.raw_score:.2f}/8.5 · {_rt_lbl} · Conf: {_rs.status} · "
+                f"Score {_rs.raw_score:.2f}/9.0 · {_rt_lbl} · Conf: {_rs.status} · "
                 f"QFSM: {_rs.qfsm_mode} · {_rt_src} · {_rt_date_s} | "
                 f"Alloc: {_rs.equity*100:.1f}/{_rs.gold*100:.1f}/{_rs.cash*100:.1f} (Eq/Gold/Cash)"
             )
@@ -4587,7 +4587,7 @@ with _tab_screener:
                     f'<div style="background:{_scbg2};border-radius:8px;padding:8px;text-align:center;margin-top:4px;">' +
                     f'<div style="font-size:10px;color:{_scfc2};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
                     f'<div style="font-size:32px;font-weight:900;color:{_scfc2};line-height:1.1;">{_rs_rg.raw_score:.2f}</div>' +
-                    f'<div style="font-size:10px;color:{_scfc2};">/ 8.5 pts · {_lbl}</div>' +
+                    f'<div style="font-size:10px;color:{_scfc2};">/ 9.0 pts · {_lbl}</div>' +
                     '</div>', unsafe_allow_html=True)
 
                 # QFSM mode badge
