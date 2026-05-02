@@ -74,7 +74,7 @@ def fetch_trendlyne() -> dict | None:
     """
     urls = [
         "https://trendlyne.com/api/macro/fii-dii/?format=json",
-        "https://trendlyne.com/macro/fii-dii-data/",
+        "https://trendlyne.com/macro-data/fii-dii/latest/snapshot-pastmonth",
     ]
     session = requests.Session()
     session.headers.update(HEADERS)
