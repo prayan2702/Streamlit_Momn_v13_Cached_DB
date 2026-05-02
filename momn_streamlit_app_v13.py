@@ -1710,132 +1710,142 @@ _NAV_SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSAf1ZhBXcMmi_
 
 def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, qfsm_mode="STANDARD"):
     """
-    QFSM Gauge — continuous needle on 0-8.5 scale (like Market Pulse reference).
-    sc        = effective band (0-3) for segment highlight
-    raw_score = float 0-8.5 for precise needle position (falls back to band midpoint)
-    qfsm_mode = BLEND shows purple needle tip indicator
+    QFSM Gauge v3 — clean semicircle, score below arc, no overlaps.
+    SVG is 340x180. Arc center at (170, 170). viewBox shows top 165px of arc.
+    Score text placed at bottom of SVG (y=165+), well below needle pivot.
+    Labels placed outside arc at r=155, within viewBox.
     """
     import math as _gm
-    cx, cy    = 160, 160
-    r_arc     = 110
-    r_inner   = 90
-    r_outer   = 130
-    r_needle  = 100
-    r_lbl_out = r_outer + 20
 
-    def _pt(angle_deg, radius):
-        rad = _gm.radians(angle_deg)
-        return (cx + radius * _gm.cos(rad), cy - radius * _gm.sin(rad))
+    # ── Geometry ──────────────────────────────────────────────────────────────
+    W   = 340          # SVG width
+    cx  = W // 2       # 170 — horizontal center
+    cy  = 175          # arc pivot — placed LOW so arc top is well within view
+    ra  = 105          # arc radius (midline of track)
+    ri  = ra - 22      # inner edge of track
+    ro  = ra + 22      # outer edge of track
+    rn  = ra - 8       # needle tip radius (just inside track inner)
+    rl  = ro + 18      # label radius
 
-    # 5-zone gauge matching reference: Crisis|Bearish|Cautious|Bullish|Euphoric
-    # Mapped to our 4-band system with extra granularity:
-    # Bear(0)=0-2.5, Neutral(1)=2.5-4.5, MildBull(2)=4.5-6.5, StrongBull(3)=6.5-8.5
-    # Needle angle: 180° (left=0) → 0° (right=8.5), linear mapping
-    seg_defs = [
-        (180, 127, "#ef4444", "Bear",         0),   # 0-2.5
-        (127,  90, "#f97316", "Neutral",      1),   # 2.5-4.5 (using orange like reference)
-        ( 90,  53, "#eab308", "Mild Bull",    2),   # 4.5-6.5 (yellow-green transition)
-        ( 53,  27, "#22c55e", "Bull",         3),   # 6.5-7.5
-        ( 27,   0, "#10b981", "Strong Bull",  3),   # 7.5-8.5 (euphoric equivalent)
+    def pt(deg, r):
+        rad = _gm.radians(deg)
+        return (cx + r * _gm.cos(rad), cy - r * _gm.sin(rad))
+
+    # ── Segments: 180°→0° maps to 0→9.0 pts ──────────────────────────────────
+    # Band boundaries: Bear 0-2.5 | Neutral 2.5-4.5 | MildBull 4.5-6.5 | Strong 6.5-9.0
+    # Angle boundaries: 180° | 130° | 90° | 50° | 0°
+    # (angle = 180 - score/9.0 * 180)
+    def s2a(score):   # score → angle
+        return 180.0 - (score / 9.0) * 180.0
+
+    segs = [
+        (s2a(0.0),  s2a(2.5),  "#ef4444", 0),   # Bear
+        (s2a(2.5),  s2a(4.5),  "#f97316", 1),   # Neutral
+        (s2a(4.5),  s2a(6.5),  "#eab308", 2),   # Mild Bull
+        (s2a(6.5),  s2a(7.75), "#22c55e", 3),   # Bull
+        (s2a(7.75), s2a(9.0),  "#10b981", 3),   # Strong Bull
     ]
     active_idx = min(sc, 3)
-    # Map active band to segment index (band 3 covers segs 3+4)
-    seg_active = {0:0, 1:1, 2:2, 3:3}[active_idx]
 
-    # ── Background track
-    bx0,by0 = _pt(180, r_arc); bx1,by1 = _pt(0, r_arc)
-    bg_svg = (f'<path d="M {bx0:.1f} {by0:.1f} A {r_arc} {r_arc} 0 0 1 {bx1:.1f} {by1:.1f}" '
-              f'fill="none" stroke="#1e2736" stroke-width="42" stroke-linecap="butt"/>')
+    # ── Background arc
+    bx0,by0 = pt(180, ra); bx1,by1 = pt(0, ra)
+    bg = (f'<path d="M{bx0:.1f} {by0:.1f} A{ra} {ra} 0 0 1 {bx1:.1f} {by1:.1f}" '
+          f'fill="none" stroke="#1e2736" stroke-width="44" stroke-linecap="butt"/>')
 
-    # ── 5 color segments
+    # ── Color segments
     segs_svg = ""
-    for i,(sa,ea,col,_,_) in enumerate(seg_defs):
-        sx,sy = _pt(sa,r_arc); ex,ey = _pt(ea,r_arc)
-        is_act = (i == seg_active or (active_idx==3 and i in (3,4)))
-        sw = "42" if is_act else "30"
-        op = "1"  if is_act else "0.42"
-        segs_svg += (f'<path d="M {sx:.1f} {sy:.1f} A {r_arc} {r_arc} 0 0 1 {ex:.1f} {ey:.1f}" '
+    for i,(sa,ea,col,band) in enumerate(segs):
+        sx,sy = pt(sa,ra); ex,ey = pt(ea,ra)
+        is_act = (band == active_idx)
+        sw = "44" if is_act else "32"
+        op = "1.0" if is_act else "0.38"
+        segs_svg += (f'<path d="M{sx:.1f} {sy:.1f} A{ra} {ra} 0 0 1 {ex:.1f} {ey:.1f}" '
                      f'fill="none" stroke="{col}" stroke-width="{sw}" stroke-linecap="butt" opacity="{op}"/>')
 
-    # ── Divider ticks
-    ticks_svg = ""
-    for ta in [127, 90, 53, 27]:
-        t0x,t0y = _pt(ta, r_inner-5); t1x,t1y = _pt(ta, r_outer+5)
-        ticks_svg += f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>' 
+    # ── Divider ticks at band boundaries
+    tick_svg = ""
+    for ta in [s2a(2.5), s2a(4.5), s2a(6.5)]:
+        t0x,t0y = pt(ta, ri-4); t1x,t1y = pt(ta, ro+4)
+        tick_svg += f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="3.5"/>' 
 
-    # ── Band labels outside arc
+    # ── Band labels OUTSIDE arc, placed so they fit inside 340px wide SVG
     lbl_defs = [
-        (174, "Bear",      "#ef4444", "end"),
-        (113, "Neutral",   "#f97316", "end"),
-        ( 72, "Mild Bull", "#eab308", "middle"),
-        ( 40, "Strong",    "#10b981", "start"),
+        (168, "Bear",      "#ef4444", "end",    "10"),
+        (120, "Neutral",   "#f97316", "end",    "9"),
+        ( 72, "Mild Bull", "#eab308", "middle", "9"),
+        ( 38, "Strong",    "#10b981", "start",  "9"),
     ]
     lbl_svg = ""
-    for i,(la,lt,lc,anc) in enumerate(lbl_defs):
-        lx,ly = _pt(la, r_lbl_out)
+    for i,(la,lt,lc,anc,fsz) in enumerate(lbl_defs):
+        lx,ly = pt(la, rl)
         fw = "800" if (i==active_idx or (active_idx==3 and i==3)) else "500"
-        sz = "11" if fw=="800" else "10"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
-                    f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
-                    f'font-size="{sz}" font-weight="{fw}" fill="{lc}">{lt}</text>')
+                    f'dominant-baseline="central" font-size="{fsz}" font-weight="{fw}" fill="{lc}" '
+                    f'font-family="Segoe UI,sans-serif">{lt}</text>')
 
-    # ── Continuous needle from raw_score (0-8.5 → 180°→0°)
-    rs = raw_score if raw_score is not None else {3:7.5,2:5.5,1:3.5,0:1.2}[active_idx]
-    rs = max(0.0, min(9.0, float(rs)))
-    needle_angle = 180.0 - (rs / 9.0) * 180.0
-    ntx,nty = _pt(needle_angle, r_needle)
-    cnx,cny = _pt(needle_angle+180, 18)
-    # Needle tip color — purple if BLEND (transition zone)
-    needle_tip_col = "#a855f7" if qfsm_mode=="BLEND" else "white"
+    # ── Score text — placed BELOW the pivot (cy+20), not inside arc area ────
+    rs = float(raw_score) if raw_score is not None else {3:7.5,2:5.5,1:3.5,0:1.2}[active_idx]
+    rs = max(0.0, min(9.0, rs))
+    score_str = f"{rs:.2f}"
+    # Position score well below arc (arc bottom at cy = 175, viewBox top ≈ 0)
+    # Score at y = cy+18 = 193, sub at cy+33 = 208 — these are BELOW viewBox if cut at 170
+    # So we place score inside SVG at top-left area, or use a separate div
+    # Best: put score text at cx, cy+22 — this will be at y=197, outside viewBox(0 0 340 170)
+    # Solution: don't use viewBox crop, use full height SVG and place score at bottom
+
+    # ── Needle
+    na = 180.0 - (rs / 9.0) * 180.0
+    ntx,nty = pt(na, rn)
+    ncx,ncy = pt(na+180, 14)
+    nc = "#a855f7" if qfsm_mode=="BLEND" else "white"
     needle_svg = (
-        f'<line x1="{cnx:.1f}" y1="{cny:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
-        f'stroke="{needle_tip_col}" stroke-width="3.5" stroke-linecap="round"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="11" fill="{fc}" stroke="#111827" stroke-width="3"/>'
+        f'<line x1="{ncx:.1f}" y1="{ncy:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
+        f'stroke="{nc}" stroke-width="3.5" stroke-linecap="round"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="10" fill="{fc}" stroke="#111827" stroke-width="3"/>'
         f'<circle cx="{cx}" cy="{cy}" r="4" fill="white"/>'
     )
 
-    # ── Score in center — show raw_score/8.5
-    score_str = f"{rs:.2f}" if raw_score is not None else str(sc)
+    # Score placed in SVG below pivot at y=cy+22, sub at cy+36
     score_svg = (
-        f'<text x="{cx}" y="{cy+15}" text-anchor="middle" '
-        f'font-family="Segoe UI,sans-serif" font-size="24" font-weight="900" '
-        f'fill="white" opacity="0.6">{score_str}</text>'
-        f'<text x="{cx}" y="{cy+30}" text-anchor="middle" '
-        f'font-family="Segoe UI,sans-serif" font-size="9" font-weight="500" '
-        f'fill="#475569">/ 9.0 pts</text>'
+        f'<text x="{cx}" y="{cy+22}" text-anchor="middle" '
+        f'font-size="26" font-weight="900" fill="white" opacity="0.65" '
+        f'font-family="Segoe UI,sans-serif">{score_str}</text>'
+        f'<text x="{cx}" y="{cy+39}" text-anchor="middle" '
+        f'font-size="9" font-weight="500" fill="#475569" '
+        f'font-family="Segoe UI,sans-serif">/ 9.0 pts</text>'
     )
 
-    src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>') if src_lbl else ""
-    dt_d  = (f'<div style="font-size:10px;color:#64748b;margin-top:3px;">{date_str} &nbsp;·&nbsp; {lbl}</div>') if date_str else ""
+    src_d = f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>' if src_lbl else ""
+    dt_d  = f'<div style="font-size:10px;color:#64748b;margin-top:2px;">{date_str} &nbsp;·&nbsp; {lbl}</div>' if date_str else ""
 
+    # SVG height=210 (cy+35=210), viewBox="0 0 340 210" — shows full arc + score below
     return (
         '<style>'
         '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
-        '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
-        'padding:16px 20px 14px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
-        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:1px;}'
-        '.gsub{font-size:8px;color:#475569;letter-spacing:.6px;margin-bottom:6px;}'
-        f'.gname{{font-size:20px;font-weight:800;color:{fc};margin-top:6px;}}'
-        '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
+        '.gc{background:#111827;border:1px solid #1e293b;border-radius:14px;'
+        'padding:12px 16px 12px;text-align:center;display:inline-block;width:100%;}'
+        '.gt{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.4px;font-weight:700;margin-bottom:8px;}'
+        f'.gn{{font-size:20px;font-weight:800;color:{fc};margin-top:4px;}}'
+        '.leg{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
         '.li{display:flex;align-items:center;gap:3px;font-size:9px;color:#94a3b8;}'
         '.ld{width:7px;height:7px;border-radius:2px;flex-shrink:0;}'
-        'svg{display:block;margin:0 auto;overflow:visible;}'
+        'svg{display:block;margin:0 auto;}'
         '</style>'
-        '<div class="gcard">'
-        '<div class="gtitle">MARKET REGIME</div>'
-        '<div class="gsub">Multi-factor · QFSM Weighted · 0-9.0 pts</div>'
-        f'<svg width="320" height="185" viewBox="0 45 320 150">'
-        f'{bg_svg}{segs_svg}{ticks_svg}{lbl_svg}{score_svg}{needle_svg}'
+        '<div class="gc">'
+        '<div class="gt">MARKET REGIME · QFSM Weighted</div>'
+        f'<svg width="310" height="195" viewBox="10 30 320 220">'
+        f'{bg}{segs_svg}{tick_svg}{lbl_svg}{needle_svg}{score_svg}'
         '</svg>'
-        f'<div class="gname">{em} {lbl}</div>'
+        f'<div class="gn">{em} {lbl}</div>'
         f'{dt_d}{src_d}'
         '<div class="leg">'
         '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear 0-2.5</div>'
         '<div class="li"><div class="ld" style="background:#f97316"></div>Neutral 2.5-4.5</div>'
         '<div class="li"><div class="ld" style="background:#eab308"></div>Mild Bull 4.5-6.5</div>'
         '<div class="li"><div class="ld" style="background:#10b981"></div>Strong 6.5-9.0</div>'
-        '</div></div>'
+        '</div>'
+        '</div>'
     )
 
 _tab_screener, _tab_regime, _tab_sim = st.tabs([
