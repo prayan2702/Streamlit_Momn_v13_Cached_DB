@@ -958,7 +958,85 @@ def _save_ath_memory(mem: dict) -> bool:
         return False
 
 # ── Rebalance Memory helpers ─────────────────────────────────────
-_RB_MEMORY_FILE = "rebalance_memory.json"
+_RB_MEMORY_FILE  = "rebalance_memory.json"
+_GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main"
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_github_json(filename: str, default=None):
+    """Load JSON from GitHub repo (raw URL). TTL=1hr. Falls back to local file."""
+    import requests as _rq_gh
+    try:
+        r = _rq_gh.get(f"{_GITHUB_RAW_BASE}/{filename}", timeout=8)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    # Local fallback
+    try:
+        if os.path.exists(filename):
+            with open(filename) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return default if default is not None else {}
+
+def _load_all_state():
+    """
+    SOP v2026.08 Section 14.7 — Load all auto-cached state from GitHub on startup.
+    Populates session_state with regime_state.json, fii_data.json, nav_cache.json,
+    rank_history.json, rebalance_memory.json.
+    """
+    if st.session_state.get("_all_state_loaded"):
+        return
+
+    # ── regime_state.json (weekly auto-computed by GitHub Actions) ────────────
+    rs_json = _load_github_json("regime_state.json", {})
+    if rs_json.get("last_updated") and rs_json.get("raw_score") is not None:
+        # Hydrate RegimeState from JSON so confirmation history is preserved
+        try:
+            from calculations import RegimeState as _RS
+            _prev = _RS.from_dict(rs_json)
+            if st.session_state.get("_regime_prev_state") is None:
+                st.session_state["_regime_prev_state"] = _prev
+        except Exception:
+            pass
+        st.session_state["_regime_state_json"] = rs_json
+
+    # ── fii_data.json (daily auto-fetched by GitHub Actions) ─────────────────
+    fii_json = _load_github_json("fii_data.json", {})
+    if fii_json:
+        st.session_state["_fii_data"]  = fii_json
+        st.session_state["_fii_score"] = float(fii_json.get("score", 0.5))
+
+    # ── nav_cache.json (monthly sync from Google Sheet) ───────────────────────
+    nav_json = _load_github_json("nav_cache.json", {})
+    if nav_json and nav_json.get("nav_series"):
+        # Build nav series list from cache for S1 computation
+        nav_entries = nav_json.get("nav_series", [])
+        if nav_entries and isinstance(nav_entries[0], dict):
+            nav_vals = [e.get("nav", 0) for e in nav_entries if e.get("nav", 0) > 0]
+        else:
+            nav_vals = [v for v in nav_entries if v and v > 0]
+        if nav_vals and st.session_state.get("_rt_navs") is None:
+            st.session_state["_rt_navs"] = nav_vals
+        st.session_state["_nav_cache"] = nav_json
+
+    # ── rank_history.json (weekly top-50 snapshot for S7) ────────────────────
+    rh_json = _load_github_json("rank_history.json", [])
+    if rh_json and isinstance(rh_json, list):
+        st.session_state["_rt_rank_history"] = rh_json
+
+    # ── rebalance_memory.json (PIN-protected monthly save) ───────────────────
+    if not st.session_state.get("_rb_memory_loaded"):
+        rb_json = _load_github_json("rebalance_memory.json", {})
+        if rb_json:
+            st.session_state["_rb_memory"] = rb_json
+            st.session_state["_rb_memory_loaded"] = True
+
+    st.session_state["_all_state_loaded"] = True
+
+# Run on every app load (cached internally via session_state flag)
+_load_all_state()
 
 def _load_rb_memory() -> dict:
     """Load rebalance memory from local JSON, fallback GitHub."""
@@ -1630,123 +1708,133 @@ def _fetch_nav_from_sheet(sheet_csv_url):
 # Or use pub CSV URL from File > Share > Publish to web
 _NAV_SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSAf1ZhBXcMmi_QSxHnU6LI9PLKGbgEu16-FNKBjELhTk2x6qwLuuG7jAFx-mIn_ezNn45uL1G00MD1/pub?gid=612197947&single=true&output=csv"
 
-def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
-    """MMI-style semicircle speedometer gauge — properly centered."""
+def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, qfsm_mode="STANDARD"):
+    """
+    QFSM Gauge — continuous needle on 0-8.5 scale (like Market Pulse reference).
+    sc        = effective band (0-3) for segment highlight
+    raw_score = float 0-8.5 for precise needle position (falls back to band midpoint)
+    qfsm_mode = BLEND shows purple needle tip indicator
+    """
     import math as _gm
-    # Geometry — center at (155,155), semicircle arc spans 180° (left→top→right)
-    cx, cy   = 155, 155   # needle pivot / arc center
-    r_arc    = 108        # radius of arc midline
-    r_inner  = 88         # inner radius of track
-    r_outer  = 128        # outer radius of track (track width ≈ 40px)
-    r_needle = 98         # needle tip length
+    cx, cy    = 160, 160
+    r_arc     = 110
+    r_inner   = 90
+    r_outer   = 130
+    r_needle  = 100
+    r_lbl_out = r_outer + 20
 
     def _pt(angle_deg, radius):
-        """Math angle (0=right,90=up,180=left) → SVG (x,y)."""
         rad = _gm.radians(angle_deg)
         return (cx + radius * _gm.cos(rad), cy - radius * _gm.sin(rad))
 
-    # Segment boundary angles: Bear 180→135, Neutral 135→90, MildBull 90→45, StrongBull 45→0
+    # 5-zone gauge matching reference: Crisis|Bearish|Cautious|Bullish|Euphoric
+    # Mapped to our 4-band system with extra granularity:
+    # Bear(0)=0-2.5, Neutral(1)=2.5-4.5, MildBull(2)=4.5-6.5, StrongBull(3)=6.5-8.5
+    # Needle angle: 180° (left=0) → 0° (right=8.5), linear mapping
     seg_defs = [
-        (180, 135, "#ef4444"),
-        (135,  90, "#f59e0b"),
-        ( 90,  45, "#38bdf8"),
-        ( 45,   0, "#10b981"),
+        (180, 127, "#ef4444", "Bear",         0),   # 0-2.5
+        (127,  90, "#f97316", "Neutral",      1),   # 2.5-4.5 (using orange like reference)
+        ( 90,  53, "#eab308", "Mild Bull",    2),   # 4.5-6.5 (yellow-green transition)
+        ( 53,  27, "#22c55e", "Bull",         3),   # 6.5-7.5
+        ( 27,   0, "#10b981", "Strong Bull",  3),   # 7.5-8.5 (euphoric equivalent)
     ]
-    seg_mid_angles   = [157.5, 112.5, 67.5, 22.5]
-    active_idx       = min(sc, 3)
+    active_idx = min(sc, 3)
+    # Map active band to segment index (band 3 covers segs 3+4)
+    seg_active = {0:0, 1:1, 2:2, 3:3}[active_idx]
 
-    # ── Background track (grey ring)
-    bx0, by0 = _pt(180, r_arc)
-    bx1, by1 = _pt(  0, r_arc)
+    # ── Background track
+    bx0,by0 = _pt(180, r_arc); bx1,by1 = _pt(0, r_arc)
     bg_svg = (f'<path d="M {bx0:.1f} {by0:.1f} A {r_arc} {r_arc} 0 0 1 {bx1:.1f} {by1:.1f}" '
-              f'fill="none" stroke="#1e2736" stroke-width="40" stroke-linecap="butt"/>')
+              f'fill="none" stroke="#1e2736" stroke-width="42" stroke-linecap="butt"/>')
 
-    # ── Color segments
+    # ── 5 color segments
     segs_svg = ""
-    for i, (sa, ea, col) in enumerate(seg_defs):
-        sx, sy = _pt(sa, r_arc)
-        ex, ey = _pt(ea, r_arc)
-        is_active = (i == active_idx)
-        sw  = "40" if is_active else "28"
-        op  = "1"  if is_active else "0.50"
+    for i,(sa,ea,col,_,_) in enumerate(seg_defs):
+        sx,sy = _pt(sa,r_arc); ex,ey = _pt(ea,r_arc)
+        is_act = (i == seg_active or (active_idx==3 and i in (3,4)))
+        sw = "42" if is_act else "30"
+        op = "1"  if is_act else "0.42"
         segs_svg += (f'<path d="M {sx:.1f} {sy:.1f} A {r_arc} {r_arc} 0 0 1 {ex:.1f} {ey:.1f}" '
                      f'fill="none" stroke="{col}" stroke-width="{sw}" stroke-linecap="butt" opacity="{op}"/>')
 
-    # ── Divider ticks between segments
+    # ── Divider ticks
     ticks_svg = ""
-    for ta in [135, 90, 45]:
-        t0x, t0y = _pt(ta, r_inner - 4)
-        t1x, t1y = _pt(ta, r_outer + 4)
-        ticks_svg += (f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" '
-                      f'x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>')
+    for ta in [127, 90, 53, 27]:
+        t0x,t0y = _pt(ta, r_inner-5); t1x,t1y = _pt(ta, r_outer+5)
+        ticks_svg += f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>' 
 
-    # ── Labels just outside the arc (r_outer + 16)
-    r_lbl = r_outer + 18
+    # ── Band labels outside arc
     lbl_defs = [
-        (175, "Bear",     "#ef4444", "end"),
-        (128, "Neutral",  "#f59e0b", "end"),
-        ( 52, "Mild Bull","#38bdf8", "start"),
-        (  5, "Strong",   "#10b981", "start"),
+        (175, "Bear",       "#ef4444", "end"),
+        (115, "Neutral",    "#f97316", "end"),
+        ( 72, "Mild Bull",  "#eab308", "middle"),
+        ( 35, "Strong",     "#10b981", "start"),
     ]
     lbl_svg = ""
-    for i, (la, lt, lc, anc) in enumerate(lbl_defs):
-        lx, ly = _pt(la, r_lbl)
-        fw = "800" if i == active_idx else "600"
+    for i,(la,lt,lc,anc) in enumerate(lbl_defs):
+        lx,ly = _pt(la, r_lbl_out)
+        fw = "800" if (i==active_idx or (active_idx==3 and i==3)) else "500"
+        sz = "11" if fw=="800" else "10"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
                     f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
-                    f'font-size="11" font-weight="{fw}" fill="{lc}">{lt}</text>')
+                    f'font-size="{sz}" font-weight="{fw}" fill="{lc}">{lt}</text>')
 
-    # ── Score number in center
-    score_svg = (f'<text x="{cx}" y="{cy+28}" text-anchor="middle" dominant-baseline="central" '
-                 f'font-family="Segoe UI,sans-serif" font-size="30" font-weight="900" '
-                 f'fill="white" opacity="0.50">{sc}</text>')
+    # ── Continuous needle from raw_score (0-8.5 → 180°→0°)
+    rs = raw_score if raw_score is not None else {3:7.5,2:5.5,1:3.5,0:1.2}[active_idx]
+    rs = max(0.0, min(8.5, float(rs)))
+    needle_angle = 180.0 - (rs / 8.5) * 180.0
+    ntx,nty = _pt(needle_angle, r_needle)
+    cnx,cny = _pt(needle_angle+180, 18)
+    # Needle tip color — purple if BLEND (transition zone)
+    needle_tip_col = "#a855f7" if qfsm_mode=="BLEND" else "white"
+    needle_svg = (
+        f'<line x1="{cnx:.1f}" y1="{cny:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
+        f'stroke="{needle_tip_col}" stroke-width="3.5" stroke-linecap="round"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="11" fill="{fc}" stroke="#111827" stroke-width="3"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="4" fill="white"/>'
+    )
 
-    # ── Needle
-    ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
-    cnx, cny = _pt(seg_mid_angles[active_idx] + 180, 16)
+    # ── Score in center — show raw_score/8.5
+    score_str = f"{rs:.2f}" if raw_score is not None else str(sc)
+    score_svg = (
+        f'<text x="{cx}" y="{cy+20}" text-anchor="middle" '
+        f'font-family="Segoe UI,sans-serif" font-size="26" font-weight="900" '
+        f'fill="white" opacity="0.55">{score_str}</text>'
+        f'<text x="{cx}" y="{cy+36}" text-anchor="middle" '
+        f'font-family="Segoe UI,sans-serif" font-size="9" font-weight="600" '
+        f'fill="#64748b">/ 8.5 pts</text>'
+    )
 
-    src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'
-             f'{src_lbl}</div>') if src_lbl else ""
-    dt_d  = (f'<div style="font-size:10px;color:#64748b;margin-top:3px;">'
-             f'{date_str} &nbsp;·&nbsp; Score {sc}/3</div>') if date_str else ""
+    src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>') if src_lbl else ""
+    dt_d  = (f'<div style="font-size:10px;color:#64748b;margin-top:3px;">{date_str} &nbsp;·&nbsp; {lbl}</div>') if date_str else ""
 
-    # viewBox: left margin so Bear label fits, right margin so Strong label fits
-    # Bear at 175°: x = 155 + 146*cos(175°) ≈ 155 - 145.4 = 9.6  → left edge ~0
-    # Strong at 5°: x = 155 + 146*cos(5°)   ≈ 155 + 145.4 = 300.4 → right edge ~310
-    # Arc top at 90°: y = 155 - 108 = 47; label top at 155-146 = 9 → viewBox y start = 5
     return (
         '<style>'
         '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
         '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
-        'padding:26px 32px 26px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
-        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:4px;}'
-        f'.gname{{font-size:22px;font-weight:800;color:{fc};margin-top:4px;}}'
-        '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}'
-        '.li{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}'
-        '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0;}'
+        'padding:20px 28px 16px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
+        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:2px;}'
+        '.gsubtitle{font-size:8px;color:#475569;letter-spacing:.8px;margin-bottom:4px;}'
+        f'.gname{{font-size:20px;font-weight:800;color:{fc};margin-top:4px;}}'
+        '.leg{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
+        '.li{display:flex;align-items:center;gap:4px;font-size:9px;color:#94a3b8;}'
+        '.ld{width:7px;height:7px;border-radius:2px;flex-shrink:0;}'
         'svg{display:block;margin:0 auto;overflow:visible;}'
         '</style>'
         '<div class="gcard">'
         '<div class="gtitle">MARKET REGIME</div>'
-        '<svg width="350" height="260" viewBox="0 5 320 175">'
-        f'{bg_svg}'
-        f'{segs_svg}'
-        f'{ticks_svg}'
-        f'{lbl_svg}'
-        f'{score_svg}'
-        f'<line x1="{cnx:.1f}" y1="{cny:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
-        f'stroke="white" stroke-width="3.5" stroke-linecap="round"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="10" fill="{fc}" stroke="#111827" stroke-width="3"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="4"  fill="white"/>'
+        '<div class="gsubtitle">Multi-factor · QFSM Weighted</div>'
+        f'<svg width="340" height="200" viewBox="5 50 330 155">'
+        f'{bg_svg}{segs_svg}{ticks_svg}{lbl_svg}{score_svg}{needle_svg}'
         '</svg>'
         f'<div class="gname">{em} {lbl}</div>'
         f'{dt_d}{src_d}'
         '<div class="leg">'
-        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear</div>'
-        '<div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral (1)</div>'
-        '<div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull (2)</div>'
-        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull (3)</div>'
+        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear 0-2.5</div>'
+        '<div class="li"><div class="ld" style="background:#f97316"></div>Neutral 2.5-4.5</div>'
+        '<div class="li"><div class="ld" style="background:#eab308"></div>Mild Bull 4.5-6.5</div>'
+        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull 6.5-8.5</div>'
         '</div></div>'
     )
 
@@ -1881,7 +1969,7 @@ with _tab_regime:
                 nifty_close=_rt_nc,
                 nifty_dma200=_rt_nd,
                 rank_history=_rt_rk_h or None,
-                fii_score=0.5,
+                fii_score=st.session_state.get("_fii_score", 0.5),
                 prev_state=_prev_rs,
                 total_capital=0.0,
                 dd_pct=0.0,
@@ -1928,7 +2016,7 @@ with _tab_regime:
                 st.error("🚨 DD OVERRIDE — Portfolio DD ≥ 20%. Bear allocation forced (25/30/45). All signals bypassed.")
 
             # ── Gauge (reuses existing _build_mmi_gauge) ───────────────────────
-            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s)
+            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s, raw_score=_rs.raw_score, qfsm_mode=_rs.qfsm_mode)
 
             # ── Signal card helper ─────────────────────────────────────────────
             def _mk_sig(icon, title, sub, val_txt, score_val, weight, ok, partial=False):
@@ -1943,8 +2031,37 @@ with _tab_regime:
                         f'<div class="sbg" style="background:{c};color:white">{score_val:.2g}/{weight}pt</div>' +
                         '</div>')
 
-            _sigs  = _rs.signals
-            _smeta = _rs.signal_meta
+            _sigs      = _rs.signals
+            _smeta     = _rs.signal_meta
+            _fii_data_rt = st.session_state.get("_fii_data", {})
+
+            def _mk_fii_card(fii_score_val, fii_data):
+                _fii_net = fii_data.get("fii_net_30d")
+                _fii_sig = fii_data.get("signal", "NEUTRAL")
+                _fii_stale = fii_data.get("stale", False)
+                _fii_date  = fii_data.get("last_updated", "—")
+                if _fii_net is not None:
+                    _net_txt = f"FII 30D Net: ₹{_fii_net:,.0f} Cr · {_fii_sig}"
+                    if _fii_stale: _net_txt += " ⚠ (stale)"
+                else:
+                    _net_txt = "fii_data.json not loaded (GitHub Actions Phase 2)"
+                _ok = fii_score_val >= 1.0
+                _partial = 0 < fii_score_val < 1.0
+                _c  = "#f59e0b" if _partial else ("#00d09e" if _ok else "#f87171")
+                _bg = "#fef3c7" if _partial else ("#e8fdf2" if _ok else "#fef2f2")
+                _bd = "#fcd34d" if _partial else ("#86efac" if _ok else "#fca5a5")
+                _ico = "⚠️" if _partial else ("✅" if _ok else "❌")
+                _sig_txt = {"BULL":"🟢 BULL (>₹5K Cr)","MILD_BULL":"🟡 MILD BULL (₹0-5K Cr)",
+                            "NEUTRAL":"🟠 NEUTRAL (-₹5K to ₹0)","BEAR":"🔴 BEAR (<-₹5K Cr)"}.get(_fii_sig, _fii_sig)
+                return (
+                    f'<div class="sig" style="background:{_bg};border-color:{_bd}">' +
+                    f'<div class="si">{_ico}</div>' +
+                    f'<div class="sb"><div class="st" style="color:{_c}">S8 — FII Net Flow ★</div>' +
+                    f'<div class="sc_t" style="color:#374151">FII 30D net &gt;₹5K=BULL · ₹0-5K=0.5pt · &lt;₹0=0pt (updated: {_fii_date})</div>' +
+                    f'<div class="sv" style="color:{_c}">{_net_txt}</div></div>' +
+                    f'<div class="sbg" style="background:{_c};color:white">{fii_score_val:.2g}/1pt</div>' +
+                    '</div>'
+                )
             _s1v   = _sigs.get("s1_nav",0)
             _s2v   = _sigs.get("s2_breadth",0)
             _s3v   = _sigs.get("s3_roc",0)
@@ -1972,6 +2089,7 @@ with _tab_regime:
                 _mk_sig("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
                 _mk_sig("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (from 1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
                 _mk_sig("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% vs 4 weeks ago",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
+                _mk_fii_card(_sigs.get("s_fii",0.5), _fii_data_rt) +
                 '</div>'
             )
 
@@ -1987,7 +2105,7 @@ with _tab_regime:
                     f'<div style="font-size:11px;color:{_scfc};">/ 8.5 pts · {_rt_lbl}</div>' +
                     '</div>', unsafe_allow_html=True)
             with _s_col:
-                _stc_rt.html(_rt_sig_html, height=580)
+                _stc_rt.html(_rt_sig_html, height=660)
 
             st.markdown("---")
 
@@ -2013,6 +2131,22 @@ with _tab_regime:
                         '</div>', unsafe_allow_html=True)
 
             # ── VIX overlay display ────────────────────────────────────────────
+            # ── FII Data status in regime tab ─────────────────────────────
+            _fii_j = st.session_state.get("_fii_data", {})
+            if _fii_j.get("last_updated"):
+                _fii_sc_d = st.session_state.get("_fii_score", 0.5)
+                _fii_clr  = "#15803d" if _fii_sc_d>=1.0 else ("#d97706" if _fii_sc_d>0 else "#dc2626")
+                _fii_sig_d= _fii_j.get("signal","NEUTRAL")
+                _fii_net_d= _fii_j.get("fii_net_30d")
+                _fii_stl  = " ⚠stale" if _fii_j.get("stale") else ""
+                st.caption(
+                    f"📊 S8 FII: {_fii_sig_d} · score {_fii_sc_d}/1pt"
+                    + (f" · 30D Net ₹{_fii_net_d:,.0f}Cr" if _fii_net_d else "")
+                    + f" · {_fii_j.get('last_updated','')}{_fii_stl}"
+                )
+            else:
+                st.caption("📊 S8 FII: fii_data.json not loaded — fetch_fii_data.yml trigger karo (GitHub Actions)")
+
             if _rt_vx is not None and _rs.vix_overlay_pct > 0:
                 _vc2 = "#dc2626" if _rt_vx > 30 else "#d97706"
                 st.markdown(
@@ -4325,7 +4459,7 @@ with _tab_screener:
                 nifty_close=_rt_nc_rg,
                 nifty_dma200=_rt_nd_rg,
                 rank_history=_rt_rk_rg or None,
-                fii_score=0.5,
+                fii_score=st.session_state.get("_fii_score", 0.5),
                 prev_state=_prev_rs,
                 total_capital=0.0,
                 dd_pct=0.0,
@@ -4375,7 +4509,34 @@ with _tab_screener:
             _s1v = _sigs.get("s1_nav",0);     _s2v = _sigs.get("s2_breadth",0)
             _s3v = _sigs.get("s3_roc",0);     _s4v = _sigs.get("s4_vix",0)
             _s5v = _sigs.get("s5_nifty",0);   _s6v = _sigs.get("s6_ad",0)
-            _s7v = _sigs.get("s7_rank",0)
+            _s7v = _sigs.get("s7_rank",0);    _s8v = _sigs.get("s_fii",0.5)
+            _fii_data_s3 = st.session_state.get("_fii_data", {})
+
+            def _mk_fii_card(fii_score_val, fii_data):
+                _fii_net = fii_data.get("fii_net_30d")
+                _fii_sig = fii_data.get("signal", "NEUTRAL")
+                _fii_stale = fii_data.get("stale", False)
+                _fii_date  = fii_data.get("last_updated", "—")
+                if _fii_net is not None:
+                    _net_txt = f"FII 30D Net: ₹{_fii_net:,.0f} Cr · {_fii_sig}"
+                    if _fii_stale: _net_txt += " ⚠ (stale)"
+                else:
+                    _net_txt = "fii_data.json not loaded (fetch_fii_data.yml needed)"
+                _ok = fii_score_val >= 1.0
+                _partial = 0 < fii_score_val < 1.0
+                _c  = "#f59e0b" if _partial else ("#00d09e" if _ok else "#f87171")
+                _bg = "#fef3c7" if _partial else ("#e8fdf2" if _ok else "#fef2f2")
+                _bd = "#fcd34d" if _partial else ("#86efac" if _ok else "#fca5a5")
+                _ico = "⚠️" if _partial else ("✅" if _ok else "❌")
+                return (
+                    f'<div class="sig" style="background:{_bg};border-color:{_bd}">' +
+                    f'<div class="si">{_ico}</div>' +
+                    f'<div class="sb"><div class="st" style="color:{_c}">S8 — FII Net Flow ★</div>' +
+                    f'<div class="sc_t" style="color:#374151">FII 30D net &gt;₹5K=BULL · ₹0-5K=0.5pt · &lt;₹0=0pt (updated: {_fii_date})</div>' +
+                    f'<div class="sv" style="color:{_c}">{_net_txt}</div></div>' +
+                    f'<div class="sbg" style="background:{_c};color:white">{fii_score_val:.2g}/1pt</div>' +
+                    '</div>'
+                )
 
             _nav_txt = (f'NAV {_smeta["nav_current"]:.2f} vs DMA {_smeta["nav_dma200"]:.2f} ({_smeta.get("gap_pct",0):+.1f}%)'
                         if _smeta.get("nav_current") else "NAV data loading...")
@@ -4395,7 +4556,7 @@ with _tab_screener:
                         '</div>')
 
             _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
-            _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
+            _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg, raw_score=_rs_rg.raw_score, qfsm_mode=_rs_rg.qfsm_mode)
             _sig_html_rg = (
                 '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}' +
                 '.sigs{display:flex;flex-direction:column;gap:8px;}' +
@@ -4412,6 +4573,7 @@ with _tab_screener:
                 _mk_sig_rg("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
                 _mk_sig_rg("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
                 _mk_sig_rg("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% (4-week)",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
+                _mk_fii_card(_s8v, _fii_data_s3) +
                 '</div>'
             )
 
@@ -4436,7 +4598,7 @@ with _tab_screener:
                     f'{"⚛ QFSM BLEND" if _rs_rg.qfsm_mode=="BLEND" else "✅ Standard Band"} {_rs_rg.effective_band}' +
                     '</div>', unsafe_allow_html=True)
             with _s_col:
-                _stc_regime.html(_sig_html_rg, height=580)
+                _stc_regime.html(_sig_html_rg, height=660)
 
             # VIX overlay notice
             if _vix_curr is not None and _rs_rg.vix_overlay_pct > 0:
