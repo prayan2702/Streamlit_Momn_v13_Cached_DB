@@ -4589,7 +4589,7 @@ with _tab_screener:
             if st.session_state.get("rebalance_done"):
                 _rm_col1, _rm_col2 = st.columns([2,1])
                 with _rm_col1:
-                    _mem_note = st.text_area("Rebalance note (optional)", height=60,
+                    _mem_note = st.text_area("Rebalance note (optional)", height=68,
                         placeholder="e.g. May 2026 RB — score 2, Mild Bull",
                         key="rm_note")
                 with _rm_col2:
