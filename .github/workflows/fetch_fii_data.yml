@@ -1,48 +1,44 @@
-# .github/workflows/fetch_fii_data.yml
-# ──────────────────────────────────────
-# Phase 2 Automation: Daily FII/DII net flow data fetch
-# Runs Mon-Fri 7:00 PM IST (13:30 UTC) — after market + FII reporting window
-# Also runs 9:00 AM IST Saturday for weekly summary
+# .github/workflows/fetch_fii_data.yml — v3
+# ─────────────────────────────────────────
+# FII/DII fetch with 5-source fallback chain:
+#   1. nselib (capital_market.fii_dii_trading_activity)
+#   2. nselib (cash_market.nsdl_fpi_investment_activity)
+#   3. nsefin
+#   4. NSDL direct parse
+#   5. yfinance proxy (INDA vs ^NSEI — estimate only)
 #
-# Output: fii_data.json in repo root
-#
-# Data source priority:
-#   1. NSE India API (primary — official, free, no auth)
-#   2. NSE moneycontrol-style endpoint (fallback)
-#   3. Stale previous data (if both fail — keeps last known values)
-#
-# fii_data.json is read by:
-#   - calculations.py get_full_regime_result() → fii_score param
-#   - scripts/compute_regime_score.py (Friday weekly regime auto-compute)
-#   - app.py load_all_state() (Phase 2 auto-load)
+# Schedule:
+#   Mon–Fri  7:00 PM IST (13:30 UTC)
+#   Mon–Fri  8:30 PM IST (15:00 UTC) — retry if 7 PM failed/stale
+#   Saturday 9:00 AM IST (03:30 UTC) — weekly summary
 
 name: Fetch FII DII Data
 
 on:
   schedule:
-    - cron: "30 13 * * 1-5"   # Mon-Fri 7:00 PM IST (13:30 UTC)
-    - cron: "30 3  * * 6"     # Saturday 9:00 AM IST (03:30 UTC) — weekly summary
-  workflow_dispatch:            # Manual trigger from GitHub Actions UI
+    - cron: "30 13 * * 1-5"   # Mon-Fri 7:00 PM IST
+    - cron: "0  15 * * 1-5"   # Mon-Fri 8:30 PM IST (retry)
+    - cron: "30  3 * * 6"     # Saturday 9:00 AM IST
+  workflow_dispatch:
 
 jobs:
   fetch_fii:
     runs-on: ubuntu-latest
     permissions:
-      contents: write           # Required to commit fii_data.json
+      contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install requests pandas --quiet
+        run: |
+          pip install nselib nsefin yfinance requests pandas openpyxl --quiet
 
       - name: Fetch FII/DII data
         run: python scripts/fetch_fii_data.py
@@ -52,5 +48,5 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add fii_data.json
-          git diff --staged --quiet || git commit -m "auto: fii data $(date +%Y-%m-%d)"
+          git diff --staged --quiet || git commit -m "auto: fii data $(date +%Y-%m-%d-%H%M)"
           git push
