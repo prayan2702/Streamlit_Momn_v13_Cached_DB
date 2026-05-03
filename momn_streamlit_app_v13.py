@@ -4550,20 +4550,22 @@ with _tab_screener:
 
             # ── Allocation cards ──────────────────────────────────────────
             _a1, _a2 = st.columns(2)
-            # v2026.09: always 80/20/0 — no liquid fund
             _eq = EQUITY_FIXED_PCT; _gd = GOLD_FIXED_PCT
-            for col,(lbl,pct,fc,bg) in zip([_a1,_a2],[
-                ("📈 Equity (QFSM)", _eq, "#2563eb","#dbeafe"),
-                ("🥇 GOLDBEES (Fixed 20%)", _gd, "#b45309","#fef3c7")]):
+            for col,(lbl,pct,fc,bg,extra) in zip([_a1,_a2],[
+                ("📈 Equity (QFSM)", _eq, "#2563eb","#dbeafe",""),
+                ("🥇 GOLDBEES (Fixed 20%)", _gd, "#b45309","#fef3c7",
+                 '<div style="font-size:10px;color:#b45309;margin-top:2px">±7% drift band: 13%–27%</div>')]):
                 with col:
-                    _badge = '<div style="font-size:10px;color:#b45309;margin-top:2px">±7% drift band: 13%–27%</div>' if lbl.startswith("🥇") else ""
-                    st.markdown(f"""<div style="background:{bg};border:1px solid {fc};border-radius:8px;
-                        padding:12px;text-align:center;margin-bottom:8px;">
-                      <div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>
-                      <div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>
-                      <div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>
-                      {_badge}
-                    </div>""", unsafe_allow_html=True)
+                    _card_html = (
+                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;'
+                        f'padding:12px;text-align:center;margin-bottom:8px;">'
+                        f'<div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>'
+                        f'<div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>'
+                        f'<div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>'
+                        f'{extra}'
+                        f'</div>'
+                    )
+                    st.markdown(_card_html, unsafe_allow_html=True)
 
             # ── Gold Drift Check ──────────────────────────────────────
             _gd_c1, _gd_c2 = st.columns([1, 2])
@@ -4863,143 +4865,201 @@ with _tab_screener:
             # ══════════════════════════════════════════════════════════════
 
         with _s3_tab_b:
-            # ── Compute rebalance ─────────────────────────────────────
+            # ── v2026.09 Two-Stage QFSM Rebalance ────────────────────────
             if portfolio and st.session_state.dfFiltered is not None:
-                dfFiltered      = st.session_state.dfFiltered
-                dfStats         = st.session_state.dfStats
-                top_n           = st.session_state.top_n_rank
-                rank_threshold  = top_n
+                dfFiltered = st.session_state.dfFiltered
+                dfStats    = st.session_state.dfStats
+                top_n      = st.session_state.top_n_rank
 
-                top_rank_tickers = dfFiltered.reset_index()
-                top_rank_tickers = top_rank_tickers[top_rank_tickers['Rank'] <= rank_threshold]['Ticker']
+                _rg_cur    = st.session_state.get("_regime_result", {})
+                _regime_bd = int(_rg_cur.get("regime_band", _rg_cur.get("score", 2)))
+
+                # Stage 1 banner
+                st.markdown(f'<div style="background:#DCFCE7;border:1px solid #86EFAC;border-left:4px solid #16A34A;'
+                            f'border-radius:8px;padding:7px 14px;font-size:12px;color:#14532D;margin-bottom:6px;">'
+                            f'⚡ <b>Stage 1 — Momentum Gate:</b> AllNSE filtered → Top {STAGE1_TOP_N} by avgZScore</div>',
+                            unsafe_allow_html=True)
+
+                try:
+                    stage1 = get_stage1_momentum_candidates(dfFiltered, top_n=STAGE1_TOP_N)
+                except Exception:
+                    stage1 = dfFiltered[dfFiltered.index <= STAGE1_TOP_N].copy()
+
+                # Stage 2 banner
+                st.markdown(f'<div style="background:#EEF2FF;border:1px solid #6366F1;border-left:4px solid #7C3AED;'
+                            f'border-radius:8px;padding:7px 14px;font-size:12px;color:#3730A3;margin-bottom:6px;">'
+                            f'⚛ <b>Stage 2 — QFSM Blend:</b> F1+F2+F3+F4+F5 composite_score → Top {PORTFOLIO_SIZE}</div>',
+                            unsafe_allow_html=True)
+
+                try:
+                    stage2      = compute_stage2_composite(stage1, _regime_bd)
+                    final_pf_df = select_final_portfolio(stage2, PORTFOLIO_SIZE)
+                    _has_s2     = 'composite_score' in stage2.columns
+                except Exception as _e2:
+                    st.warning(f"⚠️ Stage 2 error: {_e2}. Falling back to momentum ranking.")
+                    stage2      = dfFiltered.copy()
+                    final_pf_df = dfFiltered.head(top_n)
+                    _has_s2     = False
+
+                # Top tickers from Stage 2 final portfolio
+                _tc = 'Ticker' if 'Ticker' in final_pf_df.columns else None
+                top_rank_tickers = (final_pf_df['Ticker'] if _tc
+                                    else final_pf_df.reset_index().get('Ticker', pd.Series([])))
 
                 current_portfolio_tickers = pd.Series(portfolio)
-                entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)]
-                exit_stocks  = current_portfolio_tickers[~current_portfolio_tickers.isin(top_rank_tickers)]
+
+                # ── Threshold-based exits ─────────────────────────────────
+                if _has_s2:
+                    try:
+                        _exit_list_v09 = get_exit_list(stage2, portfolio, _regime_bd)
+                        exit_tickers_v09 = [e['ticker'] for e in _exit_list_v09]
+                    except Exception:
+                        exit_tickers_v09 = []; _exit_list_v09 = []
+                else:
+                    exit_tickers_v09 = []; _exit_list_v09 = []
+
+                # Also exit stocks no longer in Top STAGE1_TOP_N
+                classic_exits = current_portfolio_tickers[
+                    ~current_portfolio_tickers.isin(top_rank_tickers)].tolist()
+                exit_stocks  = pd.Series(sorted(set(exit_tickers_v09) | set(classic_exits)))
                 hold_stocks  = current_portfolio_tickers[current_portfolio_tickers.isin(top_rank_tickers)]
 
-                num_sells = len(exit_stocks)
-                entry_stocks = entry_stocks.head(num_sells)
+                num_sells    = len(exit_stocks)
+                try:
+                    entry_list   = get_entry_list(final_pf_df, portfolio, num_sells)
+                    entry_stocks = pd.Series(entry_list)
+                except Exception:
+                    entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)].head(num_sells)
 
                 if len(entry_stocks) < num_sells:
-                    entry_stocks = pd.concat([
-                        entry_stocks,
-                        pd.Series([None] * (num_sells - len(entry_stocks)))
-                    ])
+                    entry_stocks = pd.concat([entry_stocks,
+                                              pd.Series([None]*(num_sells-len(entry_stocks)))])
 
-                # ── Reasons for exit (v10 logic) ──────────────────────
+                # ── Exit reasons ──────────────────────────────────────────
+                _reason_map = {e['ticker']: e['reason'] for e in _exit_list_v09}
                 reasons_for_exit = []
                 for ticker in exit_stocks:
                     if pd.isna(ticker) or ticker == "":
                         reasons_for_exit.append(""); continue
-                    reasons    = []
-                    stock_data = dfStats[dfStats['Ticker'] == ticker] if dfStats is not None else pd.DataFrame()
-                    if len(stock_data) > 0:
-                        if stock_data.index[0] > rank_threshold:          reasons.append(f"Rank > {rank_threshold}")
-                        if stock_data['volm_cr'].values[0] <= 1:           reasons.append("Volume ≤ 1 Cr")
-                        if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]:
-                                                                           reasons.append("Close ≤ 200-DMA")
-                        if stock_data['roc12M'].values[0] <= 5.5:          reasons.append("12M ROC ≤ 5.5%")
-                        if stock_data['circuit'].values[0] >= 20:          reasons.append("Circuit ≥ 20")
-                        if stock_data['AWAY_ATH'].values[0] <= -25:        reasons.append("Away ATH ≤ -25%")
-                        if stock_data['roc12M'].values[0] >= 1000:         reasons.append("12M ROC ≥ 1000%")
-                        if stock_data['Close'].values[0] <= 30:            reasons.append("Close ≤ ₹30")
-                        if stock_data['circuit5'].values[0] > 10:          reasons.append("5% Circuit > 10")
+                    if ticker in _reason_map:
+                        reasons_for_exit.append(f"QFSM: {_reason_map[ticker]}"); continue
+                    reasons = []
+                    sd = dfStats[dfStats['Ticker']==ticker] if dfStats is not None else pd.DataFrame()
+                    if len(sd) > 0:
+                        if sd.index[0] > STAGE1_TOP_N:           reasons.append(f"Outside Top-{STAGE1_TOP_N}")
+                        if sd['volm_cr'].values[0] <= 1:          reasons.append("Volume ≤ 1Cr")
+                        if sd['Close'].values[0] <= sd['dma200d'].values[0]: reasons.append("Close ≤ 200DMA")
+                        if sd['roc12M'].values[0] <= 5.5:         reasons.append("12M ROC ≤ 5.5%")
+                        if sd['circuit'].values[0] >= 20:         reasons.append("Circuit ≥ 20")
+                        if sd['AWAY_ATH'].values[0] <= -25:       reasons.append("ATH ≤ -25%")
+                        if sd['Close'].values[0] <= 30:           reasons.append("Close ≤ ₹30")
                     else:
-                        reasons.append("Not in selected universe")
+                        reasons.append("Not in universe")
                     reasons_for_exit.append(", ".join(reasons) if reasons else "Rank dropped")
-
-                reasons_for_exit.extend([""] * (len(entry_stocks) - len(reasons_for_exit)))
+                reasons_for_exit.extend([""] * max(0, len(entry_stocks)-len(reasons_for_exit)))
 
                 rebalance_table = pd.DataFrame({
-                    'S.No.':           range(1, num_sells + 1),
+                    'S.No.':           range(1, num_sells+1),
                     'Sell Stocks':     exit_stocks.tolist(),
                     'Buy Stocks':      entry_stocks.tolist(),
                     'Reason for Exit': reasons_for_exit,
                 })
                 rebalance_table = rebalance_table[
-                    ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())
-                ]
+                    ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())]
                 rebalance_table.set_index('S.No.', inplace=True)
-                st.session_state.sell_list = exit_stocks.dropna().tolist()
-                st.session_state.buy_list  = entry_stocks.dropna().tolist()
+                st.session_state.sell_list       = exit_stocks.dropna().tolist()
+                st.session_state.buy_list        = entry_stocks.dropna().tolist()
                 st.session_state.rebalance_table = rebalance_table
                 st.session_state.rebalance_done  = True
 
-                # ── Summary strip ──────────────────────────────────────
+                # ── Factor allocation for current portfolio ───────────────
+                if _has_s2 and portfolio:
+                    try:
+                        _fa     = get_factor_allocation_pct(stage2, portfolio, _regime_bd)
+                        _m_pct  = _fa.get('Momentum (F1)', 0.45) * 100
+                        _fa_txt = " · ".join(f"<b>{k.split('(')[0].strip()}:</b> {v*100:.0f}%"
+                                             for k,v in _fa.items())
+                        _eq_note = ('⚡ Leading' if _m_pct>55 else
+                                    ('⚖️ Equilibrium' if _m_pct>=45 else
+                                     ('⚠️ Fading' if _m_pct>=35 else '🔴 Bear')))
+                        st.markdown(f'<div style="background:#F5F3FF;border:1px solid #A78BFA;border-radius:8px;'
+                                    f'padding:7px 14px;font-size:12px;color:#4C1D95;margin-bottom:6px;">'
+                                    f'⚛ <b>Portfolio Factor Mix:</b> {_fa_txt} &nbsp; {_eq_note} Momentum {_m_pct:.0f}%</div>',
+                                    unsafe_allow_html=True)
+                    except Exception:
+                        pass
+
+                # ── Summary strip ─────────────────────────────────────────
                 st.markdown(f"""<div class="reb-strip">
                   <div class="reb-stat"><div class="label">Portfolio</div><div class="val b">{len(portfolio)}</div></div>
-                  <div class="reb-stat"><div class="label">Top-{rank_threshold} Screener</div><div class="val b">{len(top_rank_tickers)}</div></div>
-                  <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{len(exit_stocks)}</div></div>
-                  <div class="reb-stat"><div class="label">BUY (Entry)</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
+                  <div class="reb-stat"><div class="label">Stage1 Top-{STAGE1_TOP_N}</div><div class="val b">{len(stage1)}</div></div>
+                  <div class="reb-stat"><div class="label">Stage2 Final-{PORTFOLIO_SIZE}</div><div class="val b">{len(final_pf_df)}</div></div>
+                  <div class="reb-stat"><div class="label">SELL</div><div class="val r">{num_sells}</div></div>
+                  <div class="reb-stat"><div class="label">BUY</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
                   <div class="reb-stat"><div class="label">HOLD</div><div class="val p">{len(hold_stocks)}</div></div>
                 </div>""", unsafe_allow_html=True)
 
-                # ── Sell / Buy / Hold columns ──────────────────────────
+                # ── Stage 2 composite table ───────────────────────────────
+                if _has_s2:
+                    with st.expander(f"📊 Stage 2 — Top {PORTFOLIO_SIZE} QFSM Composite Scores", expanded=False):
+                        _s2r = final_pf_df.reset_index() if final_pf_df.index.name=='Rank' else final_pf_df
+                        _sc = ['Ticker','Close','composite_score','composite_rank',
+                               'f1_momentum','f2_trend','f3_mean_rev','avgZScore12_6_3','AWAY_ATH','vol']
+                        _sc = [c for c in _sc if c in _s2r.columns]
+                        st.dataframe(_s2r[_sc].sort_values('composite_score', ascending=False)
+                                     if 'composite_score' in _s2r.columns else _s2r,
+                                     use_container_width=True, hide_index=True)
+
+                # ── Sell / Buy / Hold columns ─────────────────────────────
                 col_sell, col_buy, col_hold = st.columns(3)
                 with col_sell:
                     st.markdown('<div class="section-hdr" style="border-left-color:var(--red)">🔴 SELL List</div>', unsafe_allow_html=True)
                     sell_list = exit_stocks.dropna().tolist()
                     if sell_list:
-                        chips = " ".join([f'<span class="chip chip-sell">{s}</span>' for s in sell_list])
+                        chips = " ".join(f'<span class="chip chip-sell">{s}</span>' for s in sell_list)
                         st.markdown(chips, unsafe_allow_html=True)
                         cmp_map = {}
                         if dfStats is not None:
                             cmp_map = dict(zip(dfStats['Ticker'], dfStats['Close']))
-                        # Also try dfFiltered for CMP (in case stock is in filtered but not dfStats)
-                        if dfFiltered is not None:
-                            for t, c in zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Close']):
-                                if t not in cmp_map:
-                                    cmp_map[t] = c
                         sell_df = pd.DataFrame({
-                            "Stock": sell_list,
-                            "CMP ₹": [
-                                round(cmp_map[s], 2) if s in cmp_map and cmp_map[s] > 0
-                                else "N/A *"
-                                for s in sell_list
-                            ],
+                            "Stock":  sell_list,
+                            "CMP ₹":  [round(cmp_map.get(s,0),2) if cmp_map.get(s,0)>0 else "N/A" for s in sell_list],
                             "Reason": reasons_for_exit[:len(sell_list)]
                         })
                         st.dataframe(sell_df, hide_index=True, use_container_width=True)
-                        missing_cmp = [s for s in sell_list if s not in cmp_map or cmp_map.get(s, 0) == 0]
-                        if missing_cmp:
-                            st.caption(
-                                f"* {', '.join(missing_cmp)} — CMP unavailable "
-                                f"(stock selected universe ({st.session_state.universe}) mein nahi hai). "
-                                "Broker app se manually CMP check karo."
-                            )
                     else:
                         st.success("Koi sell nahi hai!")
 
                 with col_buy:
-                    st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List (New Entry)</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List</div>', unsafe_allow_html=True)
                     buy_list = entry_stocks.dropna().tolist()
                     if buy_list:
-                        chips = " ".join([f'<span class="chip chip-buy">{s}</span>' for s in buy_list])
+                        chips = " ".join(f'<span class="chip chip-buy">{s}</span>' for s in buy_list)
                         st.markdown(chips, unsafe_allow_html=True)
-                        rank_map = dict(zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Rank']))
-                        cmp_map2 = {}
-                        if dfStats is not None:
-                            cmp_map2 = dict(zip(dfStats['Ticker'], dfStats['Close']))
+                        if _tc:
+                            cs_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_score',pd.Series())))
+                            cl_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('Close',pd.Series())))
+                            rk_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_rank',pd.Series())))
+                        else:
+                            cs_map = cl_map = rk_map = {}
                         buy_df = pd.DataFrame({
-                            "Stock":        buy_list,
-                            "Screener Rank":[rank_map.get(s, "—") for s in buy_list],
-                            "CMP ₹":        [round(cmp_map2.get(s, 0), 2) for s in buy_list],
+                            "Stock":           buy_list,
+                            "CMP ₹":           [round(cl_map.get(s,0),2) if cl_map.get(s,0)>0 else "N/A" for s in buy_list],
+                            "Composite Score": [round(cs_map.get(s,0),3) if s in cs_map else "N/A" for s in buy_list],
+                            "QFSM Rank":       [rk_map.get(s,"N/A") for s in buy_list],
                         })
                         st.dataframe(buy_df, hide_index=True, use_container_width=True)
                     else:
-                        st.info("Koi buy nahi hai.")
+                        st.success("Koi entry nahi hai!")
 
                 with col_hold:
-                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🔵 HOLD (Retain)</div>', unsafe_allow_html=True)
-                    if not hold_stocks.empty:
-                        chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_stocks.tolist()])
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🟣 HOLD</div>', unsafe_allow_html=True)
+                    hold_list = hold_stocks.dropna().tolist()
+                    if hold_list:
+                        chips = " ".join(f'<span class="chip chip-hold">{s}</span>' for s in hold_list)
                         st.markdown(chips, unsafe_allow_html=True)
-
-                # ── Rebalance table ────────────────────────────────────
-                st.markdown('<div class="section-hdr">📋 Rebalance Table (Sell → Buy mapping)</div>', unsafe_allow_html=True)
-                if not rebalance_table.empty:
-                    st.dataframe(rebalance_table, use_container_width=True)
+                    else:
+                        st.info("Koi hold nahi.")
 
                 st.divider()
 
@@ -5337,43 +5397,43 @@ with _tab_screener:
             excel_file = f"{end_date.strftime('%Y-%m-%d')}_{U}_{rank_method}_{api_source}_lookback.xlsx"
 
         def _add_qfsm_cols(df: "pd.DataFrame", band: int) -> "pd.DataFrame":
-            """Add composite_score + factor cols to a dfStats-style df for Excel export."""
+            """Add composite_score + factor cols to dfStats for Excel export."""
             try:
-                _s1 = get_stage1_momentum_candidates(df, top_n=STAGE1_TOP_N)
+                # Use Rank column if available, else use positional head
+                if 'Rank' in df.columns:
+                    _s1 = df[df['Rank'] <= STAGE1_TOP_N].copy()
+                else:
+                    _s1 = df.head(STAGE1_TOP_N).copy()
+                _s1 = _s1.reset_index(drop=True)
                 _s2 = compute_stage2_composite(_s1, band)
-                # Merge back composite cols
                 _qcols = [c for c in ['composite_score','composite_rank',
                                        'f1_momentum','f2_trend','f3_mean_rev',
                                        'f4_size','f5_vol_score'] if c in _s2.columns]
-                if 'Ticker' in _s2.columns and 'Ticker' in df.columns:
-                    df = df.merge(_s2[['Ticker']+_qcols], on='Ticker', how='left')
-                elif _s2.index.name == df.index.name:
-                    df = df.join(_s2[_qcols], how='left')
+                if 'Ticker' in _s2.columns and 'Ticker' in df.columns and _qcols:
+                    df = df.merge(_s2[['Ticker'] + _qcols], on='Ticker', how='left')
             except Exception:
                 pass
             return df
 
         _regime_bd = int(st.session_state.get("_regime_result", {}).get("regime_band",
                          st.session_state.get("_regime_result", {}).get("score", 2)))
-        dfStats_export   = _add_qfsm_cols(dfStats.reset_index().rename(columns={'Rank':'Rank'}), _regime_bd) \
-                           if dfStats is not None else dfStats
-        filtered_export  = _add_qfsm_cols(filtered.reset_index().rename(columns={'Rank':'Rank'}), _regime_bd)
+        _df_ufilt        = _add_qfsm_cols(dfStats.reset_index(), _regime_bd) if dfStats is not None else pd.DataFrame()
+        filtered_export  = _add_qfsm_cols(filtered.reset_index(), _regime_bd)
 
         with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-            (dfStats_export if dfStats_export is not None else dfStats).to_excel(
-                writer, sheet_name="Unfiltered Stocks", index=True)
-            filtered_export.to_excel(writer, sheet_name="Filtered Stocks",    index=True)
-            df_failed.to_excel(      writer, sheet_name="Failed Downloads",   index=True)
+            (_df_ufilt).to_excel(writer, sheet_name="Unfiltered Stocks",    index=True)
+            filtered_export.to_excel(writer, sheet_name="Filtered Stocks",  index=True)
+            df_failed.to_excel(      writer, sheet_name="Failed Downloads",  index=True)
             reb_table.to_excel(      writer, sheet_name="Portfolio Rebalancing", index=True)
 
-            # Apply v10 formatting
-            try:
-                format_excel_unfiltered(excel_file, U, top_n)
-                format_excel_filtered(excel_file, U, top_n)
-                format_simple_sheet(excel_file, "Failed Downloads")
-                format_simple_sheet(excel_file, "Portfolio Rebalancing")
-            except Exception as e:
-                st.warning(f"Excel formatting partial error (file still usable): {e}")
+        # Format AFTER writer closes (openpyxl load_workbook needs closed file)
+        try:
+            format_excel_unfiltered(excel_file, U, top_n)
+            format_excel_filtered(excel_file, U, top_n)
+            format_simple_sheet(excel_file, "Failed Downloads")
+            format_simple_sheet(excel_file, "Portfolio Rebalancing")
+        except Exception as e:
+            st.warning(f"Excel formatting partial error (file still usable): {e}")
 
             with open(excel_file, "rb") as f:
                 st.download_button(
