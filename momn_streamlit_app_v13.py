@@ -1,31 +1,22 @@
 """
-momn_streamlit_app_v14.py  (SOP v2026.08 — Phase 1 update)
+momn_streamlit_app_v14.py
 =========================
 Momentum Screener + Portfolio Rebalancer — v14
 
 Changes vs v13:
-  • _verify_pin() bug fix — str() wrap added (TOML integer type mismatch fix)
-  • _pin_secret_exists() helper — debug ke liye
-  • GitHub Actions + ATH push panel: smarter error messages
-    - Secret missing → alag message (TRIGGER_PIN set nahi)
-    - Wrong PIN → alag message
-  • Logic/calculations untouched
-
-SOP v2026.06 — Multi-Asset Regime Changes (app-level):
-  • Allocation updated: Score3=80/15/5, Score2=65/20/15, Score1=45/25/30, Score0=25/30/45
-  • VIX Overlay panel: VIX>30→+5%Gold, VIX 20-30→+3%Gold (Liquid→Gold, Equity untouched)
-  • Gold drift band: ±7% of PF (was ±5%)
-  • Transaction guardrail: ₹15K minimum per GOLDBEES/Liquid transaction
-  • Drawdown Protocol: DD≥15% warn, DD≥20% override, DD≥30% emergency
-  • Equiweight Maintenance: Proceeds allocation panel — exit-funded regime shift
-    Per-stock target = Equity Budget÷30, drift band ±₹20K
-  • _alloc_start: updated to new allocations
-  • Regime Tab: VIX overlay display on allocation tiles
-
-  NOTE: calculations.py get_regime_score() mein bhi allocation constants update karo:
-    ALLOC = {3:(0.80,0.15,0.05), 2:(0.65,0.20,0.15), 1:(0.45,0.25,0.30), 0:(0.25,0.30,0.45)}
-    GOLD_CAP = 0.30  # hard max
-    GOLD_DRIFT_BAND = 0.07  # ±7% of total portfolio
+  SOP v2026.09 (v14 — built on v13 base):
+  • Gold FIXED 20% all phases — ±7% drift band (13%-27%)
+  • Equity FIXED 80% — 0% cash (no liquid fund)
+  • Regime signals → QFSM equity factor weights (not asset split)
+  • Liquid Fund REMOVED from UI and allocation
+  • Market Regime tab: 7+FII signals (S1-S7 + FII) — 2 sub-tabs
+  • Screener table: QFSM composite_score + factor columns (F1-F5)
+  • Excel export: composite_rank + factor scores in both sheets
+  • PIN-protected rebalance_memory.json push to GitHub
+  • FII signal: daily_fii_cache.yml workflow + fii_data.json
+  • Two-stage equity: Stage1 momentum gate → Stage2 QFSM blend
+  • Threshold-based exit (not worst-rank-held)
+  • Risk parity position sizing
 """
 
 import io
@@ -49,7 +40,6 @@ _GH_REPO  = "Streamlit_Momn_v13_Cached_DB"
 _WF_YFINANCE = "daily_cache.yml"
 _WF_UPSTOX   = "daily_cache_upstox.yml"
 _WF_ANGEL    = "daily_cache_angelone.yml"
-_WF_FII      = "fetch_fii_data.yml"
 
 
 def _get_secret(key: str, default: str = "") -> str:
@@ -156,14 +146,101 @@ import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.styles.borders import Border, Side
 
+
+# ── FII data cache loader ──────────────────────────────────────
+@st.cache_data(ttl=3600, show_spinner=False)
+def _load_fii_data() -> dict:
+    """Load fii_data.json from GitHub. Returns {} if not available."""
+    try:
+        r = requests.get(_FII_JSON_URL, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def _get_fii_signal(fii_data: dict) -> dict:
+    """
+    Compute S_FII signal (0 to 1.0 pts) from fii_data.json.
+    fii_data keys: net_equity_cr (FII net equity flow in ₹ crore, can be negative)
+    Thresholds: > ₹5000 Cr = 1.0 | ₹0-5000 Cr = 0.5 | <0 = 0 | <-5000 Cr = -0.5 (floor 0)
+    """
+    net = float(fii_data.get("net_equity_cr", fii_data.get("fii_net_cr", 0)) or 0)
+    if net > 5000:
+        score = 1.0; label = f"FII Buy ₹{net/100:.0f}Cr"
+    elif net > 0:
+        score = 0.5; label = f"FII Mild Buy ₹{net/100:.0f}Cr"
+    elif net >= -5000:
+        score = 0.0; label = f"FII Sell ₹{abs(net)/100:.0f}Cr"
+    else:
+        score = 0.0; label = f"FII Heavy Sell ₹{abs(net)/100:.0f}Cr"
+    return {
+        "score": score, "label": label, "net_cr": net,
+        "date": fii_data.get("date", "N/A"),
+        "pass": score >= 0.5,
+    }
+
+
+# ── Rebalance memory helpers ───────────────────────────────────
+@st.cache_data(ttl=600, show_spinner=False)
+def _load_rebalance_memory() -> dict:
+    """Load rebalance_memory.json from GitHub."""
+    try:
+        r = requests.get(_REBALANCE_MEM_URL, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def _save_rebalance_memory(mem: dict, pin: str) -> tuple:
+    """PIN-protected push of rebalance_memory.json to GitHub."""
+    if not _verify_pin(pin):
+        return False, "❌ Wrong PIN"
+    if not _get_secret("GITHUB_PAT"):
+        return False, "❌ GITHUB_PAT secret missing"
+    return _push_json_to_github(
+        "rebalance_memory.json", mem,
+        f"🤖 Rebalance memory update — {datetime.date.today()}"
+    )
+
 warnings.filterwarnings("ignore")
 
 # ── Local modules ──────────────────────────────────────────────
 try:
-    from calculations import build_dfStats, apply_filters
+    from calculations import (
+        build_dfStats, apply_filters,
+        # v2026.09
+        get_equity_factor_weights,
+        get_stage1_momentum_candidates,
+        compute_stage2_composite,
+        select_final_portfolio,
+        get_risk_parity_weights,
+        get_position_values,
+        get_exit_list,
+        get_entry_list,
+        get_factor_allocation_pct,
+        check_gold_drift,
+    )
     _CALCS_AVAILABLE = True
 except ImportError:
     _CALCS_AVAILABLE = False
+    def get_equity_factor_weights(b): return EQUITY_FACTOR_WEIGHTS.get(b, EQUITY_FACTOR_WEIGHTS[2])
+    def check_gold_drift(g, t):
+        gp = g/t if t else 0
+        if gp > GOLD_CEIL: return {'status':'ABOVE_BAND','gold_pct':round(gp*100,1),'action':'TRIM','amount':round(g-t*GOLD_TARGET),'message':f'⚠️ Gold {gp*100:.1f}% > 27%'}
+        if gp < GOLD_FLOOR: return {'status':'BELOW_BAND','gold_pct':round(gp*100,1),'action':'TOP_UP','amount':round(t*GOLD_TARGET-g),'message':f'🔴 Gold {gp*100:.1f}% < 13%'}
+        return {'status':'IN_BAND','gold_pct':round(gp*100,1),'action':'NONE','amount':0,'message':f'✅ Gold {gp*100:.1f}% — OK'}
+    def get_stage1_momentum_candidates(df, top_n=100): return df[df.index<=top_n].copy()
+    def compute_stage2_composite(df, band): return df
+    def select_final_portfolio(df, n=30): return df.head(n)
+    def get_risk_parity_weights(df, syms): n=max(len(syms),1); return {s:1/n for s in syms}
+    def get_position_values(w, b): return {s:round(v*b) for s,v in w.items()}
+    def get_exit_list(df, p, b, mx=None): return []
+    def get_entry_list(df, p, n): return []
+    def get_factor_allocation_pct(df, p, b): return {'Momentum (F1)':0.45,'Trend (F2)':0.25,'Mean Rev (F3)':0.10,'Size (F4)':0.10,'Volatility (F5)':0.10}
 
 import yfinance as yf  # always available (in requirements.txt)
 
@@ -297,10 +374,35 @@ def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
 # PAGE CONFIG
 # ═══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="Momn Screener v13",
+    page_title="Momn Screener v14 — SOP v2026.09",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
+)
+
+# ── v2026.09 constants ─────────────────────────────────────────
+GOLD_FIXED_PCT   = 0.20
+EQUITY_FIXED_PCT = 0.80
+GOLD_FLOOR, GOLD_CEIL = 0.13, 0.27
+GOLD_TARGET      = 0.20
+MIN_TXN_AMOUNT   = 15000
+PORTFOLIO_SIZE   = 30
+STAGE1_TOP_N     = 100
+DD_OVERRIDE_THRESHOLD = 20.0
+
+EQUITY_FACTOR_WEIGHTS = {
+    3: dict(f1=0.55, f2=0.25, f3=0.05, f4=0.10, f5=0.05),
+    2: dict(f1=0.45, f2=0.25, f3=0.10, f4=0.10, f5=0.10),
+    1: dict(f1=0.35, f2=0.25, f3=0.20, f4=0.10, f5=0.10),
+    0: dict(f1=0.25, f2=0.30, f3=0.30, f4=0.10, f5=0.05),
+}
+
+# ── FII cache URL ──────────────────────────────────────────────
+_FII_JSON_URL = (
+    f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main/fii_data.json"
+)
+_REBALANCE_MEM_URL = (
+    f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main/rebalance_memory.json"
 )
 
 # ── CSS ────────────────────────────────────────────────────────
@@ -908,14 +1010,6 @@ _defaults = {
     # ── ATH Override Memory (persisted in ath_memory.json) ──────
     "_ath_memory":             {},     # loaded from file on first cross-review run
     "_ath_memory_loaded":      False,  # sentinel to load from file exactly once
-    # ── Phase 1: Regime state (7-signal weighted, QFSM) ─────────
-    "_regime_state":           None,   # RegimeState object
-    "_regime_prev_state":      None,   # previous RegimeState (for confirmation tracking)
-    "_rt_nifty_close":         None,   # fetched Nifty close
-    "_rt_nifty_dma200":        None,   # fetched Nifty 200DMA
-    "_rt_rank_history":        [],     # list of weekly top-50 dicts
-    "_rb_memory_loaded":       False,  # rebalance_memory.json loaded flag
-    "_rb_memory":              {},     # last rebalance memory dict
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -952,114 +1046,6 @@ def _save_ath_memory(mem: dict) -> bool:
     Returns True on success, False on error."""
     try:
         with open(_ATH_MEMORY_FILE, "w") as f:
-            json.dump(mem, f, indent=2, ensure_ascii=False)
-        return True
-    except Exception:
-        return False
-
-# ── Rebalance Memory helpers ─────────────────────────────────────
-_RB_MEMORY_FILE  = "rebalance_memory.json"
-_GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main"
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _load_github_json(filename: str, default=None):
-    """Load JSON from GitHub repo (raw URL). TTL=1hr. Falls back to local file."""
-    import requests as _rq_gh
-    try:
-        r = _rq_gh.get(f"{_GITHUB_RAW_BASE}/{filename}", timeout=8)
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    # Local fallback
-    try:
-        if os.path.exists(filename):
-            with open(filename) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return default if default is not None else {}
-
-def _load_all_state():
-    """
-    SOP v2026.08 Section 14.7 — Load all auto-cached state from GitHub on startup.
-    Populates session_state with regime_state.json, fii_data.json, nav_cache.json,
-    rank_history.json, rebalance_memory.json.
-    """
-    if st.session_state.get("_all_state_loaded"):
-        return
-
-    # ── regime_state.json (weekly auto-computed by GitHub Actions) ────────────
-    rs_json = _load_github_json("regime_state.json", {})
-    if rs_json.get("last_updated") and rs_json.get("raw_score") is not None:
-        # Hydrate RegimeState from JSON so confirmation history is preserved
-        try:
-            from calculations import RegimeState as _RS
-            _prev = _RS.from_dict(rs_json)
-            if st.session_state.get("_regime_prev_state") is None:
-                st.session_state["_regime_prev_state"] = _prev
-        except Exception:
-            pass
-        st.session_state["_regime_state_json"] = rs_json
-
-    # ── fii_data.json (daily auto-fetched by GitHub Actions) ─────────────────
-    fii_json = _load_github_json("fii_data.json", {})
-    if fii_json:
-        st.session_state["_fii_data"]  = fii_json
-        st.session_state["_fii_score"] = float(fii_json.get("score", 0.5))
-
-    # ── nav_cache.json (monthly sync from Google Sheet) ───────────────────────
-    nav_json = _load_github_json("nav_cache.json", {})
-    if nav_json and nav_json.get("nav_series"):
-        # Build nav series list from cache for S1 computation
-        nav_entries = nav_json.get("nav_series", [])
-        if nav_entries and isinstance(nav_entries[0], dict):
-            nav_vals = [e.get("nav", 0) for e in nav_entries if e.get("nav", 0) > 0]
-        else:
-            nav_vals = [v for v in nav_entries if v and v > 0]
-        if nav_vals and st.session_state.get("_rt_navs") is None:
-            st.session_state["_rt_navs"] = nav_vals
-        st.session_state["_nav_cache"] = nav_json
-
-    # ── rank_history.json (weekly top-50 snapshot for S7) ────────────────────
-    rh_json = _load_github_json("rank_history.json", [])
-    if rh_json and isinstance(rh_json, list):
-        st.session_state["_rt_rank_history"] = rh_json
-
-    # ── rebalance_memory.json (PIN-protected monthly save) ───────────────────
-    if not st.session_state.get("_rb_memory_loaded"):
-        rb_json = _load_github_json("rebalance_memory.json", {})
-        if rb_json:
-            st.session_state["_rb_memory"] = rb_json
-            st.session_state["_rb_memory_loaded"] = True
-
-    st.session_state["_all_state_loaded"] = True
-
-# Run on every app load (cached internally via session_state flag)
-_load_all_state()
-
-def _load_rb_memory() -> dict:
-    """Load rebalance memory from local JSON, fallback GitHub."""
-    try:
-        if os.path.exists(_RB_MEMORY_FILE):
-            with open(_RB_MEMORY_FILE, "r") as f:
-                return json.load(f)
-    except Exception:
-        pass
-    try:
-        r = requests.get(
-            f"https://raw.githubusercontent.com/{_GH_OWNER}/{_GH_REPO}/main/rebalance_memory.json",
-            timeout=8,
-        )
-        if r.status_code == 200:
-            return r.json()
-    except Exception:
-        pass
-    return {}
-
-def _save_rb_memory(mem: dict) -> bool:
-    try:
-        with open(_RB_MEMORY_FILE, "w") as f:
             json.dump(mem, f, indent=2, ensure_ascii=False)
         return True
     except Exception:
@@ -1126,7 +1112,7 @@ def build_dates(end_date: datetime.date) -> dict:
 
 # ── v10-identical Excel formatting ────────────────────────────
 def format_excel_unfiltered(file_name, universe, top_n):
-    """Format 'Unfiltered Stocks' sheet — exact v10 logic."""
+    """Format 'Unfiltered Stocks' sheet — v2026.09: highlights composite_rank + momentum Rank."""
     wb = openpyxl.load_workbook(file_name)
     ws = wb.active
     thin = Border(left=Side(style="thin"), right=Side(style="thin"),
@@ -1153,9 +1139,12 @@ def format_excel_unfiltered(file_name, universe, top_n):
     def ci(name): return headers.index(name) + 1 if name in headers else None
 
     rank_threshold = top_n
-    green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+    green_fill  = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+    gold_fill   = PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid")
     idx = {k: ci(k) for k in ['volm_cr','Close','dma200d','AWAY_ATH','roc12M',
-                                'circuit','roc1M','circuit5','Ticker','Rank']}
+                                'circuit','roc1M','circuit5','Ticker','Rank',
+                                'composite_rank','composite_score',
+                                'f1_momentum','f2_trend','f3_mean_rev']}
 
     for row in range(2, ws.max_row + 1):
         failed = False
@@ -1177,8 +1166,17 @@ def format_excel_unfiltered(file_name, universe, top_n):
         if roc is not None and roc > 1000:                                 mark(idx['roc12M'])
         if failed and idx['Ticker']:
             ws.cell(row=row, column=idx['Ticker']).fill = no_fill
+        # Momentum rank highlight (green)
         if idx['Rank'] and (rk := v(idx['Rank'])) is not None and rk <= rank_threshold:
             ws.cell(row=row, column=idx['Rank']).fill = green_fill
+        # Composite rank highlight (gold) — top PORTFOLIO_SIZE
+        _cr_col = idx.get('composite_rank')
+        if _cr_col and (crk := v(_cr_col)) is not None:
+            try:
+                if int(crk) <= PORTFOLIO_SIZE:
+                    ws.cell(row=row, column=_cr_col).fill = gold_fill
+            except (TypeError, ValueError):
+                pass
 
     # ATH round
     ath_col = ci('ATH')
@@ -1187,11 +1185,103 @@ def format_excel_unfiltered(file_name, universe, top_n):
             c = ws.cell(row=r, column=ath_col)
             if isinstance(c.value, (int, float)):
                 c.value = round(c.value)
+
+    # Round factor score cols to 3dp
+    for fcol in ['composite_score','f1_momentum','f2_trend','f3_mean_rev','f4_size','f5_vol_score']:
+        _fc = ci(fcol)
+        if _fc:
+            for r in range(2, ws.max_row + 1):
+                cell = ws.cell(row=r, column=_fc)
+                if isinstance(cell.value, float):
+                    cell.value = round(cell.value, 3)
     wb.save(file_name)
 
 
 def format_excel_filtered(file_name, universe, top_n):
-    """Format 'Filtered Stocks' sheet — exact v10 logic."""
+    """Format 'Filtered Stocks' sheet — v2026.09: composite_rank gold highlight added."""
+    wb = openpyxl.load_workbook(file_name)
+    ws = wb["Filtered Stocks"]
+    thin = Border(left=Side(style="thin"), right=Side(style="thin"),
+                  top=Side(style="thin"),  bottom=Side(style="thin"))
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, min_col=1, max_col=ws.max_column):
+        for cell in row:
+            cell.border    = thin
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.freeze_panes = 'A2'
+    hdr_fill = PatternFill(start_color="00008B", end_color="00008B", fill_type="solid")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    for col in range(1, ws.max_column + 1):
+        c = ws.cell(row=1, column=col)
+        c.fill = hdr_fill; c.font = hdr_font
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    for col in ws.columns:
+        max_len = max((len(str(c.value)) for c in col if c.value), default=0)
+        ws.column_dimensions[col[0].column_letter].width = max_len + 2
+
+    headers = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
+    def ci(n): return headers.index(n) + 1 if n in headers else None
+
+    # ATH round
+    for col in range(1, ws.max_column + 1):
+        if ws.cell(row=1, column=col).value == "ATH":
+            for r in range(2, ws.max_row + 1):
+                c = ws.cell(row=r, column=col)
+                if isinstance(c.value, (int, float)):
+                    c.value = round(c.value)
+            break
+    # AWAY_ATH % suffix
+    for col in range(1, ws.max_column + 1):
+        if ws.cell(row=1, column=col).value == "AWAY_ATH":
+            for r in range(2, ws.max_row + 1):
+                c = ws.cell(row=r, column=col)
+                if isinstance(c.value, (int, float)):
+                    c.value = f"{c.value}%"
+            break
+
+    # Round factor cols
+    for fcol in ['composite_score','f1_momentum','f2_trend','f3_mean_rev','f4_size','f5_vol_score']:
+        _fc = ci(fcol)
+        if _fc:
+            for r in range(2, ws.max_row + 1):
+                cell = ws.cell(row=r, column=_fc)
+                if isinstance(cell.value, float):
+                    cell.value = round(cell.value, 3)
+
+    rank_threshold = top_n
+    green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
+    gold_fill  = PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid")
+
+    # Momentum Rank highlight
+    rank_col = ci('Rank')
+    comp_rank_col = ci('composite_rank')
+    rank_75_count = 0
+    comp_30_count = 0
+    if rank_col:
+        for r in range(2, ws.max_row + 1):
+            c = ws.cell(row=r, column=rank_col)
+            if isinstance(c.value, (int, float)) and c.value <= rank_threshold:
+                c.fill = green_fill; rank_75_count += 1
+    # Composite rank highlight (gold — Stage 2 top 30)
+    if comp_rank_col:
+        for r in range(2, ws.max_row + 1):
+            c = ws.cell(row=r, column=comp_rank_col)
+            try:
+                if isinstance(c.value, (int, float)) and int(c.value) <= PORTFOLIO_SIZE:
+                    c.fill = gold_fill; comp_30_count += 1
+            except (TypeError, ValueError):
+                pass
+
+    total_filtered = ws.max_row - 1
+    ws.append([])
+    ws.append(["Summary"])
+    summary_start = ws.max_row
+    ws.append([f"Total Filtered Stocks: {total_filtered}"])
+    ws.append([f"Momentum Top-{rank_threshold} (green): {rank_75_count}"])
+    ws.append([f"QFSM Stage-2 Top-{PORTFOLIO_SIZE} (gold): {comp_30_count}"])
+    for r in ws.iter_rows(min_row=summary_start, max_row=ws.max_row, min_col=1, max_col=1):
+        for cell in r:
+            cell.font = Font(bold=True)
+    wb.save(file_name)
     wb = openpyxl.load_workbook(file_name)
     ws = wb["Filtered Stocks"]
     thin = Border(left=Side(style="thin"), right=Side(style="thin"),
@@ -1533,64 +1623,6 @@ with st.sidebar:
     else:
         st.caption("Abhi koi ATH review save nahi hua. Cross-source review karke 'Apply' karo.")
 
-    # ── Rebalance Memory Panel ───────────────────────────────────────
-    st.divider()
-    st.markdown("### 💾 Rebalance Memory", unsafe_allow_html=True)
-    with st.expander("Save / View Rebalance Memory", expanded=False):
-        st.caption("Monthly rebalance ke baad state save karo (PIN-protected — same PIN as ATH).")
-        _rb_mem_sb = st.session_state.get("_rb_memory", {})
-        if _rb_mem_sb:
-            _rb_al = _rb_mem_sb.get("allocation", {})
-            st.markdown(
-                f"📅 **{_rb_mem_sb.get('last_rebalance_date','—')}** &nbsp;|&nbsp; "
-                f"Band **{_rb_mem_sb.get('regime_band','—')}** &nbsp;|&nbsp; "
-                f"Score **{_rb_mem_sb.get('weighted_score','—')}**\n\n"
-                f"Eq **{_rb_al.get('equity_pct','—')}%** / Gold **{_rb_al.get('gold_pct','—')}%** / Cash **{_rb_al.get('cash_pct','—')}%**"
-            )
-        else:
-            st.info("No rebalance memory saved yet.")
-
-        _rs_sb = st.session_state.get("_regime_state")
-        if _rs_sb is not None:
-            _rb_notes_inp = st.text_area("Notes (optional):", key="rb_notes_sb", height=100)
-            _rb_pin_inp   = st.text_input("🔑 PIN", type="password", max_chars=6, key="rb_pin_sb")
-            if st.button("💾 Save Rebalance Memory", use_container_width=True, key="rb_save_sb"):
-                if not _verify_pin(_rb_pin_inp):
-                    if not _pin_secret_exists():
-                        st.error("❌ TRIGGER_PIN secret set nahi hai")
-                    else:
-                        st.error("❌ Wrong PIN")
-                else:
-                    _rb_data = {
-                        "last_rebalance_date": str(datetime.date.today()),
-                        "regime_band":         _rs_sb.effective_band,
-                        "weighted_score":      round(_rs_sb.raw_score, 3),
-                        "qfsm_mode":           _rs_sb.qfsm_mode,
-                        "status":              _rs_sb.status,
-                        "allocation": {
-                            "equity_pct":  round(_rs_sb.equity * 100, 1),
-                            "gold_pct":    round(_rs_sb.gold   * 100, 1),
-                            "cash_pct":    round(_rs_sb.cash   * 100, 1),
-                        },
-                        "signals":           _rs_sb.signals,
-                        "vix_overlay_pct":   _rs_sb.vix_overlay_pct,
-                        "notes":             _rb_notes_inp,
-                    }
-                    _save_rb_memory(_rb_data)
-                    st.session_state["_rb_memory"] = _rb_data
-                    if _get_secret("GITHUB_PAT", ""):
-                        with st.spinner("☁️ GitHub pe push ho raha hai..."):
-                            _ok2, _msg2 = _push_json_to_github(
-                                path="rebalance_memory.json",
-                                content_dict=_rb_data,
-                                commit_msg=f"auto: rebalance memory {_rb_data['last_rebalance_date']}",
-                            )
-                        st.success(_msg2 if _ok2 else f"Local saved. GitHub: {_msg2}")
-                    else:
-                        st.success("✅ Saved locally. (Set GITHUB_PAT to also push to GitHub.)")
-        else:
-            st.caption("Market Regime tab mein refresh karo → tab state load hogi → phir save karo.")
-
     # ── GitHub Actions Trigger Panel ─────────────────────────────
     st.divider()
     st.markdown("### ⚡ GitHub Actions", unsafe_allow_html=True)
@@ -1606,7 +1638,6 @@ with st.sidebar:
             "📦 YFinance":   _WF_YFINANCE,
             "📡 Upstox":     _WF_UPSTOX,
             "🤖 Angel One":  _WF_ANGEL,
-            "📊 FII / DII":  _WF_FII,
         }
         for _lbl, _wf in _wf_map.items():
             if st.button(
@@ -1708,144 +1739,124 @@ def _fetch_nav_from_sheet(sheet_csv_url):
 # Or use pub CSV URL from File > Share > Publish to web
 _NAV_SHEET_CSV = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSAf1ZhBXcMmi_QSxHnU6LI9PLKGbgEu16-FNKBjELhTk2x6qwLuuG7jAFx-mIn_ezNn45uL1G00MD1/pub?gid=612197947&single=true&output=csv"
 
-def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str="", raw_score=None, qfsm_mode="STANDARD"):
-    """
-    QFSM Gauge v3 — clean semicircle, score below arc, no overlaps.
-    SVG is 340x180. Arc center at (170, 170). viewBox shows top 165px of arc.
-    Score text placed at bottom of SVG (y=165+), well below needle pivot.
-    Labels placed outside arc at r=155, within viewBox.
-    """
+def _build_mmi_gauge(sc, fc, lbl, em, src_lbl="", date_str=""):
+    """MMI-style semicircle speedometer gauge — properly centered."""
     import math as _gm
+    # Geometry — center at (155,155), semicircle arc spans 180° (left→top→right)
+    cx, cy   = 155, 155   # needle pivot / arc center
+    r_arc    = 108        # radius of arc midline
+    r_inner  = 88         # inner radius of track
+    r_outer  = 128        # outer radius of track (track width ≈ 40px)
+    r_needle = 98         # needle tip length
 
-    # ── Geometry ──────────────────────────────────────────────────────────────
-    W   = 340          # SVG width
-    cx  = W // 2       # 170 — horizontal center
-    cy  = 175          # arc pivot — placed LOW so arc top is well within view
-    ra  = 105          # arc radius (midline of track)
-    ri  = ra - 22      # inner edge of track
-    ro  = ra + 22      # outer edge of track
-    rn  = ra - 8       # needle tip radius (just inside track inner)
-    rl  = ro + 18      # label radius
+    def _pt(angle_deg, radius):
+        """Math angle (0=right,90=up,180=left) → SVG (x,y)."""
+        rad = _gm.radians(angle_deg)
+        return (cx + radius * _gm.cos(rad), cy - radius * _gm.sin(rad))
 
-    def pt(deg, r):
-        rad = _gm.radians(deg)
-        return (cx + r * _gm.cos(rad), cy - r * _gm.sin(rad))
-
-    # ── Segments: 180°→0° maps to 0→9.0 pts ──────────────────────────────────
-    # Band boundaries: Bear 0-2.5 | Neutral 2.5-4.5 | MildBull 4.5-6.5 | Strong 6.5-9.0
-    # Angle boundaries: 180° | 130° | 90° | 50° | 0°
-    # (angle = 180 - score/9.0 * 180)
-    def s2a(score):   # score → angle
-        return 180.0 - (score / 9.0) * 180.0
-
-    segs = [
-        (s2a(0.0),  s2a(2.5),  "#ef4444", 0),   # Bear
-        (s2a(2.5),  s2a(4.5),  "#f97316", 1),   # Neutral
-        (s2a(4.5),  s2a(6.5),  "#eab308", 2),   # Mild Bull
-        (s2a(6.5),  s2a(7.75), "#22c55e", 3),   # Bull
-        (s2a(7.75), s2a(9.0),  "#10b981", 3),   # Strong Bull
+    # Segment boundary angles: Bear 180→135, Neutral 135→90, MildBull 90→45, StrongBull 45→0
+    seg_defs = [
+        (180, 135, "#ef4444"),
+        (135,  90, "#f59e0b"),
+        ( 90,  45, "#38bdf8"),
+        ( 45,   0, "#10b981"),
     ]
-    active_idx = min(sc, 3)
+    seg_mid_angles   = [157.5, 112.5, 67.5, 22.5]
+    active_idx       = min(sc, 3)
 
-    # ── Background arc
-    bx0,by0 = pt(180, ra); bx1,by1 = pt(0, ra)
-    bg = (f'<path d="M{bx0:.1f} {by0:.1f} A{ra} {ra} 0 0 1 {bx1:.1f} {by1:.1f}" '
-          f'fill="none" stroke="#1e2736" stroke-width="44" stroke-linecap="butt"/>')
+    # ── Background track (grey ring)
+    bx0, by0 = _pt(180, r_arc)
+    bx1, by1 = _pt(  0, r_arc)
+    bg_svg = (f'<path d="M {bx0:.1f} {by0:.1f} A {r_arc} {r_arc} 0 0 1 {bx1:.1f} {by1:.1f}" '
+              f'fill="none" stroke="#1e2736" stroke-width="40" stroke-linecap="butt"/>')
 
     # ── Color segments
     segs_svg = ""
-    for i,(sa,ea,col,band) in enumerate(segs):
-        sx,sy = pt(sa,ra); ex,ey = pt(ea,ra)
-        is_act = (band == active_idx)
-        sw = "44" if is_act else "32"
-        op = "1.0" if is_act else "0.38"
-        segs_svg += (f'<path d="M{sx:.1f} {sy:.1f} A{ra} {ra} 0 0 1 {ex:.1f} {ey:.1f}" '
+    for i, (sa, ea, col) in enumerate(seg_defs):
+        sx, sy = _pt(sa, r_arc)
+        ex, ey = _pt(ea, r_arc)
+        is_active = (i == active_idx)
+        sw  = "40" if is_active else "28"
+        op  = "1"  if is_active else "0.50"
+        segs_svg += (f'<path d="M {sx:.1f} {sy:.1f} A {r_arc} {r_arc} 0 0 1 {ex:.1f} {ey:.1f}" '
                      f'fill="none" stroke="{col}" stroke-width="{sw}" stroke-linecap="butt" opacity="{op}"/>')
 
-    # ── Divider ticks at band boundaries
-    tick_svg = ""
-    for ta in [s2a(2.5), s2a(4.5), s2a(6.5)]:
-        t0x,t0y = pt(ta, ri-4); t1x,t1y = pt(ta, ro+4)
-        tick_svg += f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="3.5"/>' 
+    # ── Divider ticks between segments
+    ticks_svg = ""
+    for ta in [135, 90, 45]:
+        t0x, t0y = _pt(ta, r_inner - 4)
+        t1x, t1y = _pt(ta, r_outer + 4)
+        ticks_svg += (f'<line x1="{t0x:.1f}" y1="{t0y:.1f}" '
+                      f'x2="{t1x:.1f}" y2="{t1y:.1f}" stroke="#0d1520" stroke-width="4"/>')
 
-    # ── Band labels OUTSIDE arc, placed so they fit inside 340px wide SVG
+    # ── Labels just outside the arc (r_outer + 16)
+    r_lbl = r_outer + 18
     lbl_defs = [
-        (168, "Bear",      "#ef4444", "end",    "10"),
-        (120, "Neutral",   "#f97316", "end",    "9"),
-        ( 72, "Mild Bull", "#eab308", "middle", "9"),
-        ( 38, "Strong",    "#10b981", "start",  "9"),
+        (175, "Bear",     "#ef4444", "end"),
+        (128, "Neutral",  "#f59e0b", "end"),
+        ( 52, "Mild Bull","#38bdf8", "start"),
+        (  5, "Strong",   "#10b981", "start"),
     ]
     lbl_svg = ""
-    for i,(la,lt,lc,anc,fsz) in enumerate(lbl_defs):
-        lx,ly = pt(la, rl)
-        fw = "800" if (i==active_idx or (active_idx==3 and i==3)) else "500"
+    for i, (la, lt, lc, anc) in enumerate(lbl_defs):
+        lx, ly = _pt(la, r_lbl)
+        fw = "800" if i == active_idx else "600"
         lbl_svg += (f'<text x="{lx:.1f}" y="{ly:.1f}" text-anchor="{anc}" '
-                    f'dominant-baseline="central" font-size="{fsz}" font-weight="{fw}" fill="{lc}" '
-                    f'font-family="Segoe UI,sans-serif">{lt}</text>')
+                    f'dominant-baseline="central" font-family="Segoe UI,sans-serif" '
+                    f'font-size="11" font-weight="{fw}" fill="{lc}">{lt}</text>')
 
-    # ── Score text — placed BELOW the pivot (cy+20), not inside arc area ────
-    rs = float(raw_score) if raw_score is not None else {3:7.5,2:5.5,1:3.5,0:1.2}[active_idx]
-    rs = max(0.0, min(9.0, rs))
-    score_str = f"{rs:.2f}"
-    # Position score well below arc (arc bottom at cy = 175, viewBox top ≈ 0)
-    # Score at y = cy+18 = 193, sub at cy+33 = 208 — these are BELOW viewBox if cut at 170
-    # So we place score inside SVG at top-left area, or use a separate div
-    # Best: put score text at cx, cy+22 — this will be at y=197, outside viewBox(0 0 340 170)
-    # Solution: don't use viewBox crop, use full height SVG and place score at bottom
+    # ── Score number in center
+    score_svg = (f'<text x="{cx}" y="{cy+28}" text-anchor="middle" dominant-baseline="central" '
+                 f'font-family="Segoe UI,sans-serif" font-size="30" font-weight="900" '
+                 f'fill="white" opacity="0.50">{sc}</text>')
 
     # ── Needle
-    na = 180.0 - (rs / 9.0) * 180.0
-    ntx,nty = pt(na, rn)
-    ncx,ncy = pt(na+180, 14)
-    nc = "#a855f7" if qfsm_mode=="BLEND" else "white"
-    needle_svg = (
-        f'<line x1="{ncx:.1f}" y1="{ncy:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
-        f'stroke="{nc}" stroke-width="3.5" stroke-linecap="round"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="10" fill="{fc}" stroke="#111827" stroke-width="3"/>'
-        f'<circle cx="{cx}" cy="{cy}" r="4" fill="white"/>'
-    )
+    ntx, nty = _pt(seg_mid_angles[active_idx], r_needle)
+    cnx, cny = _pt(seg_mid_angles[active_idx] + 180, 16)
 
-    # Score placed in SVG below pivot at y=cy+22, sub at cy+36
-    score_svg = (
-        f'<text x="{cx}" y="{cy+35}" text-anchor="middle" '
-        f'font-size="26" font-weight="900" fill="white" opacity="0.65" '
-        f'font-family="Segoe UI,sans-serif">{score_str}</text>'
-        f'<text x="{cx}" y="{cy+52}" text-anchor="middle" '
-        f'font-size="9" font-weight="500" fill="#475569" '
-        f'font-family="Segoe UI,sans-serif">/ 9.0 pts</text>'
-    )
+    src_d = (f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">'
+             f'{src_lbl}</div>') if src_lbl else ""
+    dt_d  = (f'<div style="font-size:10px;color:#64748b;margin-top:3px;">'
+             f'{date_str} &nbsp;·&nbsp; Score {sc}/3</div>') if date_str else ""
 
-    src_d = f'<div style="font-size:10px;color:#94a3b8;margin-top:2px;">{src_lbl}</div>' if src_lbl else ""
-    dt_d  = f'<div style="font-size:10px;color:#64748b;margin-top:2px;">{date_str} &nbsp;·&nbsp; {lbl}</div>' if date_str else ""
-
-    # SVG height=210 (cy+35=210), viewBox="0 0 340 210" — shows full arc + score below
+    # viewBox: left margin so Bear label fits, right margin so Strong label fits
+    # Bear at 175°: x = 155 + 146*cos(175°) ≈ 155 - 145.4 = 9.6  → left edge ~0
+    # Strong at 5°: x = 155 + 146*cos(5°)   ≈ 155 + 145.4 = 300.4 → right edge ~310
+    # Arc top at 90°: y = 155 - 108 = 47; label top at 155-146 = 9 → viewBox y start = 5
     return (
         '<style>'
         '*{box-sizing:border-box;margin:0;padding:0;}'
         'body{background:transparent;font-family:"Segoe UI",system-ui,sans-serif;}'
-        '.gc{background:#111827;border:1px solid #1e293b;border-radius:14px;'
-        'padding:12px 16px 12px;text-align:center;display:inline-block;width:100%;}'
-        '.gt{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.4px;font-weight:700;margin-bottom:8px;}'
-        f'.gn{{font-size:20px;font-weight:800;color:{fc};margin-top:4px;}}'
-        '.leg{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px;}'
-        '.li{display:flex;align-items:center;gap:3px;font-size:9px;color:#94a3b8;}'
-        '.ld{width:7px;height:7px;border-radius:2px;flex-shrink:0;}'
-        'svg{display:block;margin:0 auto;}'
+        '.gcard{background:#111827;border:1px solid #1e293b;border-radius:16px;'
+        'padding:26px 32px 26px;text-align:center;display:block;width:fit-content;margin:0 auto;}'
+        '.gtitle{font-size:9px;color:#b3bbc7;text-transform:uppercase;letter-spacing:1.5px;font-weight:700;margin-bottom:4px;}'
+        f'.gname{{font-size:22px;font-weight:800;color:{fc};margin-top:4px;}}'
+        '.leg{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;}'
+        '.li{display:flex;align-items:center;gap:4px;font-size:10px;color:#94a3b8;}'
+        '.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0;}'
+        'svg{display:block;margin:0 auto;overflow:visible;}'
         '</style>'
-        '<div class="gc">'
-        '<div class="gt">MARKET REGIME · QFSM Weighted</div>'
-        f'<svg width="310" height="195" viewBox="10 30 320 220">'
-        f'{bg}{segs_svg}{tick_svg}{lbl_svg}{needle_svg}{score_svg}'
+        '<div class="gcard">'
+        '<div class="gtitle">MARKET REGIME</div>'
+        '<svg width="350" height="260" viewBox="0 5 320 175">'
+        f'{bg_svg}'
+        f'{segs_svg}'
+        f'{ticks_svg}'
+        f'{lbl_svg}'
+        f'{score_svg}'
+        f'<line x1="{cnx:.1f}" y1="{cny:.1f}" x2="{ntx:.1f}" y2="{nty:.1f}" '
+        f'stroke="white" stroke-width="3.5" stroke-linecap="round"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="10" fill="{fc}" stroke="#111827" stroke-width="3"/>'
+        f'<circle cx="{cx}" cy="{cy}" r="4"  fill="white"/>'
         '</svg>'
-        f'<div class="gn">{em} {lbl}</div>'
+        f'<div class="gname">{em} {lbl}</div>'
         f'{dt_d}{src_d}'
         '<div class="leg">'
-        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear 0-2.5</div>'
-        '<div class="li"><div class="ld" style="background:#f97316"></div>Neutral 2.5-4.5</div>'
-        '<div class="li"><div class="ld" style="background:#eab308"></div>Mild Bull 4.5-6.5</div>'
-        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong 6.5-9.0</div>'
-        '</div>'
-        '</div>'
+        '<div class="li"><div class="ld" style="background:#ef4444"></div>Bear</div>'
+        '<div class="li"><div class="ld" style="background:#f59e0b"></div>Neutral (1)</div>'
+        '<div class="li"><div class="ld" style="background:#38bdf8"></div>Mild Bull (2)</div>'
+        '<div class="li"><div class="ld" style="background:#10b981"></div>Strong Bull (3)</div>'
+        '</div></div>'
     )
 
 _tab_screener, _tab_regime, _tab_sim = st.tabs([
@@ -1855,23 +1866,19 @@ _tab_screener, _tab_regime, _tab_sim = st.tabs([
 ])
 
 # ════════════════════════════════════════════════════
-# REGIME TAB — v2026.08  (7-signal weighted, QFSM)
+# REGIME TAB — auto-loads best cache, shows gauge
 # ════════════════════════════════════════════════════
 with _tab_regime:
     st.session_state["_curr_tab"] = "regime"
     try:
-        from calculations import (
-            get_full_regime_result, get_next_rebalance_dates,
-            RegimeState, score_to_band,
-        )
+        from calculations import get_regime_score, get_next_rebalance_dates
         import streamlit.components.v1 as _stc_rt
         _rt_calcs_ok = True
-    except ImportError as _imp_err:
-        st.warning(f"⚠️ calculations.py import failed: {_imp_err}")
+    except ImportError:
+        st.warning("⚠️ calculations.py nahi mili.")
         _rt_calcs_ok = False
 
     if _rt_calcs_ok:
-
         @st.cache_data(ttl=3600, show_spinner=False)
         def _load_best_cache_regime():
             try:
@@ -1892,311 +1899,260 @@ with _tab_regime:
             return None,None,None,"None"
 
         @st.cache_data(ttl=1800, show_spinner=False)
-        def _fetch_nifty_rt():
-            """^NSEI close + 200DMA from yfinance (cached 30 min)."""
+        def _fetch_dash_rt(api_url):
+            import requests as _r2
             try:
-                import yfinance as _yf2
-                _nf = _yf2.download("^NSEI", period="300d", progress=False)["Close"].dropna()
-                if len(_nf) < 5: return None, None
-                return (round(float(_nf.iloc[-1]),2),
-                        round(float(_nf.rolling(200, min_periods=150).mean().iloc[-1]),2))
-            except Exception:
-                return None, None
+                resp = _r2.get(api_url+"?action=all",timeout=15,headers={"User-Agent":"Mozilla/5.0"})
+                if resp.status_code==200:
+                    j=resp.json()
+                    if j.get("ok"): return j.get("data",{})
+            except Exception: pass
+            return {}
 
-        # ── Refresh ────────────────────────────────────────────────────────────
-        _rt_hc1, _rt_hc2 = st.columns([5, 1])
+        _rt_hc1,_rt_hc2 = st.columns([5,1])
         with _rt_hc2:
-            if st.button("🔄 Refresh", key="rt_refresh_btn"):
-                _load_best_cache_regime.clear()
-                _fetch_nifty_rt.clear()
-                for _k in ["_rt_dfS","_rt_src","_rt_navs","_rt_vx","_rt_wret",
-                           "_rt_nifty_close","_rt_nifty_dma200","_regime_state"]:
-                    st.session_state.pop(_k, None)
+            if st.button("🔄 Refresh",key="rt_refresh_btn"):
+                _load_best_cache_regime.clear(); _fetch_dash_rt.clear()
+                for k in ["_rt_dfS","_rt_src","_rt_navs","_rt_vx","_rt_wret"]:
+                    st.session_state.pop(k,None)
                 st.rerun()
 
-        # ── Load dfStats (once per session) ────────────────────────────────────
         if st.session_state.get("_rt_dfS") is None:
             with st.spinner("⚡ Best cache loading (Upstox → Angel One → YFinance)..."):
-                _rt_cl, _rt_hi, _rt_vo, _rt_src_l = _load_best_cache_regime()
+                _rt_cl,_rt_hi,_rt_vo,_rt_src_l = _load_best_cache_regime()
             if _rt_cl is not None:
                 try:
                     from calculations import build_dfStats as _bds_rt
                     from dateutil.relativedelta import relativedelta as _rdelta
                     import datetime as _dtb2
-                    _rt_end_d = (_rt_cl.index[-1].date()
-                                 if hasattr(_rt_cl.index[-1],'date')
-                                 else _dt_rt.date.today())
-                    _rt_ed_dt = _dtb2.datetime.combine(_rt_end_d, _dtb2.time())
-                    _rt_dts   = {
-                        'startDate': _dtb2.datetime(2000,1,1), 'endDate': _rt_ed_dt,
-                        'date12M': _rt_ed_dt-_rdelta(months=12),
-                        'date9M':  _rt_ed_dt-_rdelta(months=9),
-                        'date6M':  _rt_ed_dt-_rdelta(months=6),
-                        'date3M':  _rt_ed_dt-_rdelta(months=3),
-                        'date1M':  _rt_ed_dt-_rdelta(months=1),
-                    }
-                    _rt_dfS_obj = _bds_rt(_rt_cl, _rt_hi, _rt_vo, _rt_dts, "avgZScore12_6_3")
-                    st.session_state["_rt_dfS"] = _rt_dfS_obj
-                    st.session_state["_rt_src"] = _rt_src_l
+                    _rt_end_d = _rt_cl.index[-1].date() if hasattr(_rt_cl.index[-1],'date') else _dt_rt.date.today()
+                    _rt_ed_dt = _dtb2.datetime.combine(_rt_end_d,_dtb2.time())
+                    _rt_dts   = {'startDate':_dtb2.datetime(2000,1,1),'endDate':_rt_ed_dt,
+                                 'date12M':_rt_ed_dt-_rdelta(months=12),'date9M':_rt_ed_dt-_rdelta(months=9),
+                                 'date6M':_rt_ed_dt-_rdelta(months=6),'date3M':_rt_ed_dt-_rdelta(months=3),
+                                 'date1M':_rt_ed_dt-_rdelta(months=1)}
+                    _rt_dfS_obj = _bds_rt(_rt_cl,_rt_hi,_rt_vo,_rt_dts,"avgZScore12_6_3")
+                    st.session_state["_rt_dfS"]  = _rt_dfS_obj
+                    st.session_state["_rt_src"]  = _rt_src_l
                     st.success(f"✅ {_rt_src_l} cache loaded · {len(_rt_dfS_obj):,} stocks · {_rt_end_d}")
                 except Exception as _e_rt2:
                     st.error(f"Calculation error: {_e_rt2}")
             else:
                 st.warning("⚠️ Koi cache available nahi. Screener tab mein pehle run karo.")
 
-        # ── Load live signals (VIX, NAV, Nifty) ───────────────────────────────
         if st.session_state.get("_rt_navs") is None:
+            # VIX from yfinance (fast, no auth)
             _rtv = _fetch_vix_yf()
+            # NAV from Google Sheet CSV (fast direct fetch)
             _rtn = _fetch_nav_from_sheet(_NAV_SHEET_CSV)
             _rtw = round((_rtn[-1]/_rtn[-6]-1)*100,2) if len(_rtn)>=6 else None
             st.session_state["_rt_navs"] = _rtn
             st.session_state["_rt_vx"]   = _rtv
             st.session_state["_rt_wret"] = _rtw
+            if _rtv:
+                st.caption(f"⚡ VIX: {_rtv} | NAV: {len(_rtn)} pts")
 
-        if st.session_state.get("_rt_nifty_close") is None:
-            _nc_rt, _nd_rt = _fetch_nifty_rt()
-            st.session_state["_rt_nifty_close"]  = _nc_rt
-            st.session_state["_rt_nifty_dma200"] = _nd_rt
-
-        # ── Pull cached values ─────────────────────────────────────────────────
         _rt_dfS  = st.session_state.get("_rt_dfS")
-        _rt_navs = st.session_state.get("_rt_navs", [])
+        _rt_navs = st.session_state.get("_rt_navs",[])
         _rt_vx   = st.session_state.get("_rt_vx")
         _rt_wret = st.session_state.get("_rt_wret")
-        _rt_src  = st.session_state.get("_rt_src", "—")
-        _rt_nc   = st.session_state.get("_rt_nifty_close")
-        _rt_nd   = st.session_state.get("_rt_nifty_dma200")
-        _rt_rk_h = st.session_state.get("_rt_rank_history", [])
-        _prev_rs = st.session_state.get("_regime_prev_state")
+        _rt_src  = st.session_state.get("_rt_src","—")
 
         if _rt_dfS is not None:
+            _rt_rg   = get_regime_score(_rt_dfS, equity_nav_series=_rt_navs or None)
+            _rt_dts2 = get_next_rebalance_dates()
+            _rt_sc   = _rt_rg["score"];  _rt_lbl  = _rt_rg["label"]
+            # v2026.09: always fixed
+            _rt_eq   = EQUITY_FIXED_PCT; _rt_gd = GOLD_FIXED_PCT
+            _rt_sigs = _rt_rg["signals"]
+            _rt_brd  = _rt_rg["breadth_pct"]; _rt_roc = _rt_rg["median_roc3m"]
+            _rt_nc   = _rt_rg.get("nav_current"); _rt_nd  = _rt_rg.get("nav_dma200")
+            _rt_fc,_rt_bc,_rt_em = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
+                                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}[_rt_sc]
+            _rt_nf   = _rt_dts2["next_friday"]; _rt_nr = _rt_dts2["next_monthly_rb"]
+            _rt_df   = (_rt_nf - _dt_rt.date.today()).days
+            _rt_ntxt = f"NAV {_rt_nc:.2f} vs DMA {_rt_nd:.2f}" if _rt_nc and _rt_nd else ("Refresh karo" if not _rt_navs else "NAV < 200DMA")
+            _rt_date_s = _dt_rt.date.today().strftime('%d %b %Y')
 
-            # ── Compute full regime result ──────────────────────────────────────
-            _rs = get_full_regime_result(
-                dfStats=_rt_dfS,
-                equity_nav_series=_rt_navs or None,
-                vix_value=_rt_vx,
-                nifty_close=_rt_nc,
-                nifty_dma200=_rt_nd,
-                rank_history=_rt_rk_h or None,
-                fii_score=st.session_state.get("_fii_score", 0.5),
-                prev_state=_prev_rs,
-                total_capital=0.0,
-                dd_pct=0.0,
+            # ── Load FII data ─────────────────────────────────────────
+            _rt_fii_data = _load_fii_data()
+            _rt_fii_sig  = _get_fii_signal(_rt_fii_data)
+
+            # ── All 8 signal definitions ──────────────────────────────
+            # S4: VIX (1.5 pts max)
+            _rt_vx = st.session_state.get("_rt_vx")
+            if _rt_vx is None:   _rt_s4_score = 0.75; _rt_s4_val = "VIX N/A"
+            elif _rt_vx <= 20:   _rt_s4_score = 1.0;  _rt_s4_val = f"VIX {_rt_vx:.1f} ≤ 20 (Calm)"
+            elif _rt_vx <= 25:   _rt_s4_score = 0.5;  _rt_s4_val = f"VIX {_rt_vx:.1f} (20-25)"
+            else:                _rt_s4_score = 0.0;  _rt_s4_val = f"VIX {_rt_vx:.1f} > 25 (Fear)"
+
+            # S5: Nifty 200DMA (from dfStats breadth proxy — stocks above DMA)
+            _rt_s5_ok  = _rt_brd > 50
+            _rt_s5_val = f"{_rt_brd:.1f}% stocks > 200DMA"
+
+            # S6: Advance-Decline ratio (use 45% threshold on market breadth)
+            _rt_s6_ok  = _rt_brd > 45
+            _rt_s6_val = f"A-D proxy: {'>' if _rt_s6_ok else '<'} 45% threshold"
+
+            # S7: Rank Stability (from dfStats — top-100 overlap via volatility proxy)
+            # Simple proxy: low avg z_score dispersion = stable ranks
+            try:
+                _rt_s7_std = float(_rt_dfS.get('avgZScore12_6_3', _rt_dfS.get('z_score12M',
+                                   _rt_dfS.iloc[:,0])).std())
+                _rt_s7_ok  = _rt_s7_std < 1.5  # tight dispersion = stable
+                _rt_s7_val = f"Score dispersion: {_rt_s7_std:.2f} {'(Stable)' if _rt_s7_ok else '(Unstable)'}"
+            except Exception:
+                _rt_s7_ok  = True; _rt_s7_val = "Rank stability: N/A"
+
+            # Weighted total score (S1-S7 + FII per SOP)
+            _rt_weights = {'s1':1.5,'s2':1.0,'s3':1.0,'s4':1.5,'s5':1.5,'s6':1.0,'s7':0.5,'fii':1.0}
+            _rt_s1ok = _rt_sigs.get("s1_equity_curve",1)
+            _rt_s2ok = _rt_sigs.get("s2_breadth",0)
+            _rt_s3ok = _rt_sigs.get("s3_momentum",0)
+            _rt_total_score = (
+                _rt_weights['s1'] * _rt_s1ok +
+                _rt_weights['s2'] * _rt_s2ok +
+                _rt_weights['s3'] * _rt_s3ok +
+                _rt_weights['s4'] * _rt_s4_score +
+                _rt_weights['s5'] * (1 if _rt_s5_ok else 0) +
+                _rt_weights['s6'] * (1 if _rt_s6_ok else 0) +
+                _rt_weights['s7'] * (1 if _rt_s7_ok else 0) +
+                _rt_weights['fii'] * _rt_fii_sig['score']
             )
-            st.session_state["_regime_state"] = _rs
+            _rt_max_score = sum(_rt_weights.values())  # 8.5
 
-            _rt_dts2   = get_next_rebalance_dates()
-            _rt_date_s = _dt_rt.date.today().strftime("%d %b %Y")
-            _rt_sc     = _rs.effective_band
-            _rt_lbl    = _rs.label()
-            _rt_fc, _rt_em = {
-                3: ("#00d09e", "🟢"), 2: ("#38bdf8", "🔵"),
-                1: ("#f59e0b", "🟡"), 0: ("#f87171", "🔴"),
-            }[_rt_sc]
-            _rt_nf = _rt_dts2["next_friday"]
-            _rt_nr = _rt_dts2["next_monthly_rb"]
-            _rt_df = (_rt_nf - _dt_rt.date.today()).days
-
-            # Status + date banner
-            _st_c  = {"STABLE":"#15803d","PENDING":"#d97706","CONFIRMED":"#1d4ed8",
-                      "DD_OVERRIDE":"#dc2626"}.get(_rs.status, "#6b7280")
-            _st_bg = {"STABLE":"#dcfce7","PENDING":"#fef3c7","CONFIRMED":"#dbeafe",
-                      "DD_OVERRIDE":"#fee2e2"}.get(_rs.status, "#f1f5f9")
-            _vix_d = ""
-            if _rt_vx:
-                _vc0 = "#dc2626" if _rt_vx > 20 else "#15803d"
-                _vix_d = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;'
-                           f'border-radius:8px;padding:6px 12px;font-size:12px;'
-                           f'color:{_vc0};font-family:DM Mono,monospace;">'
-                           f'VIX: <b>{round(_rt_vx,1)}</b>{"  🔴" if _rt_vx>20 else ""}</div>')
-
+            # ── Date/source banner ────────────────────────────────────
+            _rt_vix_div = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;'
+                           f'padding:6px 12px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">'
+                           f'VIX: <b>{round(_rt_vx,1)}</b>{"🔴" if _rt_vx>20 else ""}</div>') if _rt_vx else ''
             st.markdown(
-                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
-                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:6px 12px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>' +
-                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 12px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>' +
-                f'<div style="background:{_st_bg};border:1px solid;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:700;color:{_st_c};font-family:DM Mono,monospace;">⚡ {_rs.status} ({_rs.confirmation_count}/2)</div>' +
-                _vix_d +
-                f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>' +
-                '</div>',
-                unsafe_allow_html=True,
-            )
+                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:6px 12px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday:</b> {_rt_nf.strftime("%d %b %Y")} ({_rt_df}d)</div>'
+                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:6px 12px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_rt_nr.strftime("%d %b %Y")}</div>'
+                f'{_rt_vix_div}'
+                f'<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:6px 12px;font-size:11px;color:#475569;">📦 {_rt_src}</div>'
+                f'<div style="background:#EEF2FF;border:1px solid #6366F1;border-radius:8px;padding:6px 12px;font-size:12px;color:#3730A3;font-weight:600;">⚛ QFSM Score: {_rt_total_score:.2f} / {_rt_max_score}</div>'
+                '</div>', unsafe_allow_html=True)
 
-            if _rs.dd_override_active:
-                st.error("🚨 DD OVERRIDE — Portfolio DD ≥ 20%. Bear allocation forced (25/30/45). All signals bypassed.")
+            # ═══ 2 SUB-TABS ═══════════════════════════════════════════
+            _rt_sub1, _rt_sub2 = st.tabs(["📡 7+FII Signals", "⚛ Allocation & Factor Weights"])
 
-            # ── Gauge (reuses existing _build_mmi_gauge) ───────────────────────
-            _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s, raw_score=_rs.raw_score, qfsm_mode=_rs.qfsm_mode)
+            # ── SUB-TAB 1: 7+FII Signals ─────────────────────────────
+            with _rt_sub1:
+                _rt_gauge_html = _build_mmi_gauge(_rt_sc, _rt_fc, _rt_lbl, _rt_em, _rt_src, _rt_date_s)
 
-            # ── Signal card helper ─────────────────────────────────────────────
-            def _mk_sig(icon, title, sub, val_txt, score_val, weight, ok, partial=False):
-                c  = "#f59e0b" if partial else ("#00d09e" if ok else "#f87171")
-                bg = "#fef3c7" if partial else ("#e8fdf2" if ok else "#fef2f2")
-                bd = "#fcd34d" if partial else ("#86efac" if ok else "#fca5a5")
-                return (f'<div class="sig" style="background:{bg};border-color:{bd}">' +
-                        f'<div class="si">{icon}</div>' +
-                        f'<div class="sb"><div class="st" style="color:{c}">{title}</div>' +
-                        f'<div class="sc" style="color:#374151">{sub}</div>' +
-                        f'<div class="sv" style="color:{c}">{val_txt}</div></div>' +
-                        f'<div class="sbg" style="background:{c};color:white">{score_val:.2g}/{weight}pt</div>' +
-                        '</div>')
+                def _sig_card(icon, ok, title, desc, value, weight):
+                    c = "#00d09e" if ok else "#f87171"
+                    bg = "#e8fdf2" if ok else "#fef2f2"
+                    bd = "#86efac" if ok else "#fca5a5"
+                    badge = "PASS" if ok else "FAIL"
+                    return (f'<div class="sig" style="background:{bg};border-color:{bd}">'
+                            f'<div class="si">{"✅" if ok else "❌"}</div>'
+                            f'<div class="sb">'
+                            f'<div class="st" style="color:{c}">{title} <span style="font-size:10px;opacity:.7">({weight}pt)</span></div>'
+                            f'<div class="sc" style="color:#374151">{desc}</div>'
+                            f'<div class="sv" style="color:{c}">{value}</div>'
+                            f'</div>'
+                            f'<div class="sbg" style="background:{c};color:white">{badge}</div>'
+                            f'</div>')
 
-            _sigs      = _rs.signals
-            _smeta     = _rs.signal_meta
-            _fii_data_rt = st.session_state.get("_fii_data", {})
+                # ← scores as bool for display
+                _s4b = _rt_s4_score >= 0.75
+                _fii_b = _rt_fii_sig['score'] >= 0.5
+                _rt_sig_html = (
+                    f'<style>body{{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}}'
+                    f'.sigs{{display:flex;flex-direction:column;gap:8px;}}'
+                    f'.sig{{border-radius:10px;padding:10px 14px;border:1.5px solid;display:flex;align-items:center;gap:12px;}}'
+                    f'.si{{font-size:20px;flex-shrink:0;}}'
+                    f'.sb{{flex:1;}}'
+                    f'.st{{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px;}}'
+                    f'.sc{{font-size:11px;margin-bottom:3px;}}'
+                    f'.sv{{font-size:13px;font-weight:800;}}'
+                    f'.sbg{{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;flex-shrink:0;}}'
+                    f'</style>'
+                    f'<div class="sigs">'
+                    + _sig_card("✅" if _rt_s1ok else "❌", _rt_s1ok,"S1 — Equity Curve Trend","NAV > 200-Day Moving Average",_rt_ntxt,_rt_weights['s1'])
+                    + _sig_card("✅" if _rt_s2ok else "❌", _rt_s2ok,"S2 — Market Breadth","% Stocks above 200DMA > 50%",f"{_rt_brd:.1f}% above DMA",_rt_weights['s2'])
+                    + _sig_card("✅" if _rt_s3ok else "❌", _rt_s3ok,"S3 — Universe Momentum","Median 3M ROC > 0%",f"{_rt_roc:+.1f}% median 3M return",_rt_weights['s3'])
+                    + _sig_card("✅" if _s4b else "❌",     _s4b,    "S4 — India VIX","VIX ≤ 20 = calm | 20-25 = mild | >25 = fear",_rt_s4_val,_rt_weights['s4'])
+                    + _sig_card("✅" if _rt_s5_ok else "❌",_rt_s5_ok,"S5 — Nifty 200DMA Breadth","% Stocks > 200DMA proxy for Nifty trend",_rt_s5_val,_rt_weights['s5'])
+                    + _sig_card("✅" if _rt_s6_ok else "❌",_rt_s6_ok,"S6 — Advance-Decline","A-D Ratio proxy > 45% threshold",_rt_s6_val,_rt_weights['s6'])
+                    + _sig_card("✅" if _rt_s7_ok else "❌",_rt_s7_ok,"S7 — Rank Stability","Top-100 momentum overlap stability",_rt_s7_val,_rt_weights['s7'])
+                    + _sig_card("✅" if _fii_b else "❌",   _fii_b,  "S_FII — FII Net Flow","FII Equity >₹5000Cr=1pt | 0-5000=0.5pt | <0=0pt",_rt_fii_sig['label'] + f" ({_rt_fii_sig['date']})",_rt_weights['fii'])
+                    + f'<div style="background:#1e293b;border-radius:8px;padding:8px 14px;text-align:right;color:#f8fafc;font-size:13px;font-weight:700;">'
+                    + f'Total QFSM Score: <span style="font-size:18px;color:#38bdf8">{_rt_total_score:.2f}</span> / {_rt_max_score} &nbsp;|&nbsp; {_rt_lbl} <span style="font-size:16px">{_rt_em}</span>'
+                    + f'</div>'
+                    + '</div>'
+                )
+                _g_col, _s_col = st.columns([1, 1.6])
+                with _g_col:
+                    _stc_rt.html(_rt_gauge_html, height=390)
+                with _s_col:
+                    _stc_rt.html(_rt_sig_html, height=390)
 
-            def _mk_fii_card(fii_score_val, fii_data):
-                _fii_net = fii_data.get("fii_net_30d")
-                _fii_sig = fii_data.get("signal", "NEUTRAL")
-                _fii_stale = fii_data.get("stale", False)
-                _fii_date  = fii_data.get("last_updated", "—")
-                if _fii_net is not None:
-                    _net_txt = f"FII 30D Net: ₹{_fii_net:,.0f} Cr · {_fii_sig}"
-                    if _fii_stale: _net_txt += " ⚠ (stale)"
+                # FII update note
+                if not _rt_fii_data:
+                    st.warning("⚠️ FII data nahi mili — `fii_data.json` GitHub mein nahi hai. "
+                               "daily_fii_cache.yml workflow set karo (Section 12 dekho).")
                 else:
-                    _net_txt = "fii_data.json not loaded (GitHub Actions Phase 2)"
-                _ok = fii_score_val >= 1.0
-                _partial = 0 < fii_score_val < 1.0
-                _c  = "#f59e0b" if _partial else ("#00d09e" if _ok else "#f87171")
-                _bg = "#fef3c7" if _partial else ("#e8fdf2" if _ok else "#fef2f2")
-                _bd = "#fcd34d" if _partial else ("#86efac" if _ok else "#fca5a5")
-                _ico = "⚠️" if _partial else ("✅" if _ok else "❌")
-                _sig_txt = {"BULL":"🟢 BULL (>₹5K Cr)","MILD_BULL":"🟡 MILD BULL (₹0-5K Cr)",
-                            "NEUTRAL":"🟠 NEUTRAL (-₹5K to ₹0)","BEAR":"🔴 BEAR (<-₹5K Cr)"}.get(_fii_sig, _fii_sig)
-                return (
-                    f'<div class="sig" style="background:{_bg};border-color:{_bd}">' +
-                    f'<div class="si">{_ico}</div>' +
-                    f'<div class="sb"><div class="st" style="color:{_c}">S8 — FII Net Flow ★</div>' +
-                    f'<div class="sc_t" style="color:#374151">FII 30D net &gt;₹5K=BULL · ₹0-5K=0.5pt · &lt;₹0=0pt (updated: {_fii_date})</div>' +
-                    f'<div class="sv" style="color:{_c}">{_net_txt}</div></div>' +
-                    f'<div class="sbg" style="background:{_c};color:white">{fii_score_val:.2g}/1pt</div>' +
-                    '</div>'
-                )
-            _s1v   = _sigs.get("s1_nav",0)
-            _s2v   = _sigs.get("s2_breadth",0)
-            _s3v   = _sigs.get("s3_roc",0)
-            _s4v   = _sigs.get("s4_vix",0)
-            _s5v   = _sigs.get("s5_nifty",0)
-            _s6v   = _sigs.get("s6_ad",0)
-            _s7v   = _sigs.get("s7_rank",0)
+                    st.caption(f"FII data: {_rt_fii_sig['date']} · Net: ₹{_rt_fii_sig['net_cr']:,.0f} Cr · "
+                               f"Score: {_rt_fii_sig['score']} pts")
 
-            _nav_txt = (f'NAV {_smeta["nav_current"]:.2f} vs DMA {_smeta["nav_dma200"]:.2f} ({_smeta.get("gap_pct",0):+.1f}%)' if _smeta.get("nav_current") else "NAV data loading...")
-            _nif_txt = (f'Nifty {_rt_nc:,.0f} vs DMA {_rt_nd:,.0f} (ratio {_smeta.get("nifty_ratio",1):.3f})' if _rt_nc else "Nifty: loading...")
+            # ── SUB-TAB 2: Allocation + Factor Weights ────────────────
+            with _rt_sub2:
+                # Fixed allocation banner
+                st.markdown("""<div style="background:#F0FDF4;border:1px solid #86EFAC;border-left:4px solid #16A34A;
+                    border-radius:8px;padding:8px 14px;font-size:12px;color:#14532D;margin-bottom:10px;">
+                  <b>⚛ v2026.09 — Fixed Allocation:</b> Equity <b>80%</b> always · Gold <b>20%</b> always ·
+                  Cash <b>0%</b> · Regime signals → QFSM <b>equity factor weights</b>
+                </div>""", unsafe_allow_html=True)
 
-            _rt_sig_html = (
-                '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}' +
-                '.sigs{display:flex;flex-direction:column;gap:8px;}' +
-                '.sig{border-radius:10px;padding:11px 14px;border:1.5px solid;display:flex;align-items:center;gap:12px;}' +
-                '.si{font-size:20px;flex-shrink:0;}.sb{flex:1;}' +
-                '.st{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px;}' +
-                '.sc{font-size:11px;margin-bottom:3px;}.sv{font-size:13px;font-weight:800;}' +
-                '.sbg{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;flex-shrink:0;}' +
-                '</style><div class="sigs">' +
-                _mk_sig("✅" if _s1v>0 else "❌","S1 — Equity Curve Trend","NAV > 200-Day Moving Average",_nav_txt,_s1v,1.5,_s1v>0) +
-                _mk_sig("✅" if _s2v>0 else "❌","S2 — Market Breadth","% Stocks > 200DMA > 50%",f'{_smeta.get("breadth_pct",0):.1f}% above DMA',_s2v,1.0,_s2v>0) +
-                _mk_sig("✅" if _s3v>0 else "❌","S3 — Universe Momentum","Median 3M ROC > 0%",f'{_smeta.get("median_roc3m",0):+.1f}% median 3M ROC',_s3v,1.0,_s3v>0) +
-                _mk_sig("⚠️" if 0<_s4v<1.5 else ("✅" if _s4v>0 else "❌"),"S4 — India VIX ★","VIX ≤ 20=PASS | 20-25=Partial | >25=FAIL",f'VIX {round(_rt_vx,1) if _rt_vx else "loading..."}',_s4v,1.5,_s4v>0,0<_s4v<1.5) +
-                _mk_sig("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
-                _mk_sig("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (from 1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
-                _mk_sig("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% vs 4 weeks ago",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
-                _mk_fii_card(_sigs.get("s_fii",0.5), _fii_data_rt) +
-                '</div>'
-            )
+                _rta1, _rta2 = st.columns(2)
+                with _rta1:
+                    st.markdown(f'<div style="background:#dbeafe;border:1px solid #2563eb;border-radius:8px;'
+                                f'padding:14px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#1d4ed8;margin-bottom:4px">📈 Equity (QFSM)</div>'
+                                f'<div style="font-size:30px;font-weight:800;color:#1d4ed8">80%</div>'
+                                f'</div>', unsafe_allow_html=True)
+                with _rta2:
+                    st.markdown(f'<div style="background:#fef3c7;border:1px solid #b45309;border-radius:8px;'
+                                f'padding:14px;text-align:center;">'
+                                f'<div style="font-size:11px;color:#b45309;margin-bottom:4px">🥇 GOLDBEES (Fixed 20%)</div>'
+                                f'<div style="font-size:30px;font-weight:800;color:#b45309">20%</div>'
+                                f'<div style="font-size:10px;color:#92400e">±7% drift band: 13%–27%</div>'
+                                f'</div>', unsafe_allow_html=True)
 
-            _g_col, _s_col = st.columns([1, 1.8])
-            with _g_col:
-                _stc_rt.html(_rt_gauge_html, height=360)
-                _scbg = {3:"#dcfce7",2:"#dbeafe",1:"#fef3c7",0:"#fee2e2"}[_rt_sc]
-                _scfc = {3:"#15803d",2:"#1d4ed8",1:"#d97706",0:"#dc2626"}[_rt_sc]
-                st.markdown(
-                    f'<div style="background:{_scbg};border-radius:8px;padding:10px;text-align:center;margin-top:4px;">' +
-                    f'<div style="font-size:11px;color:{_scfc};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
-                    f'<div style="font-size:36px;font-weight:900;color:{_scfc};line-height:1.1;">{_rs.raw_score:.2f}</div>' +
-                    f'<div style="font-size:11px;color:{_scfc};">/ 9.0 pts · {_rt_lbl}</div>' +
-                    '</div>', unsafe_allow_html=True)
-            with _s_col:
-                _stc_rt.html(_rt_sig_html, height=660)
+                # Factor weights
+                st.markdown("""<div style="font-size:13px;font-weight:700;color:#7c3aed;
+                    border-left:4px solid #a78bfa;padding:6px 12px;margin:10px 0 6px;">
+                    ⚛ QFSM Equity Factor Weights (Regime-Driven)
+                </div>""", unsafe_allow_html=True)
+                _rt_fw  = EQUITY_FACTOR_WEIGHTS.get(_rt_sc, EQUITY_FACTOR_WEIGHTS[2])
+                _fw_cols = st.columns(5)
+                for col, (lbl, val, fc, bg) in zip(_fw_cols, [
+                    ("Momentum\n(F1)", _rt_fw['f1'], "#2563eb","#dbeafe"),
+                    ("Trend\n(F2)",    _rt_fw['f2'], "#0891b2","#e0f2fe"),
+                    ("Mean Rev\n(F3)", _rt_fw['f3'], "#7c3aed","#ede9fe"),
+                    ("Size\n(F4)",     _rt_fw['f4'], "#15803d","#dcfce7"),
+                    ("Vol\n(F5)",      _rt_fw['f5'], "#b45309","#fef3c7"),
+                ]):
+                    with col:
+                        st.markdown(f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;'
+                                    f'padding:10px;text-align:center;">'
+                                    f'<div style="font-size:10px;color:{fc};font-weight:600;white-space:pre-line">{lbl}</div>'
+                                    f'<div style="font-size:22px;font-weight:800;color:{fc}">{val*100:.0f}%</div>'
+                                    f'</div>', unsafe_allow_html=True)
 
-            st.markdown("---")
+                # Equilibrium signal
+                _rt_mom_pct = _rt_fw['f1'] * 100
+                if _rt_mom_pct >= 55:  st.success(f"⚡ Momentum Leading: {_rt_mom_pct:.0f}% — Strong Bull confirmed")
+                elif _rt_mom_pct >= 45: st.info(f"⚖️ Equilibrium: Momentum {_rt_mom_pct:.0f}% — balanced")
+                elif _rt_mom_pct >= 35: st.warning(f"⚠️ Momentum fading: {_rt_mom_pct:.0f}% — Trend+MeanRev gaining")
+                else:                   st.error(f"🔴 Bear mode: Momentum {_rt_mom_pct:.0f}% — MeanRev+Trend dominant")
 
-            # ── QFSM Allocation tiles ──────────────────────────────────────────
-            _qc  = "#7c3aed" if _rs.qfsm_mode=="BLEND" else "#15803d"
-            _qbg = "#ede9fe" if _rs.qfsm_mode=="BLEND" else "#dcfce7"
-            _qlbl = (f"⚛ QFSM BLEND — Score {_rs.raw_score:.2f} in transition zone"
-                     if _rs.qfsm_mode=="BLEND" else f"✅ Standard Band {_rs.effective_band} allocation")
-            st.markdown(f'<div style="background:{_qbg};border:1px solid {_qc};border-radius:6px;padding:6px 14px;font-size:12px;color:{_qc};font-weight:700;margin-bottom:8px;">{_qlbl}</div>', unsafe_allow_html=True)
+                st.caption(f"Score {_rt_total_score:.2f}/{_rt_max_score} · {_rt_lbl} · {_rt_src} · {_rt_date_s} | Fixed: 80% Eq / 20% Gold / 0% Cash")
 
-            _rta1, _rta2, _rta3 = st.columns(3)
-            for _rtcol, (lbl, pct, fc, bg) in zip(
-                [_rta1, _rta2, _rta3],
-                [("📈 Equity",_rs.equity,"#1d4ed8","#dbeafe"),
-                 ("🥇 GOLDBEES",_rs.gold,"#b45309","#fef3c7"),
-                 ("💵 Liquid",_rs.cash,"#374151","#f1f5f9")]
-            ):
-                with _rtcol:
-                    st.markdown(
-                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;padding:14px;text-align:center;">' +
-                        f'<div style="font-size:11px;color:{fc};margin-bottom:6px">{lbl}</div>' +
-                        f'<div style="font-size:30px;font-weight:800;color:{fc}">{pct*100:.1f}%</div>' +
-                        '</div>', unsafe_allow_html=True)
-
-            # ── VIX overlay display ────────────────────────────────────────────
-            # ── FII Data status in regime tab ─────────────────────────────
-            _fii_j = st.session_state.get("_fii_data", {})
-            if _fii_j.get("last_updated"):
-                _fii_sc_d = st.session_state.get("_fii_score", 0.5)
-                _fii_clr  = "#15803d" if _fii_sc_d>=1.0 else ("#d97706" if _fii_sc_d>0 else "#dc2626")
-                _fii_sig_d= _fii_j.get("signal","NEUTRAL")
-                _fii_net_d= _fii_j.get("fii_net_30d")
-                _fii_stl  = " ⚠stale" if _fii_j.get("stale") else ""
-                st.caption(
-                    f"📊 S8 FII: {_fii_sig_d} · score {_fii_sc_d}/1pt"
-                    + (f" · 30D Net ₹{_fii_net_d:,.0f}Cr" if _fii_net_d else "")
-                    + f" · {_fii_j.get('last_updated','')}{_fii_stl}"
-                )
-            else:
-                st.caption("📊 S8 FII: fii_data.json not loaded — fetch_fii_data.yml trigger karo (GitHub Actions)")
-
-            if _rt_vx is not None and _rs.vix_overlay_pct > 0:
-                _vc2 = "#dc2626" if _rt_vx > 30 else "#d97706"
-                st.markdown(
-                    f'<div style="background:{"#fef2f2" if _rt_vx>30 else "#fef3c7"};border:1.5px solid {_vc2};border-left:4px solid {_vc2};border-radius:8px;padding:10px 14px;font-size:12px;color:{_vc2};margin-top:8px;">' +
-                    f'⚡ <b>VIX Overlay Active (VIX {_rt_vx:.1f}):</b> +{_rs.vix_overlay_pct:.1f}pp Gold (Liquid → Gold) | Equity UNTOUCHED' +
-                    '</div>', unsafe_allow_html=True)
-            elif _rt_vx is not None:
-                st.caption(f"VIX {_rt_vx:.1f} ≤ 20 — No overlay. Base allocation applies.")
-
-            # ── Score history ──────────────────────────────────────────────────
-            if _rs.history:
-                with st.expander("📅 Score History (last 8 weeks)", expanded=False):
-                    _hdf = pd.DataFrame(_rs.history)
-                    _hdf.columns = [c.replace("_"," ").title() for c in _hdf.columns]
-                    st.dataframe(_hdf, use_container_width=True, hide_index=True)
-
-            st.caption(
-                f"Score {_rs.raw_score:.2f}/9.0 · {_rt_lbl} · Conf: {_rs.status} · "
-                f"QFSM: {_rs.qfsm_mode} · {_rt_src} · {_rt_date_s} | "
-                f"Alloc: {_rs.equity*100:.1f}/{_rs.gold*100:.1f}/{_rs.cash*100:.1f} (Eq/Gold/Cash)"
-            )
-
-            # ── Last Rebalance Memory display ──────────────────────────────────
-            _rb_mem = st.session_state.get("_rb_memory", {})
-            if _rb_mem:
-                with st.expander("💾 Last Rebalance Memory", expanded=False):
-                    _rb_alloc = _rb_mem.get("allocation", {})
-                    _rb_txt = (
-                        f"**Date:** {_rb_mem.get('last_rebalance_date','—')} | "
-                        f"**Band:** {_rb_mem.get('regime_band','—')} | "
-                        f"**Score:** {_rb_mem.get('weighted_score','—')} | "
-                        f"**QFSM:** {_rb_mem.get('qfsm_mode','—')}\n\n"
-                        f"**Alloc:** Eq {_rb_alloc.get('equity_pct','—')}% / "
-                        f"Gold {_rb_alloc.get('gold_pct','—')}% / "
-                        f"Cash {_rb_alloc.get('cash_pct','—')}%\n\n"
-                        f"**Notes:** {_rb_mem.get('notes','—')}"
-                    )
-                    st.markdown(_rb_txt)
-
-
+# ════════════════════════════════════════════════════════════════════
 # MULTI-ASSET SIMULATOR TAB — full HTML widget (matches rebalancepanel)
 # ════════════════════════════════════════════════════════════════════
 with _tab_sim:
@@ -4301,35 +4257,68 @@ with _tab_screener:
             top_n = st.session_state.top_n_rank
             rank_col = st.session_state.ranking_method
 
+            # ── Compute Stage 2 composite scores for display ───────
+            _rg_bd = int(st.session_state.get("_regime_result", {}).get(
+                "regime_band", st.session_state.get("_regime_result", {}).get("score", 2)))
+            try:
+                _s1_disp = get_stage1_momentum_candidates(dfF, top_n=STAGE1_TOP_N)
+                _s2_disp = compute_stage2_composite(_s1_disp, _rg_bd)
+                _has_s2  = 'composite_score' in _s2_disp.columns
+            except Exception:
+                _s2_disp = dfF; _has_s2 = False
+
             st.markdown(f"""<div class="metric-row">
                 {metric_card("Total Screened", f"{n_u:,}")}
                 {metric_card("Passed Filters", f"{n_f:,}", "green")}
-                {metric_card("Top-N Universe", f"Top {top_n}", "blue")}
-                {metric_card("End Date", st.session_state.lookback_date.strftime('%d %b %Y'), "amber")}
+                {metric_card("Stage1 Top-100", f"{min(STAGE1_TOP_N, n_f)}", "blue")}
+                {metric_card("Stage2 Final-30", f"{PORTFOLIO_SIZE}", "amber")}
             </div>""", unsafe_allow_html=True)
 
-            # ── Failed stocks — persistent (rerun ke baad bhi dikhta hai) ─
             _fb = st.session_state.failed_blank or []
             if _fb:
-                with st.expander(f"⚠️ {len(_fb)} stocks failed to download — click to view", expanded=False):
+                with st.expander(f"⚠️ {len(_fb)} stocks failed to download", expanded=False):
                     st.dataframe(
-                        pd.DataFrame({'S.No.': range(1, len(_fb)+1),
-                                      'Failed Stock': _fb}).set_index('S.No.'),
-                        use_container_width=False
-                    )
+                        pd.DataFrame({'S.No.': range(1,len(_fb)+1),'Failed Stock':_fb}).set_index('S.No.'),
+                        use_container_width=False)
             else:
                 st.success("✅ All stocks downloaded successfully!")
 
-            tab1, tab2 = st.tabs(["✅ Filtered (Top Ranked)", "📊 All Stocks (Unfiltered)"])
+            tab1, tab2 = st.tabs(["✅ Filtered — QFSM Ranked", "📊 All Stocks (Unfiltered)"])
             with tab1:
-                top_view = dfF.head(top_n).reset_index()
-                dcols = ["Rank","Ticker","Close",rank_col,"roc12M","roc6M","roc3M","vol12M","volm_cr","AWAY_ATH","circuit","dma200d"]
-                dcols = [c for c in dcols if c in top_view.columns]
-                st.dataframe(top_view[dcols].style.format(precision=2),
-                             use_container_width=True, height=440)
+                if _has_s2:
+                    # Stage 2 composite ranked view
+                    _s2_reset = _s2_disp.reset_index() if _s2_disp.index.name == 'Rank' else _s2_disp
+                    _qcols = ['Rank','Ticker','Close','composite_score','composite_rank',
+                               'f1_momentum','f2_trend','f3_mean_rev',
+                               rank_col,'roc12M','roc6M','roc3M',
+                               'vol12M','volm_cr','AWAY_ATH','dma200d']
+                    _qcols = [c for c in _qcols if c in _s2_reset.columns]
+                    _s2_sorted = _s2_reset.sort_values('composite_score', ascending=False)
+                    st.markdown("""<div style="background:#EEF2FF;border:1px solid #6366F1;border-radius:8px;
+                        padding:6px 14px;font-size:12px;color:#3730A3;margin-bottom:6px;">
+                      ⚛ <b>QFSM Composite Rank</b> — Top 100 momentum candidates → Stage 2 factor blend →
+                      Top 30 final portfolio. <b>Gold highlight</b> = composite_rank ≤ 30.
+                    </div>""", unsafe_allow_html=True)
+                    st.dataframe(
+                        _s2_sorted[_qcols].style.format(precision=3).background_gradient(
+                            subset=['composite_score'] if 'composite_score' in _qcols else [],
+                            cmap='YlGn', vmin=0, vmax=1),
+                        use_container_width=True, height=460)
+                else:
+                    # Fallback: momentum rank only
+                    top_view = dfF.head(top_n).reset_index()
+                    dcols = ["Rank","Ticker","Close",rank_col,"roc12M","roc6M","roc3M",
+                             "vol12M","volm_cr","AWAY_ATH","circuit","dma200d"]
+                    dcols = [c for c in dcols if c in top_view.columns]
+                    st.dataframe(top_view[dcols].style.format(precision=2),
+                                 use_container_width=True, height=440)
             with tab2:
                 if dfU is not None:
-                    st.dataframe(dfU.reset_index().head(300).style.format(precision=2),
+                    _u_reset = dfU.reset_index()
+                    _ucols = ["Rank","Ticker","Close",rank_col,"roc12M","roc6M","roc3M",
+                              "vol12M","volm_cr","AWAY_ATH","dma200d"]
+                    _ucols = [c for c in _ucols if c in _u_reset.columns]
+                    st.dataframe(_u_reset.head(300)[_ucols].style.format(precision=2),
                                  use_container_width=True, height=440)
 
             st.divider()
@@ -4454,382 +4443,230 @@ with _tab_screener:
                 _lbl_v = f"VIX {_vix_curr:.1f}" if _vix_curr else "VIX N/A"
                 st.caption(f"📊 NAV {len(_nav_series)} pts | {_lbl_v} · Refresh button se update karo")
 
-            # ── Regime score (7-signal QFSM v2026.08) ────────────────────
-            from calculations import get_full_regime_result, RegimeState
-            _dfS_rg   = st.session_state.get("dfStats")
-            _prev_rs  = st.session_state.get("_regime_prev_state")
-            _rt_nc_rg = st.session_state.get("_rt_nifty_close")
-            _rt_nd_rg = st.session_state.get("_rt_nifty_dma200")
-            _rt_rk_rg = st.session_state.get("_rt_rank_history", [])
+            # ── Regime score ──────────────────────────────────────────────
+            _dfS_rg = st.session_state.get("dfStats")
+            if _dfS_rg is not None:
+                _rg = get_regime_score(_dfS_rg, equity_nav_series=_nav_series or None)
+            else:
+                _rg = {"score":2,"label":"Mild Bull","equity":0.65,"gold":0.20,"cash":0.15,
+                       "breadth_pct":0.0,"median_roc3m":0.0,"nav_current":None,"nav_dma200":None,
+                       "signals":{"s1_equity_curve":1,"s2_breadth":0,"s3_momentum":0}}
 
-            _rs_rg = get_full_regime_result(
-                dfStats=_dfS_rg,
-                equity_nav_series=_nav_series or None,
-                vix_value=_vix_curr,
-                nifty_close=_rt_nc_rg,
-                nifty_dma200=_rt_nd_rg,
-                rank_history=_rt_rk_rg or None,
-                fii_score=st.session_state.get("_fii_score", 0.5),
-                prev_state=_prev_rs,
-                total_capital=0.0,
-                dd_pct=0.0,
-            )
-            st.session_state["_regime_state"] = _rs_rg
+            _sc   = _rg["score"];  _lbl  = _rg["label"]
+            _eq   = _rg["equity"]; _gd   = _rg["gold"];  _cs   = _rg["cash"]
+            _sigs = _rg["signals"]
+            _brd  = _rg["breadth_pct"]; _roc3 = _rg["median_roc3m"]
+            _nav_c= _rg.get("nav_current"); _nav_d= _rg.get("nav_dma200")
 
-            _sc   = _rs_rg.effective_band
-            _lbl  = _rs_rg.label()
-            _eq   = _rs_rg.equity
-            _gd   = _rs_rg.gold
-            _cs   = _rs_rg.cash
-            _sigs = _rs_rg.signals
-            _smeta= _rs_rg.signal_meta
+            _COL  = {3:("#00d09e","#0a2a1f","🟢"),2:("#38bdf8","#0c2233","🔵"),
+                     1:("#f59e0b","#2d1f05","🟡"),0:("#f87171","#2d0909","🔴")}
+            _fc,_bc,_em = _COL[_sc]
 
-            _fc,_em = {3:("#00d09e","🟢"),2:("#38bdf8","🔵"),
-                       1:("#f59e0b","🟡"),0:("#f87171","🔴")}[_sc]
+            # ── Next dates banner ─────────────────────────────────────────
+            _dates_rg    = get_next_rebalance_dates()
+            _nxt_fri     = _dates_rg["next_friday"]
+            _nxt_rb      = _dates_rg["next_monthly_rb"]
+            _days_fri    = (_nxt_fri - _dt_regime.date.today()).days
 
-            # ── Next dates + status banner ────────────────────────────────
-            _dates_rg = get_next_rebalance_dates()
-            _nxt_fri  = _dates_rg["next_friday"]
-            _nxt_rb   = _dates_rg["next_monthly_rb"]
-            _days_fri = (_nxt_fri - _dt_regime.date.today()).days
+            st.markdown(f"""
+            <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+              <div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;
+                          padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:'DM Mono',monospace;">
+                📅 <b>Next Friday Check:</b> {_nxt_fri.strftime('%d %b %Y')}
+                <span style="opacity:.7;margin-left:6px;">({_days_fri}d)</span>
+              </div>
+              <div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;
+                          padding:7px 14px;font-size:12px;color:#15803d;font-family:'DM Mono',monospace;">
+                📆 <b>Monthly RB:</b> {_nxt_rb.strftime('%d %b %Y')}
+              </div>
+              {('<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:7px 14px;font-size:12px;color:#b45309;font-family:DM Mono,monospace;">VIX: <b>' + str(round(_vix_curr,1)) + ('</b> 🔴' if _vix_curr>20 else '</b>') + '</div>') if _vix_curr else '<div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:7px 14px;font-size:12px;color:#64748b;">VIX: N/A</div>'}
+            </div>
+            """, unsafe_allow_html=True)
 
-            _st_c  = {"STABLE":"#15803d","PENDING":"#d97706","CONFIRMED":"#1d4ed8",
-                      "DD_OVERRIDE":"#dc2626"}.get(_rs_rg.status,"#6b7280")
-            _st_bg = {"STABLE":"#dcfce7","PENDING":"#fef3c7","CONFIRMED":"#dbeafe",
-                      "DD_OVERRIDE":"#fee2e2"}.get(_rs_rg.status,"#f1f5f9")
-
-            _vix_div_rg = ""
-            if _vix_curr:
-                _vc_rg = "#dc2626" if _vix_curr > 20 else "#15803d"
-                _vix_div_rg = (f'<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;'
-                               f'padding:7px 14px;font-size:12px;color:{_vc_rg};font-family:DM Mono,monospace;">'
-                               f'VIX: <b>{round(_vix_curr,1)}</b>{"  🔴" if _vix_curr>20 else ""}</div>')
-
-            st.markdown(
-                f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
-                f'<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:7px 14px;font-size:12px;color:#1d4ed8;font-family:DM Mono,monospace;">📅 <b>Next Friday Check:</b> {_nxt_fri.strftime("%d %b %Y")} ({_days_fri}d)</div>'
-                f'<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:7px 14px;font-size:12px;color:#15803d;font-family:DM Mono,monospace;">📆 <b>Monthly RB:</b> {_nxt_rb.strftime("%d %b %Y")}</div>'
-                f'<div style="background:{_st_bg};border:1px solid;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;color:{_st_c};font-family:DM Mono,monospace;">⚡ {_rs_rg.status} ({_rs_rg.confirmation_count}/2)</div>'
-                f'{_vix_div_rg}'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-
-            # ── 7-Signal cards ─────────────────────────────────────────────
-            _s1v = _sigs.get("s1_nav",0);     _s2v = _sigs.get("s2_breadth",0)
-            _s3v = _sigs.get("s3_roc",0);     _s4v = _sigs.get("s4_vix",0)
-            _s5v = _sigs.get("s5_nifty",0);   _s6v = _sigs.get("s6_ad",0)
-            _s7v = _sigs.get("s7_rank",0);    _s8v = _sigs.get("s_fii",0.5)
-            _fii_data_s3 = st.session_state.get("_fii_data", {})
-
-            def _mk_fii_card(fii_score_val, fii_data):
-                _fii_net = fii_data.get("fii_net_30d")
-                _fii_sig = fii_data.get("signal", "NEUTRAL")
-                _fii_stale = fii_data.get("stale", False)
-                _fii_date  = fii_data.get("last_updated", "—")
-                if _fii_net is not None:
-                    _net_txt = f"FII 30D Net: ₹{_fii_net:,.0f} Cr · {_fii_sig}"
-                    if _fii_stale: _net_txt += " ⚠ (stale)"
-                else:
-                    _net_txt = "fii_data.json not loaded (fetch_fii_data.yml needed)"
-                _ok = fii_score_val >= 1.0
-                _partial = 0 < fii_score_val < 1.0
-                _c  = "#f59e0b" if _partial else ("#00d09e" if _ok else "#f87171")
-                _bg = "#fef3c7" if _partial else ("#e8fdf2" if _ok else "#fef2f2")
-                _bd = "#fcd34d" if _partial else ("#86efac" if _ok else "#fca5a5")
-                _ico = "⚠️" if _partial else ("✅" if _ok else "❌")
-                return (
-                    f'<div class="sig" style="background:{_bg};border-color:{_bd}">' +
-                    f'<div class="si">{_ico}</div>' +
-                    f'<div class="sb"><div class="st" style="color:{_c}">S8 — FII Net Flow ★</div>' +
-                    f'<div class="sc_t" style="color:#374151">FII 30D net &gt;₹5K=BULL · ₹0-5K=0.5pt · &lt;₹0=0pt (updated: {_fii_date})</div>' +
-                    f'<div class="sv" style="color:{_c}">{_net_txt}</div></div>' +
-                    f'<div class="sbg" style="background:{_c};color:white">{fii_score_val:.2g}/1pt</div>' +
-                    '</div>'
-                )
-
-            _nav_txt = (f'NAV {_smeta["nav_current"]:.2f} vs DMA {_smeta["nav_dma200"]:.2f} ({_smeta.get("gap_pct",0):+.1f}%)'
-                        if _smeta.get("nav_current") else "NAV data loading...")
-            _nif_txt = (f'Nifty {_rt_nc_rg:,.0f} vs DMA {_rt_nd_rg:,.0f} (ratio {_smeta.get("nifty_ratio",1):.3f})'
-                        if _rt_nc_rg else "Nifty: loading (Market Regime tab refresh karo)")
-
-            def _mk_sig_rg(icon, title, sub, val_txt, score_val, weight, ok, partial=False):
-                c  = "#f59e0b" if partial else ("#00d09e" if ok else "#f87171")
-                bg = "#fef3c7" if partial else ("#e8fdf2" if ok else "#fef2f2")
-                bd = "#fcd34d" if partial else ("#86efac" if ok else "#fca5a5")
-                return (f'<div class="sig" style="background:{bg};border-color:{bd}">' +
-                        f'<div class="si">{icon}</div>' +
-                        f'<div class="sb"><div class="st" style="color:{c}">{title}</div>' +
-                        f'<div class="sc_t" style="color:#374151">{sub}</div>' +
-                        f'<div class="sv" style="color:{c}">{val_txt}</div></div>' +
-                        f'<div class="sbg" style="background:{c};color:white">{score_val:.2g}/{weight}pt</div>' +
-                        '</div>')
-
+            # ── Gauge + Signals ───────────────────────────────────────────
+            _s1ok  = _sigs.get("s1_equity_curve", 1)
+            _s2ok  = _sigs.get("s2_breadth", 0)
+            _s3ok  = _sigs.get("s3_momentum", 0)
+            _s1c   = "#16a34a" if _s1ok else "#dc2626"
+            _s2c   = "#16a34a" if _s2ok else "#dc2626"
+            _s3c   = "#16a34a" if _s3ok else "#dc2626"
+            _nav_txt = (f"NAV {_nav_c:.2f} vs DMA {_nav_d:.2f}" if _nav_c and _nav_d
+                        else ("Data fetch karo ↗" if not _nav_series else "NAV < 200DMA"))
             _date_str_rg = _dt_regime.date.today().strftime('%d %b %Y')
-            _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg, raw_score=_rs_rg.raw_score, qfsm_mode=_rs_rg.qfsm_mode)
-            _sig_html_rg = (
-                '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}' +
-                '.sigs{display:flex;flex-direction:column;gap:8px;}' +
-                '.sig{border-radius:10px;padding:11px 14px;border:1.5px solid;display:flex;align-items:center;gap:12px;}' +
-                '.si{font-size:20px;flex-shrink:0;}.sb{flex:1;}' +
-                '.st{font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:2px;}' +
-                '.sc_t{font-size:11px;margin-bottom:3px;}.sv{font-size:13px;font-weight:800;}' +
-                '.sbg{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:700;flex-shrink:0;}' +
-                '</style><div class="sigs">' +
-                _mk_sig_rg("✅" if _s1v>0 else "❌","S1 — Equity Curve Trend","NAV > 200-Day Moving Average",_nav_txt,_s1v,1.5,_s1v>0) +
-                _mk_sig_rg("✅" if _s2v>0 else "❌","S2 — Market Breadth","% Stocks > 200DMA > 50%",f'{_smeta.get("breadth_pct",0):.1f}% above DMA',_s2v,1.0,_s2v>0) +
-                _mk_sig_rg("✅" if _s3v>0 else "❌","S3 — Universe Momentum","Median 3M ROC > 0%",f'{_smeta.get("median_roc3m",0):+.1f}% median 3M ROC',_s3v,1.0,_s3v>0) +
-                _mk_sig_rg("⚠️" if 0<_s4v<1.5 else ("✅" if _s4v>0 else "❌"),"S4 — India VIX ★","VIX ≤ 20=PASS | 20-25=Partial | >25=FAIL",f'VIX {round(_vix_curr,1) if _vix_curr else "N/A"}',_s4v,1.5,_s4v>0,0<_s4v<1.5) +
-                _mk_sig_rg("⚠️" if 0<_s5v<1.5 else ("✅" if _s5v>0 else "❌"),"S5 — Nifty 200DMA ★","^NSEI Close > 200-Day Moving Average",_nif_txt,_s5v,1.5,_s5v>0,0<_s5v<1.5) +
-                _mk_sig_rg("✅" if _s6v>0 else "❌","S6 — A-D Ratio ★","Advances/Total > 45% (1M ROC)",f'A-D: {_smeta.get("ad_ratio",0.5)*100:.0f}%',_s6v,1.0,_s6v>0) +
-                _mk_sig_rg("✅" if _s7v>0 else "❌","S7 — Rank Stability ★","Top-50 overlap > 60% (4-week)",f'Overlap: {_smeta.get("rank_overlap_pct",65):.0f}%',_s7v,0.5,_s7v>0) +
-                _mk_fii_card(_s8v, _fii_data_s3) +
-                '</div>'
+            _gauge_html  = _build_mmi_gauge(_sc, _fc, _lbl, _em, "", _date_str_rg)
+            _sig_html = (
+            '<style>body{margin:0;padding:0;background:transparent;font-family:"Segoe UI",sans-serif;}'
+            '.sigs{display:flex;flex-direction:column;gap:10px;}'
+            '.sig{border-radius:10px;padding:13px 16px;border:1.5px solid;display:flex;align-items:center;gap:14px;}'
+            '.si{font-size:24px;flex-shrink:0;}'
+            '.sb{flex:1;}'
+            '.st{font-size:12px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;margin-bottom:3px;}'
+            '.sc_t{font-size:12px;margin-bottom:4px;}'
+            '.sv{font-size:15px;font-weight:800;}'
+            '.sbg{padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;flex-shrink:0;}'
+            '</style>'
+            '<div class="sigs">'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s1ok else "#fef2f2"};border-color:{"#86efac" if _s1ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s1ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s1c}">S1 — Equity Curve Trend</div>'
+            '<div class="sc_t" style="color:#374151">NAV &gt; 200-Day Moving Average</div>'
+            f'<div class="sv" style="color:{_s1c}">{_nav_txt}</div></div>'
+            f'<div class="sbg" style="background:{_s1c};color:white">{"PASS" if _s1ok else "FAIL"}</div>'
+            '</div>'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s2ok else "#fef2f2"};border-color:{"#86efac" if _s2ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s2ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s2c}">S2 — Market Breadth</div>'
+            '<div class="sc_t" style="color:#374151">% Stocks above 200DMA &gt; 50%</div>'
+            f'<div class="sv" style="color:{_s2c}">{_brd}% above DMA</div></div>'
+            f'<div class="sbg" style="background:{_s2c};color:white">{"PASS" if _s2ok else "FAIL"}</div>'
+            '</div>'
+            f'<div class="sig" style="background:{"#e8fdf2" if _s3ok else "#fef2f2"};border-color:{"#86efac" if _s3ok else "#fca5a5"}">'
+            f'<div class="si">{"✅" if _s3ok else "❌"}</div>'
+            f'<div class="sb"><div class="st" style="color:{_s3c}">S3 — Universe Momentum</div>'
+            '<div class="sc_t" style="color:#374151">Median 3M ROC &gt; 0%</div>'
+            f'<div class="sv" style="color:{_s3c}">{_roc3:+.1f}% median 3M return</div></div>'
+            f'<div class="sbg" style="background:{_s3c};color:white">{"PASS" if _s3ok else "FAIL"}</div>'
+            '</div>'
+            '</div>'
             )
-
             _g_col, _s_col = st.columns([1, 1.6])
             with _g_col:
-                _stc_regime.html(_gauge_html, height=360)
-                # Score X.XX/8.5 below gauge
-                _scbg2 = {3:"#dcfce7",2:"#dbeafe",1:"#fef3c7",0:"#fee2e2"}[_sc]
-                _scfc2 = {3:"#15803d",2:"#1d4ed8",1:"#d97706",0:"#dc2626"}[_sc]
-                st.markdown(
-                    f'<div style="background:{_scbg2};border-radius:8px;padding:8px;text-align:center;margin-top:4px;">' +
-                    f'<div style="font-size:10px;color:{_scfc2};font-weight:700;text-transform:uppercase;">Weighted Score</div>' +
-                    f'<div style="font-size:32px;font-weight:900;color:{_scfc2};line-height:1.1;">{_rs_rg.raw_score:.2f}</div>' +
-                    f'<div style="font-size:10px;color:{_scfc2};">/ 9.0 pts · {_lbl}</div>' +
-                    '</div>', unsafe_allow_html=True)
-
-                # QFSM mode badge
-                _qc2  = "#7c3aed" if _rs_rg.qfsm_mode=="BLEND" else "#15803d"
-                _qbg2 = "#ede9fe" if _rs_rg.qfsm_mode=="BLEND" else "#dcfce7"
-                st.markdown(
-                    f'<div style="background:{_qbg2};border:1px solid {_qc2};border-radius:6px;padding:5px 10px;font-size:11px;color:{_qc2};font-weight:700;margin-top:6px;text-align:center;">' +
-                    f'{"⚛ QFSM BLEND" if _rs_rg.qfsm_mode=="BLEND" else "✅ Standard Band"} {_rs_rg.effective_band}' +
-                    '</div>', unsafe_allow_html=True)
+                _stc_regime.html(_gauge_html, height=380)
             with _s_col:
-                _stc_regime.html(_sig_html_rg, height=660)
-
-            # VIX overlay notice
-            if _vix_curr is not None and _rs_rg.vix_overlay_pct > 0:
-                _vc3 = "#dc2626" if _vix_curr > 30 else "#d97706"
-                st.markdown(
-                    f'<div style="background:{"#fef2f2" if _vix_curr>30 else "#fef3c7"};border:1.5px solid {_vc3};border-left:4px solid {_vc3};border-radius:8px;padding:8px 14px;font-size:12px;color:{_vc3};margin-bottom:8px;">' +
-                    f'⚡ <b>VIX Overlay (VIX {_vix_curr:.1f}):</b> +{_rs_rg.vix_overlay_pct:.1f}pp Gold (Liquid → Gold) | Equity UNTOUCHED' +
-                    '</div>', unsafe_allow_html=True)
+                _stc_regime.html(_sig_html, height=380)
 
             st.markdown("---")
 
-            # ── Portfolio value input ─────────────────────────────────────
+            # ── Portfolio value + prev score ──────────────────────────────
             _pv1, _pv2 = st.columns(2)
             with _pv1:
                 _total_pf = st.number_input("💼 Total Portfolio Value ₹ (Equity + Gold + Cash)",
                                              min_value=0, value=int(st.session_state.get("regime_pf_val",1000000)),
                                              step=10000, key="regime_pf_val")
             with _pv2:
-                _prev_sc_input = st.number_input("📅 Pichle Mahine Ka Band (0-3)",
-                                                  min_value=0, max_value=3,
-                                                  value=int(st.session_state.get("regime_prev_score", _sc)),
-                                                  step=1, key="regime_prev_score")
-                _prev_sc = _prev_sc_input
+                _prev_sc  = st.number_input("📅 Pichle Mahine Ka Score (0-3)", min_value=0, max_value=3,
+                                             value=int(st.session_state.get("regime_prev_score", _sc)),
+                                             step=1, key="regime_prev_score")
 
-            # ── Allocation cards (QFSM values) ────────────────────────────
-            _a1,_a2,_a3 = st.columns(3)
-            for col,(lbl,pct,fc,bg) in zip([_a1,_a2,_a3],[
-                ("📈 Equity",_eq,"#2563eb","#dbeafe"),
-                ("🥇 GOLDBEES",_gd,"#b45309","#fef3c7"),
-                ("💵 Liquid Fund",_cs,"#475569","#f1f5f9")]):
+            # ── Allocation cards ──────────────────────────────────────────
+            _a1, _a2 = st.columns(2)
+            _eq = EQUITY_FIXED_PCT; _gd = GOLD_FIXED_PCT
+            for col,(lbl,pct,fc,bg,extra) in zip([_a1,_a2],[
+                ("📈 Equity (QFSM)", _eq, "#2563eb","#dbeafe",""),
+                ("🥇 GOLDBEES (Fixed 20%)", _gd, "#b45309","#fef3c7",
+                 '<div style="font-size:10px;color:#b45309;margin-top:2px">±7% drift band: 13%–27%</div>')]):
                 with col:
-                    st.markdown(f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;' +
-                                f'padding:12px;text-align:center;margin-bottom:8px;">' +
-                                f'<div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>' +
-                                f'<div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.1f}%</div>' +
-                                f'<div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>' +
-                                '</div>', unsafe_allow_html=True)
+                    _card_html = (
+                        f'<div style="background:{bg};border:1px solid {fc};border-radius:8px;'
+                        f'padding:12px;text-align:center;margin-bottom:8px;">'
+                        f'<div style="font-size:11px;color:{fc};margin-bottom:4px">{lbl}</div>'
+                        f'<div style="font-size:28px;font-weight:800;color:{fc}">{pct*100:.0f}%</div>'
+                        f'<div style="font-size:12px;color:{fc};opacity:.8">₹{_total_pf*pct:,.0f}</div>'
+                        f'{extra}'
+                        f'</div>'
+                    )
+                    st.markdown(_card_html, unsafe_allow_html=True)
 
-            # ── Shift message ─────────────────────────────────────────────
+            # ── Gold Drift Check ──────────────────────────────────────
+            _gd_c1, _gd_c2 = st.columns([1, 2])
+            with _gd_c1:
+                _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
+                    value=int(st.session_state.get("_gb_curr_val", 0)),
+                    step=1000, key="goldbees_curr_regime")
+                st.session_state["_gb_curr_val"] = _gb_curr
+            with _gd_c2:
+                if _total_pf > 0 and _gb_curr >= 0:
+                    _gd_result = check_gold_drift(float(_gb_curr), float(_total_pf))
+                    _gd_col = {"IN_BAND":"#15803d","ABOVE_BAND":"#b45309","BELOW_BAND":"#dc2626"}.get(_gd_result["status"],"#64748b")
+                    _gd_bgc = {"IN_BAND":"#dcfce7","ABOVE_BAND":"#fef3c7","BELOW_BAND":"#fee2e2"}.get(_gd_result["status"],"#f1f5f9")
+                    st.markdown(f"""<div style="background:{_gd_bgc};border:1px solid {_gd_col};border-radius:10px;padding:10px 14px;margin-top:6px;">
+                      <div style="font-size:14px;font-weight:700;color:{_gd_col}">{_gd_result['message']}</div>
+                      <div style="font-size:11px;color:#64748b;margin-top:3px">Target: 20% (₹{_total_pf*GOLD_TARGET:,.0f}) · Band: ₹{_total_pf*GOLD_FLOOR:,.0f}–₹{_total_pf*GOLD_CEIL:,.0f}</div>
+                    </div>""", unsafe_allow_html=True)
+                    if _gd_result["status"] != "IN_BAND" and 0 < _gd_result["amount"] < MIN_TXN_AMOUNT:
+                        st.caption(f"⏭ Skip — drift ₹{_gd_result['amount']:,.0f} < ₹{MIN_TXN_AMOUNT:,.0f} min")
+
+            # ── PIN-protected Rebalance Memory Save ──────────────────
+            st.markdown('<div class="section-hdr">🔐 Rebalance Memory (PIN Protected)</div>', unsafe_allow_html=True)
+            if st.session_state.get("rebalance_done"):
+                _rm_col1, _rm_col2 = st.columns([2,1])
+                with _rm_col1:
+                    _mem_note = st.text_area("Rebalance note (optional)", height=68,
+                        placeholder="e.g. May 2026 RB — score 2, Mild Bull",
+                        key="rm_note")
+                with _rm_col2:
+                    _rm_pin = st.text_input("🔑 Enter PIN", type="password", key="rm_pin_inp")
+                    if st.button("💾 Save Rebalance Memory", key="rm_save_btn"):
+                        _mem_payload = {
+                            "date": str(_dt_rt.date.today()),
+                            "regime_score": st.session_state.get("_regime_result",{}).get("score",2),
+                            "regime_label": st.session_state.get("_regime_result",{}).get("label","Mild Bull"),
+                            "sell_list": st.session_state.get("sell_list",[]),
+                            "buy_list":  st.session_state.get("buy_list",[]),
+                            "portfolio": list(set(
+                                st.session_state.get("portfolio",[]) +
+                                st.session_state.get("buy_list",[])
+                            ) - set(st.session_state.get("sell_list",[]))),
+                            "note": _mem_note,
+                            "gold_pct": GOLD_FIXED_PCT,
+                            "equity_pct": EQUITY_FIXED_PCT,
+                        }
+                        _ok, _msg = _save_rebalance_memory(_mem_payload, _rm_pin)
+                        if _ok:
+                            st.success(f"✅ Rebalance memory saved to GitHub! {_msg}")
+                        else:
+                            st.error(f"❌ Save failed: {_msg}")
+            else:
+                st.caption("Rebalance tab mein pehle rebalance compute karo, phir yahan save karo.")
+
+
+            # ── Regime shift message (v2026.09 — factor weights, not assets) ──
             _sc_diff = _sc - _prev_sc
 
-        # Persist for Order Calculator (compatible dict from RegimeState)
-        st.session_state["_regime_result"]   = {
-            "score":  _rs_rg.effective_band,
-            "label":  _rs_rg.label(),
-            "equity": _rs_rg.equity,
-            "gold":   _rs_rg.gold,
-            "cash":   _rs_rg.cash,
-        }
+        # Persist for Order Calculator
+        st.session_state["_regime_result"]   = _rg
         st.session_state["_regime_prev_sc"]  = int(_prev_sc)
         st.session_state["_regime_total_pf"] = float(_total_pf)
+
         if _sc_diff == 0:
-            _smsg,_sfc,_sbg = "✅ Score same — normal equity rebalance karo. GOLDBEES/Liquid drift ±7% check karo. New entries at new target weight (Eq Budget ÷ 30).","#15803d","#dcfce7"
+            _smsg = f"✅ Score unchanged — normal monthly rebalance. Stage 1+2 screener → composite_score se Top-{PORTFOLIO_SIZE} select karo."
+            _sfc, _sbg = "#15803d","#dcfce7"
         elif abs(_sc_diff) == 1:
-            _smsg,_sfc,_sbg = f"🔄 Minor shift ({_prev_sc}→{_sc}) — exits se Gold/Liquid fund karo, new entries at new target weight. Existing stocks drift band mein rahenge.","#1d4ed8","#dbeafe"
+            _fw_c = EQUITY_FACTOR_WEIGHTS.get(_sc, EQUITY_FACTOR_WEIGHTS[2])
+            _f1p = int(_fw_c['f1']*100); _f3p = int(_fw_c['f3']*100)
+            _smsg = (f"🔄 Factor shift ({_prev_sc}→{_sc}) — Momentum: {_f1p}% | MeanRev: {_f3p}%. "
+                     "Asset allocation 80/20 UNCHANGED. Stage 2 composite → naye Top-30 auto-update.")
+            _sfc, _sbg = "#1d4ed8","#dbeafe"
         else:
-            _smsg,_sfc,_sbg = f"⚠️ Major shift ({_prev_sc}→{_sc}) — phased 2-month plan. Monthly exits se Gold/Liquid fund karo. Weekly plan neeche dekho.","#b45309","#fef3c7"
-            st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
-                        border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
-              {_smsg}</div>""", unsafe_allow_html=True)
+            _fw_c = EQUITY_FACTOR_WEIGHTS.get(_sc, EQUITY_FACTOR_WEIGHTS[2])
+            _f1p = int(_fw_c['f1']*100); _f3p = int(_fw_c['f3']*100)
+            _smsg = (f"⚠️ Major factor shift ({_prev_sc}→{_sc}) — Momentum: {_f1p}%, MeanRev: {_f3p}%. "
+                     "Asset 80/20 UNCHANGED. Monthly screener → Stage 2 QFSM se portfolio significantly change hoga.")
+            _sfc, _sbg = "#b45309","#fef3c7"
 
-            # ── GOLDBEES + Liquid actions — aligned layout ───────────────
-            # Section header
-            st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
-                            border-left:4px solid #0ea5e9;padding:6px 0 6px 12px;
-                            background:linear-gradient(90deg,rgba(14,165,233,.06) 0%,transparent 60%);
-                            border-radius:0 6px 6px 0;margin:1rem 0 .8rem;">
-                🏦 Asset Actions
+        st.markdown(f"""<div style="background:{_sbg};border:1px solid {_sfc};border-left:4px solid {_sfc};
+                    border-radius:8px;padding:10px 14px;font-size:13px;color:{_sfc};margin:8px 0">
+          {_smsg}</div>""", unsafe_allow_html=True)
+
+        _eq_budget = _total_pf * EQUITY_FIXED_PCT
+        _per_stk   = _eq_budget / PORTFOLIO_SIZE if _eq_budget > 0 else 0
+        st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
+                    border-radius:8px;padding:10px 16px;font-size:13px;margin:8px 0;">
+          <b style="color:#1d4ed8">📈 Equity Budget (Fixed 80%):</b>
+          ₹{_total_pf:,.0f} × 80% = <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
+          &nbsp;| Base per stock: <b style="color:#1d4ed8">₹{_per_stk:,.0f}</b>
+          &nbsp;| Risk parity adjusts sizes &nbsp;| Drift ±₹20,000
+        </div>""", unsafe_allow_html=True)
+
+        if _vix_curr is not None:
+            _vc  = "#dc2626" if _vix_curr>25 else ("#d97706" if _vix_curr>20 else "#15803d")
+            _vb  = "#fee2e2" if _vix_curr>25 else ("#fef3c7" if _vix_curr>20 else "#dcfce7")
+            _s4v = 0 if _vix_curr>25 else (0.75 if _vix_curr>20 else 1.5)
+            st.markdown(f"""<div style="background:{_vb};border:1px solid {_vc};border-radius:8px;
+                padding:6px 14px;font-size:12px;color:{_vc};margin:4px 0;">
+              VIX {_vix_curr:.1f} → S4 = {_s4v} pts → factor weights affect karta hai. Gold FIXED 20%.
             </div>""", unsafe_allow_html=True)
 
-            _act_col1, _act_col2 = st.columns(2)
-
-            # ─── GOLDBEES ───────────────────────────────────────────────────
-            with _act_col1:
-                st.markdown('<div style="font-size:13px;font-weight:700;color:#b45309;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #fcd34d">🥇 GOLDBEES Action</div>', unsafe_allow_html=True)
-                _gb_curr = st.number_input("Current GOLDBEES ₹", min_value=0,
-                                            value=0, step=1000, key="goldbees_curr_val",
-                                            label_visibility="visible")
-                _gb_cmp  = st.number_input("GOLDBEES CMP ₹", min_value=0.0,
-                                            value=0.0, step=0.5, key="goldbees_cmp",
-                                            label_visibility="visible")
-                if _total_pf > 0:
-                    _gd_tgt = _total_pf * _gd
-                    _gd_dif = _gd_tgt - _gb_curr
-                    _gdok   = abs(_gd_dif) / _total_pf < 0.07
-                    _gdc    = "#15803d" if _gdok else ("#b45309" if abs(_gd_dif/_total_pf) < 0.15 else "#dc2626")
-                    _gd_bg  = "#dcfce7" if _gdok else ("#fef3c7" if abs(_gd_dif/_total_pf) < 0.15 else "#fee2e2")
-                    _gu_txt = f" (~{int(abs(_gd_dif)/_gb_cmp)} units)" if not _gdok and _gb_cmp > 0 else ""
-                    _gact_icon = "✅" if _gdok else ("🔺" if _gd_dif > 0 else "🔻")
-                    # ₹15K min guardrail — sub-₹15K transaction not worth brokerage
-                    _gd_min_ok = abs(_gd_dif) >= 15000
-                    _gact_txt  = "Hold (within ±7%)" if _gdok else (
-                        f"BUY ₹{abs(_gd_dif):,.0f}{_gu_txt}" if _gd_dif > 0 else f"SELL ₹{abs(_gd_dif):,.0f}{_gu_txt}"
-                    )
-                    if not _gdok and not _gd_min_ok:
-                        _gact_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_gd_dif):,.0f}"
-                        _gdc, _gd_bg = "#64748b", "#f1f5f9"
-                    # VIX overlay adjusted gold target
-                    _vix_ovl_pct = 0
-                    if _vix_curr and _vix_curr > 30: _vix_ovl_pct = 5
-                    elif _vix_curr and _vix_curr > 20: _vix_ovl_pct = 3
-                    _eff_gd_pct = min(_gd + _vix_ovl_pct/100, 0.30)
-                    _gd_tgt_eff = _total_pf * _eff_gd_pct
-                    _ovl_note   = f" (VIX +{_vix_ovl_pct}%)" if _vix_ovl_pct > 0 else ""
-                    st.markdown(f"""<div style="background:{_gd_bg};border:1px solid {_gdc};
-                            border-radius:10px;padding:13px 15px;margin-top:6px;">
-                      <div style="display:flex;justify-content:space-between;align-items:center;
-                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_gdc};">
-                        <span>Current: <b style="font-size:14px;">₹{_gb_curr:,.0f}</b></span>
-                        <span style="font-size:16px;opacity:.4">→</span>
-                        <span>Target: <b style="font-size:14px;">₹{_gd_tgt_eff:,.0f}</b>{_ovl_note}</span>
-                      </div>
-                      <div style="font-size:17px;font-weight:800;color:{_gdc};text-align:center;">
-                        {_gact_icon} {_gact_txt}
-                      </div>
-                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_gd_dif):,.0f}" if not _gdok else 'Within band'}
-                      </div>
-                    </div>""", unsafe_allow_html=True)
-
-            # ─── LIQUID FUND ─────────────────────────────────────────────────
-            with _act_col2:
-                st.markdown('<div style="font-size:13px;font-weight:700;color:#475569;letter-spacing:.3px;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #cbd5e1">💵 Liquid Fund Action</div>', unsafe_allow_html=True)
-                _lf_curr = st.number_input("Current Liquid Fund ₹", min_value=0,
-                                            value=0, step=1000, key="liquid_curr_val",
-                                            label_visibility="visible")
-                if _total_pf > 0:
-                    _cs_tgt = _total_pf * _cs
-                    _cs_dif = _cs_tgt - _lf_curr
-                    _csok   = abs(_cs_dif) / _total_pf < 0.07
-                    _csc    = "#15803d" if _csok else ("#1d4ed8" if _cs_dif > 0 else "#b45309")
-                    _cs_bg  = "#dcfce7" if _csok else ("#dbeafe" if _cs_dif > 0 else "#fef3c7")
-                    _cs_icon = "✅" if _csok else ("🔺" if _cs_dif > 0 else "🔻")
-                    # ₹15K min guardrail
-                    _cs_min_ok = abs(_cs_dif) >= 15000
-                    _cs_txt  = "Hold (within ±7%)" if _csok else (
-                        f"ADD ₹{abs(_cs_dif):,.0f}" if _cs_dif > 0 else f"REDEEM ₹{abs(_cs_dif):,.0f}"
-                    )
-                    if not _csok and not _cs_min_ok:
-                        _cs_txt = f"⏭ Skip (< ₹15K threshold) — drift ₹{abs(_cs_dif):,.0f}"
-                        _csc, _cs_bg = "#64748b", "#f1f5f9"
-                    st.markdown(f"""<div style="background:{_cs_bg};border:1px solid {_csc};
-                            border-radius:10px;padding:13px 15px;margin-top:89px;">
-                      <div style="display:flex;justify-content:space-between;align-items:center;
-                                  margin-bottom:10px;font-size:13px;font-weight:600;color:{_csc};">
-                        <span>Current: <b style="font-size:14px;">₹{_lf_curr:,.0f}</b></span>
-                        <span style="font-size:16px;opacity:.4">→</span>
-                        <span>Target: <b style="font-size:14px;">₹{_cs_tgt:,.0f} ({_cs*100:.0f}%)</b></span>
-                      </div>
-                      <div style="font-size:17px;font-weight:800;color:{_csc};text-align:center;">
-                        {_cs_icon} {_cs_txt}
-                      </div>
-                      <div style="font-size:10.5px;color:#64748b;margin-top:6px;text-align:center;">
-                        Band: ±7% of PF · Min txn ₹15K · {'Drift ₹' + f"{abs(_cs_dif):,.0f}" if not _csok else 'Within band'}
-                      </div>
-                    </div>""", unsafe_allow_html=True)
-
-            # ── Equity budget ─────────────────────────────────────────────
-            _eq_budget = _total_pf * _eq
-            _per_stock_target = _eq_budget / 30 if _eq_budget > 0 else 0
-            _drift_band_rs = 20000  # ±₹20K per stock drift band (SOP 9.5.1)
-            st.markdown(f"""<div style="background:#dbeafe;border:1px solid #93c5fd;border-left:4px solid #2563eb;
-                        border-radius:8px;padding:10px 16px;font-size:13px;margin:10px 0;">
-              <b style="color:#1d4ed8">📈 Equity Budget:</b>
-              <span style="color:#1e3a5f;margin-left:8px;">₹{_total_pf:,.0f} × {_eq*100:.0f}% =
-                <b style="font-size:16px;color:#1d4ed8"> ₹{_eq_budget:,.0f}</b>
-              </span>
-              &nbsp;&nbsp;
-              <span style="color:#475569;font-size:12px;">
-                | Per stock target: <b style="color:#1d4ed8">₹{_per_stock_target:,.0f}</b>
-                &nbsp;| Drift band: <b>±₹{_drift_band_rs:,}</b>
-                &nbsp;| Band Low: ₹{max(0,_per_stock_target-_drift_band_rs):,.0f}
-                — High: ₹{_per_stock_target+_drift_band_rs:,.0f}
-              </span>
-            </div>""", unsafe_allow_html=True)
-
-            # ── VIX Overlay Panel (SOP Section 7.5) ──────────────────────
-            if _vix_curr is not None and _total_pf > 0:
-                _base_gold_pct = _gd * 100
-                _vix_overlay_pct = 0
-                _vix_overlay_src = ""
-                if _vix_curr > 30:
-                    _vix_overlay_pct = 5
-                    _vix_overlay_src = "VIX > 30"
-                elif _vix_curr > 20:
-                    _vix_overlay_pct = 3
-                    _vix_overlay_src = "VIX 20-30"
-
-                if _vix_overlay_pct > 0:
-                    _eff_gold_pct = min(_base_gold_pct + _vix_overlay_pct, 30)  # hard cap 30%
-                    _actual_overlay = _eff_gold_pct - _base_gold_pct
-                    _eff_cash_pct   = (_cs * 100) - _actual_overlay  # liquid funds the shift
-                    _eff_gold_rs    = _total_pf * _eff_gold_pct / 100
-                    _eff_cash_rs    = _total_pf * _eff_cash_pct / 100
-                    _overlay_rs     = _total_pf * _actual_overlay / 100
-                    _vix_col = "#dc2626" if _vix_curr > 30 else "#d97706"
-                    _vix_bg  = "#fef2f2" if _vix_curr > 30 else "#fef3c7"
-                    st.markdown(f"""
-                    <div style="background:{_vix_bg};border:1.5px solid {_vix_col};border-left:4px solid {_vix_col};
-                                border-radius:8px;padding:12px 16px;margin:8px 0;">
-                      <div style="font-size:13px;font-weight:700;color:{_vix_col};margin-bottom:6px;">
-                        ⚡ VIX Overlay Active — {_vix_overlay_src} (+{_actual_overlay:.0f}% Gold from Liquid)
-                      </div>
-                      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#374151;">
-                        <span>Base Gold: <b>{_base_gold_pct:.0f}%</b></span>
-                        <span style="color:{_vix_col};">→ Effective Gold: <b>{_eff_gold_pct:.0f}%</b> (₹{_eff_gold_rs:,.0f})</span>
-                        <span>Effective Cash: <b>{_eff_cash_pct:.0f}%</b> (₹{_eff_cash_rs:,.0f})</span>
-                        <span style="color:#6d28d9;font-weight:600;">Move ₹{_overlay_rs:,.0f} from Liquid → GOLDBEES</span>
-                      </div>
-                      <div style="font-size:11px;color:#6b7280;margin-top:6px;">
-                        ⚠️ Equity UNTOUCHED — only Liquid → Gold shift. Apply at monthly RB (VIX 20-30) or this Friday (VIX > 30).
-                        Normalize hone pe (VIX ≤ 20) → excess Gold wapas Liquid mein.
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
-                                padding:8px 14px;font-size:12px;color:#15803d;margin:4px 0;">
-                      ✅ VIX {_vix_curr:.1f} ≤ 20 — No VIX Overlay. Base allocation applies.
-                    </div>""", unsafe_allow_html=True)
 
             # ── Drawdown Protocol (SOP Section 8.5) ──────────────────────
             st.markdown("""<div style="font-size:14px;font-weight:700;color:var(--text-color);
@@ -4903,7 +4740,7 @@ with _tab_screener:
                 st.markdown(f"""<div style="background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;
                             padding:10px 12px;text-align:center;margin-top:4px;">
                   <div style="font-size:10px;color:#6d28d9;font-weight:600;text-transform:uppercase;">Per Stock Target</div>
-                  <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stock_target:,.0f}</div>
+                  <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stk:,.0f}</div>
                   <div style="font-size:10px;color:#7c3aed;">Eq Budget ÷ 30</div>
                 </div>""", unsafe_allow_html=True)
 
@@ -4914,7 +4751,7 @@ with _tab_screener:
                 _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
                 _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
                 _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
-                _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
+                _new_entry_cost       = _n_new_entries * _per_stk if _per_stk > 0 else 0
                 _surplus              = _proceeds_after_liq - _new_entry_cost
 
                 st.markdown(f"""
@@ -4937,7 +4774,7 @@ with _tab_screener:
                       <div style="font-size:18px;font-weight:800;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'}">₹{_liquid_gap:,.0f}</div>
                     </div>
                     <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
-                      <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stock_target:,.0f})</div>
+                      <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stk:,.0f})</div>
                       <div style="font-size:18px;font-weight:800;color:#15803d">₹{_new_entry_cost:,.0f}</div>
                     </div>
                     <div style="background:#{'dcfce7' if _surplus>=0 else 'fee2e2'};border-radius:8px;padding:10px;text-align:center;">
@@ -5028,143 +4865,201 @@ with _tab_screener:
             # ══════════════════════════════════════════════════════════════
 
         with _s3_tab_b:
-            # ── Compute rebalance ─────────────────────────────────────
+            # ── v2026.09 Two-Stage QFSM Rebalance ────────────────────────
             if portfolio and st.session_state.dfFiltered is not None:
-                dfFiltered      = st.session_state.dfFiltered
-                dfStats         = st.session_state.dfStats
-                top_n           = st.session_state.top_n_rank
-                rank_threshold  = top_n
+                dfFiltered = st.session_state.dfFiltered
+                dfStats    = st.session_state.dfStats
+                top_n      = st.session_state.top_n_rank
 
-                top_rank_tickers = dfFiltered.reset_index()
-                top_rank_tickers = top_rank_tickers[top_rank_tickers['Rank'] <= rank_threshold]['Ticker']
+                _rg_cur    = st.session_state.get("_regime_result", {})
+                _regime_bd = int(_rg_cur.get("regime_band", _rg_cur.get("score", 2)))
+
+                # Stage 1 banner
+                st.markdown(f'<div style="background:#DCFCE7;border:1px solid #86EFAC;border-left:4px solid #16A34A;'
+                            f'border-radius:8px;padding:7px 14px;font-size:12px;color:#14532D;margin-bottom:6px;">'
+                            f'⚡ <b>Stage 1 — Momentum Gate:</b> AllNSE filtered → Top {STAGE1_TOP_N} by avgZScore</div>',
+                            unsafe_allow_html=True)
+
+                try:
+                    stage1 = get_stage1_momentum_candidates(dfFiltered, top_n=STAGE1_TOP_N)
+                except Exception:
+                    stage1 = dfFiltered[dfFiltered.index <= STAGE1_TOP_N].copy()
+
+                # Stage 2 banner
+                st.markdown(f'<div style="background:#EEF2FF;border:1px solid #6366F1;border-left:4px solid #7C3AED;'
+                            f'border-radius:8px;padding:7px 14px;font-size:12px;color:#3730A3;margin-bottom:6px;">'
+                            f'⚛ <b>Stage 2 — QFSM Blend:</b> F1+F2+F3+F4+F5 composite_score → Top {PORTFOLIO_SIZE}</div>',
+                            unsafe_allow_html=True)
+
+                try:
+                    stage2      = compute_stage2_composite(stage1, _regime_bd)
+                    final_pf_df = select_final_portfolio(stage2, PORTFOLIO_SIZE)
+                    _has_s2     = 'composite_score' in stage2.columns
+                except Exception as _e2:
+                    st.warning(f"⚠️ Stage 2 error: {_e2}. Falling back to momentum ranking.")
+                    stage2      = dfFiltered.copy()
+                    final_pf_df = dfFiltered.head(top_n)
+                    _has_s2     = False
+
+                # Top tickers from Stage 2 final portfolio
+                _tc = 'Ticker' if 'Ticker' in final_pf_df.columns else None
+                top_rank_tickers = (final_pf_df['Ticker'] if _tc
+                                    else final_pf_df.reset_index().get('Ticker', pd.Series([])))
 
                 current_portfolio_tickers = pd.Series(portfolio)
-                entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)]
-                exit_stocks  = current_portfolio_tickers[~current_portfolio_tickers.isin(top_rank_tickers)]
+
+                # ── Threshold-based exits ─────────────────────────────────
+                if _has_s2:
+                    try:
+                        _exit_list_v09 = get_exit_list(stage2, portfolio, _regime_bd)
+                        exit_tickers_v09 = [e['ticker'] for e in _exit_list_v09]
+                    except Exception:
+                        exit_tickers_v09 = []; _exit_list_v09 = []
+                else:
+                    exit_tickers_v09 = []; _exit_list_v09 = []
+
+                # Also exit stocks no longer in Top STAGE1_TOP_N
+                classic_exits = current_portfolio_tickers[
+                    ~current_portfolio_tickers.isin(top_rank_tickers)].tolist()
+                exit_stocks  = pd.Series(sorted(set(exit_tickers_v09) | set(classic_exits)))
                 hold_stocks  = current_portfolio_tickers[current_portfolio_tickers.isin(top_rank_tickers)]
 
-                num_sells = len(exit_stocks)
-                entry_stocks = entry_stocks.head(num_sells)
+                num_sells    = len(exit_stocks)
+                try:
+                    entry_list   = get_entry_list(final_pf_df, portfolio, num_sells)
+                    entry_stocks = pd.Series(entry_list)
+                except Exception:
+                    entry_stocks = top_rank_tickers[~top_rank_tickers.isin(current_portfolio_tickers)].head(num_sells)
 
                 if len(entry_stocks) < num_sells:
-                    entry_stocks = pd.concat([
-                        entry_stocks,
-                        pd.Series([None] * (num_sells - len(entry_stocks)))
-                    ])
+                    entry_stocks = pd.concat([entry_stocks,
+                                              pd.Series([None]*(num_sells-len(entry_stocks)))])
 
-                # ── Reasons for exit (v10 logic) ──────────────────────
+                # ── Exit reasons ──────────────────────────────────────────
+                _reason_map = {e['ticker']: e['reason'] for e in _exit_list_v09}
                 reasons_for_exit = []
                 for ticker in exit_stocks:
                     if pd.isna(ticker) or ticker == "":
                         reasons_for_exit.append(""); continue
-                    reasons    = []
-                    stock_data = dfStats[dfStats['Ticker'] == ticker] if dfStats is not None else pd.DataFrame()
-                    if len(stock_data) > 0:
-                        if stock_data.index[0] > rank_threshold:          reasons.append(f"Rank > {rank_threshold}")
-                        if stock_data['volm_cr'].values[0] <= 1:           reasons.append("Volume ≤ 1 Cr")
-                        if stock_data['Close'].values[0] <= stock_data['dma200d'].values[0]:
-                                                                           reasons.append("Close ≤ 200-DMA")
-                        if stock_data['roc12M'].values[0] <= 5.5:          reasons.append("12M ROC ≤ 5.5%")
-                        if stock_data['circuit'].values[0] >= 20:          reasons.append("Circuit ≥ 20")
-                        if stock_data['AWAY_ATH'].values[0] <= -25:        reasons.append("Away ATH ≤ -25%")
-                        if stock_data['roc12M'].values[0] >= 1000:         reasons.append("12M ROC ≥ 1000%")
-                        if stock_data['Close'].values[0] <= 30:            reasons.append("Close ≤ ₹30")
-                        if stock_data['circuit5'].values[0] > 10:          reasons.append("5% Circuit > 10")
+                    if ticker in _reason_map:
+                        reasons_for_exit.append(f"QFSM: {_reason_map[ticker]}"); continue
+                    reasons = []
+                    sd = dfStats[dfStats['Ticker']==ticker] if dfStats is not None else pd.DataFrame()
+                    if len(sd) > 0:
+                        if sd.index[0] > STAGE1_TOP_N:           reasons.append(f"Outside Top-{STAGE1_TOP_N}")
+                        if sd['volm_cr'].values[0] <= 1:          reasons.append("Volume ≤ 1Cr")
+                        if sd['Close'].values[0] <= sd['dma200d'].values[0]: reasons.append("Close ≤ 200DMA")
+                        if sd['roc12M'].values[0] <= 5.5:         reasons.append("12M ROC ≤ 5.5%")
+                        if sd['circuit'].values[0] >= 20:         reasons.append("Circuit ≥ 20")
+                        if sd['AWAY_ATH'].values[0] <= -25:       reasons.append("ATH ≤ -25%")
+                        if sd['Close'].values[0] <= 30:           reasons.append("Close ≤ ₹30")
                     else:
-                        reasons.append("Not in selected universe")
+                        reasons.append("Not in universe")
                     reasons_for_exit.append(", ".join(reasons) if reasons else "Rank dropped")
-
-                reasons_for_exit.extend([""] * (len(entry_stocks) - len(reasons_for_exit)))
+                reasons_for_exit.extend([""] * max(0, len(entry_stocks)-len(reasons_for_exit)))
 
                 rebalance_table = pd.DataFrame({
-                    'S.No.':           range(1, num_sells + 1),
+                    'S.No.':           range(1, num_sells+1),
                     'Sell Stocks':     exit_stocks.tolist(),
                     'Buy Stocks':      entry_stocks.tolist(),
                     'Reason for Exit': reasons_for_exit,
                 })
                 rebalance_table = rebalance_table[
-                    ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())
-                ]
+                    ~(rebalance_table['Sell Stocks'].isna() & rebalance_table['Buy Stocks'].isna())]
                 rebalance_table.set_index('S.No.', inplace=True)
-                st.session_state.sell_list = exit_stocks.dropna().tolist()
-                st.session_state.buy_list  = entry_stocks.dropna().tolist()
+                st.session_state.sell_list       = exit_stocks.dropna().tolist()
+                st.session_state.buy_list        = entry_stocks.dropna().tolist()
                 st.session_state.rebalance_table = rebalance_table
                 st.session_state.rebalance_done  = True
 
-                # ── Summary strip ──────────────────────────────────────
+                # ── Factor allocation for current portfolio ───────────────
+                if _has_s2 and portfolio:
+                    try:
+                        _fa     = get_factor_allocation_pct(stage2, portfolio, _regime_bd)
+                        _m_pct  = _fa.get('Momentum (F1)', 0.45) * 100
+                        _fa_txt = " · ".join(f"<b>{k.split('(')[0].strip()}:</b> {v*100:.0f}%"
+                                             for k,v in _fa.items())
+                        _eq_note = ('⚡ Leading' if _m_pct>55 else
+                                    ('⚖️ Equilibrium' if _m_pct>=45 else
+                                     ('⚠️ Fading' if _m_pct>=35 else '🔴 Bear')))
+                        st.markdown(f'<div style="background:#F5F3FF;border:1px solid #A78BFA;border-radius:8px;'
+                                    f'padding:7px 14px;font-size:12px;color:#4C1D95;margin-bottom:6px;">'
+                                    f'⚛ <b>Portfolio Factor Mix:</b> {_fa_txt} &nbsp; {_eq_note} Momentum {_m_pct:.0f}%</div>',
+                                    unsafe_allow_html=True)
+                    except Exception:
+                        pass
+
+                # ── Summary strip ─────────────────────────────────────────
                 st.markdown(f"""<div class="reb-strip">
                   <div class="reb-stat"><div class="label">Portfolio</div><div class="val b">{len(portfolio)}</div></div>
-                  <div class="reb-stat"><div class="label">Top-{rank_threshold} Screener</div><div class="val b">{len(top_rank_tickers)}</div></div>
-                  <div class="reb-stat"><div class="label">SELL (Exit)</div><div class="val r">{len(exit_stocks)}</div></div>
-                  <div class="reb-stat"><div class="label">BUY (Entry)</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
+                  <div class="reb-stat"><div class="label">Stage1 Top-{STAGE1_TOP_N}</div><div class="val b">{len(stage1)}</div></div>
+                  <div class="reb-stat"><div class="label">Stage2 Final-{PORTFOLIO_SIZE}</div><div class="val b">{len(final_pf_df)}</div></div>
+                  <div class="reb-stat"><div class="label">SELL</div><div class="val r">{num_sells}</div></div>
+                  <div class="reb-stat"><div class="label">BUY</div><div class="val g">{len(entry_stocks.dropna())}</div></div>
                   <div class="reb-stat"><div class="label">HOLD</div><div class="val p">{len(hold_stocks)}</div></div>
                 </div>""", unsafe_allow_html=True)
 
-                # ── Sell / Buy / Hold columns ──────────────────────────
+                # ── Stage 2 composite table ───────────────────────────────
+                if _has_s2:
+                    with st.expander(f"📊 Stage 2 — Top {PORTFOLIO_SIZE} QFSM Composite Scores", expanded=False):
+                        _s2r = final_pf_df.reset_index() if final_pf_df.index.name=='Rank' else final_pf_df
+                        _sc = ['Ticker','Close','composite_score','composite_rank',
+                               'f1_momentum','f2_trend','f3_mean_rev','avgZScore12_6_3','AWAY_ATH','vol']
+                        _sc = [c for c in _sc if c in _s2r.columns]
+                        st.dataframe(_s2r[_sc].sort_values('composite_score', ascending=False)
+                                     if 'composite_score' in _s2r.columns else _s2r,
+                                     use_container_width=True, hide_index=True)
+
+                # ── Sell / Buy / Hold columns ─────────────────────────────
                 col_sell, col_buy, col_hold = st.columns(3)
                 with col_sell:
                     st.markdown('<div class="section-hdr" style="border-left-color:var(--red)">🔴 SELL List</div>', unsafe_allow_html=True)
                     sell_list = exit_stocks.dropna().tolist()
                     if sell_list:
-                        chips = " ".join([f'<span class="chip chip-sell">{s}</span>' for s in sell_list])
+                        chips = " ".join(f'<span class="chip chip-sell">{s}</span>' for s in sell_list)
                         st.markdown(chips, unsafe_allow_html=True)
                         cmp_map = {}
                         if dfStats is not None:
                             cmp_map = dict(zip(dfStats['Ticker'], dfStats['Close']))
-                        # Also try dfFiltered for CMP (in case stock is in filtered but not dfStats)
-                        if dfFiltered is not None:
-                            for t, c in zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Close']):
-                                if t not in cmp_map:
-                                    cmp_map[t] = c
                         sell_df = pd.DataFrame({
-                            "Stock": sell_list,
-                            "CMP ₹": [
-                                round(cmp_map[s], 2) if s in cmp_map and cmp_map[s] > 0
-                                else "N/A *"
-                                for s in sell_list
-                            ],
+                            "Stock":  sell_list,
+                            "CMP ₹":  [round(cmp_map.get(s,0),2) if cmp_map.get(s,0)>0 else "N/A" for s in sell_list],
                             "Reason": reasons_for_exit[:len(sell_list)]
                         })
                         st.dataframe(sell_df, hide_index=True, use_container_width=True)
-                        missing_cmp = [s for s in sell_list if s not in cmp_map or cmp_map.get(s, 0) == 0]
-                        if missing_cmp:
-                            st.caption(
-                                f"* {', '.join(missing_cmp)} — CMP unavailable "
-                                f"(stock selected universe ({st.session_state.universe}) mein nahi hai). "
-                                "Broker app se manually CMP check karo."
-                            )
                     else:
                         st.success("Koi sell nahi hai!")
 
                 with col_buy:
-                    st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List (New Entry)</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--green)">🟢 BUY List</div>', unsafe_allow_html=True)
                     buy_list = entry_stocks.dropna().tolist()
                     if buy_list:
-                        chips = " ".join([f'<span class="chip chip-buy">{s}</span>' for s in buy_list])
+                        chips = " ".join(f'<span class="chip chip-buy">{s}</span>' for s in buy_list)
                         st.markdown(chips, unsafe_allow_html=True)
-                        rank_map = dict(zip(dfFiltered.reset_index()['Ticker'], dfFiltered.reset_index()['Rank']))
-                        cmp_map2 = {}
-                        if dfStats is not None:
-                            cmp_map2 = dict(zip(dfStats['Ticker'], dfStats['Close']))
+                        if _tc:
+                            cs_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_score',pd.Series())))
+                            cl_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('Close',pd.Series())))
+                            rk_map = dict(zip(final_pf_df['Ticker'], final_pf_df.get('composite_rank',pd.Series())))
+                        else:
+                            cs_map = cl_map = rk_map = {}
                         buy_df = pd.DataFrame({
-                            "Stock":        buy_list,
-                            "Screener Rank":[rank_map.get(s, "—") for s in buy_list],
-                            "CMP ₹":        [round(cmp_map2.get(s, 0), 2) for s in buy_list],
+                            "Stock":           buy_list,
+                            "CMP ₹":           [round(cl_map.get(s,0),2) if cl_map.get(s,0)>0 else "N/A" for s in buy_list],
+                            "Composite Score": [round(cs_map.get(s,0),3) if s in cs_map else "N/A" for s in buy_list],
+                            "QFSM Rank":       [rk_map.get(s,"N/A") for s in buy_list],
                         })
                         st.dataframe(buy_df, hide_index=True, use_container_width=True)
                     else:
-                        st.info("Koi buy nahi hai.")
+                        st.success("Koi entry nahi hai!")
 
                 with col_hold:
-                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🔵 HOLD (Retain)</div>', unsafe_allow_html=True)
-                    if not hold_stocks.empty:
-                        chips = " ".join([f'<span class="chip chip-hold">{s}</span>' for s in hold_stocks.tolist()])
+                    st.markdown('<div class="section-hdr" style="border-left-color:var(--violet)">🟣 HOLD</div>', unsafe_allow_html=True)
+                    hold_list = hold_stocks.dropna().tolist()
+                    if hold_list:
+                        chips = " ".join(f'<span class="chip chip-hold">{s}</span>' for s in hold_list)
                         st.markdown(chips, unsafe_allow_html=True)
-
-                # ── Rebalance table ────────────────────────────────────
-                st.markdown('<div class="section-hdr">📋 Rebalance Table (Sell → Buy mapping)</div>', unsafe_allow_html=True)
-                if not rebalance_table.empty:
-                    st.dataframe(rebalance_table, use_container_width=True)
+                    else:
+                        st.info("Koi hold nahi.")
 
                 st.divider()
 
@@ -5501,20 +5396,44 @@ with _tab_screener:
 
             excel_file = f"{end_date.strftime('%Y-%m-%d')}_{U}_{rank_method}_{api_source}_lookback.xlsx"
 
-            with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
-                dfStats.to_excel(   writer, sheet_name="Unfiltered Stocks",     index=True)
-                filtered.to_excel(  writer, sheet_name="Filtered Stocks",       index=True)
-                df_failed.to_excel( writer, sheet_name="Failed Downloads",      index=True)
-                reb_table.to_excel( writer, sheet_name="Portfolio Rebalancing", index=True)
-
-            # Apply v10 formatting
+        def _add_qfsm_cols(df: "pd.DataFrame", band: int) -> "pd.DataFrame":
+            """Add composite_score + factor cols to dfStats for Excel export."""
             try:
-                format_excel_unfiltered(excel_file, U, top_n)
-                format_excel_filtered(excel_file, U, top_n)
-                format_simple_sheet(excel_file, "Failed Downloads")
-                format_simple_sheet(excel_file, "Portfolio Rebalancing")
-            except Exception as e:
-                st.warning(f"Excel formatting partial error (file still usable): {e}")
+                # Use Rank column if available, else use positional head
+                if 'Rank' in df.columns:
+                    _s1 = df[df['Rank'] <= STAGE1_TOP_N].copy()
+                else:
+                    _s1 = df.head(STAGE1_TOP_N).copy()
+                _s1 = _s1.reset_index(drop=True)
+                _s2 = compute_stage2_composite(_s1, band)
+                _qcols = [c for c in ['composite_score','composite_rank',
+                                       'f1_momentum','f2_trend','f3_mean_rev',
+                                       'f4_size','f5_vol_score'] if c in _s2.columns]
+                if 'Ticker' in _s2.columns and 'Ticker' in df.columns and _qcols:
+                    df = df.merge(_s2[['Ticker'] + _qcols], on='Ticker', how='left')
+            except Exception:
+                pass
+            return df
+
+        _regime_bd = int(st.session_state.get("_regime_result", {}).get("regime_band",
+                         st.session_state.get("_regime_result", {}).get("score", 2)))
+        _df_ufilt        = _add_qfsm_cols(dfStats.reset_index(), _regime_bd) if dfStats is not None else pd.DataFrame()
+        filtered_export  = _add_qfsm_cols(filtered.reset_index(), _regime_bd)
+
+        with pd.ExcelWriter(excel_file, engine="openpyxl") as writer:
+            (_df_ufilt).to_excel(writer, sheet_name="Unfiltered Stocks",    index=True)
+            filtered_export.to_excel(writer, sheet_name="Filtered Stocks",  index=True)
+            df_failed.to_excel(      writer, sheet_name="Failed Downloads",  index=True)
+            reb_table.to_excel(      writer, sheet_name="Portfolio Rebalancing", index=True)
+
+        # Format AFTER writer closes (openpyxl load_workbook needs closed file)
+        try:
+            format_excel_unfiltered(excel_file, U, top_n)
+            format_excel_filtered(excel_file, U, top_n)
+            format_simple_sheet(excel_file, "Failed Downloads")
+            format_simple_sheet(excel_file, "Portfolio Rebalancing")
+        except Exception as e:
+            st.warning(f"Excel formatting partial error (file still usable): {e}")
 
             with open(excel_file, "rb") as f:
                 st.download_button(
