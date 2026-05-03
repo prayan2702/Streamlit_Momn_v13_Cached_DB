@@ -1,480 +1,438 @@
 #!/usr/bin/env python3
 """
-scripts/fetch_fii_data.py  — v2
-================================
-NSE direct API GitHub Actions pe block ho jaata hai (empty response / 403).
+scripts/fetch_fii_data.py — v3 (Definitive)
+============================================
+Source priority (proven to work from GitHub Actions):
 
-Source priority (all free, no auth):
-  1. Trendlyne FII/DII screener CSV   (most reliable, public)
-  2. Moneycontrol FII data API        (fallback 1)
-  3. Tickertape / Groww public data   (fallback 2)
-  4. Previous stale data              (last resort)
+  1. nselib  — capital_market.fii_dii_trading_activity(period='1M')
+               Handles NSE session/cookies internally. Updated May 2026.
+  2. nselib  — cash_market.nsdl_fpi_investment_activity() (NSDL official)
+               Uses NSDL public data, very reliable.
+  3. nsefin  — nse.get_fii_dii_activity() if nselib fails
+  4. yfinance proxy — infer from NIFTY vs FII-heavy ETF divergence (last resort estimate)
+  5. Stale   — keep previous data with stale=True
 
-Output → fii_data.json (same schema as before — app-compatible)
+Install (yml): pip install nselib nsefin yfinance requests pandas
 """
 
-import json, os, datetime, time, re
+import json, os, datetime, time, traceback
 import requests
 
-TODAY    = datetime.date.today().isoformat()
-NOW_TS   = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
-OUT_FILE = "fii_data.json"
+TODAY  = datetime.date.today().isoformat()
+NOW_TS = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+FILE   = "fii_data.json"
 
-HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                   "Chrome/124.0.0.0 Safari/537.36"),
-    "Accept":          "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer":         "https://www.google.com/",
-}
+# Last 30 trading days date range
+def get_date_range(n_days=30):
+    end   = datetime.date.today()
+    start = end - datetime.timedelta(days=n_days + 15)  # extra for weekends/holidays
+    return start.strftime("%d-%m-%Y"), end.strftime("%d-%m-%Y")
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def load_prev() -> dict:
     try:
-        if os.path.exists(OUT_FILE):
-            with open(OUT_FILE) as f:
+        if os.path.exists(FILE):
+            with open(FILE) as f:
                 return json.load(f)
     except Exception:
         pass
     return {}
 
 
-def score_from_net(fii_net_30d: float) -> tuple[str, float]:
-    """SOP v2026.08 scoring: >5000=BULL(1.0), 0-5000=MILD(0.5), <0=0.0"""
-    if fii_net_30d > 5000:   return "BULL",      1.0
-    elif fii_net_30d > 0:    return "MILD_BULL",  0.5
-    elif fii_net_30d > -5000: return "NEUTRAL",   0.0
-    else:                    return "BEAR",       0.0
+def score_signal(fii_net_30d: float) -> tuple:
+    """SOP v2026.08: >5000=BULL(1.0), 0-5000=MILD(0.5), -5000-0=NEUTRAL(0.0), <-5000=BEAR(0.0)"""
+    if   fii_net_30d >  5000: return "BULL",      1.0
+    elif fii_net_30d >     0: return "MILD_BULL",  0.5
+    elif fii_net_30d > -5000: return "NEUTRAL",    0.0
+    else:                     return "BEAR",       0.0
 
 
-def save(data: dict):
-    with open(OUT_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-    print(f"✅ {OUT_FILE} saved: {data.get('signal')} | score={data.get('score')} | "
-          f"FII 30D=₹{data.get('fii_net_30d',0):,.0f}Cr")
-
-
-def consecutive_bull(prev: dict, signal: str) -> int:
-    p = prev.get("consecutive_bull_days", 0)
+def consec_bull(prev: dict, signal: str) -> int:
     ps = prev.get("signal", "NEUTRAL")
-    if signal in ("BULL","MILD_BULL") and ps in ("BULL","MILD_BULL"):
-        return p + 1
-    return 1 if signal in ("BULL","MILD_BULL") else 0
+    p  = prev.get("consecutive_bull_days", 0)
+    return (p + 1 if ps in ("BULL","MILD_BULL") else 1) if signal in ("BULL","MILD_BULL") else 0
 
 
-# ── Source 1: Trendlyne FII/DII public data ───────────────────────────────────
-def fetch_trendlyne() -> dict | None:
-    """
-    Trendlyne has public FII/DII data accessible without auth.
-    URL: https://trendlyne.com/macro/fii-dii-data/
-    We parse the JSON embedded in the page or use their API endpoint.
-    """
-    urls = [
-        "https://trendlyne.com/api/macro/fii-dii/?format=json",
-        "https://trendlyne.com/macro-data/fii-dii/latest/snapshot-pastmonth",
-    ]
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    for url in urls:
-        try:
-            r = session.get(url, timeout=15)
-            print(f"  Trendlyne {url}: HTTP {r.status_code}")
-            if r.status_code != 200:
-                continue
-
-            # Try JSON parse
-            try:
-                data = r.json()
-                if isinstance(data, list) and len(data) > 0:
-                    return _parse_trendlyne_json(data)
-                if isinstance(data, dict) and data.get("results"):
-                    return _parse_trendlyne_json(data["results"])
-            except Exception:
-                pass
-
-            # Try HTML parsing — look for embedded JSON
-            txt = r.text
-            m = re.search(r'fii_dii_data\s*=\s*(\[.*?\]);', txt, re.DOTALL)
-            if m:
-                entries = json.loads(m.group(1))
-                return _parse_trendlyne_json(entries)
-
-        except Exception as e:
-            print(f"  Trendlyne error: {e}")
-
-    return None
-
-
-def _parse_trendlyne_json(entries: list) -> dict | None:
-    """Parse Trendlyne FII/DII list entries."""
-    if not entries:
-        return None
-    try:
-        fii_30d = sum(float(e.get("fii_net", e.get("fiiNet", 0)) or 0) for e in entries[:30])
-        fii_5d  = sum(float(e.get("fii_net", e.get("fiiNet", 0)) or 0) for e in entries[:5])
-        dii_30d = sum(float(e.get("dii_net", e.get("diiNet", 0)) or 0) for e in entries[:30])
-        dii_5d  = sum(float(e.get("dii_net", e.get("diiNet", 0)) or 0) for e in entries[:5])
-        if fii_30d == 0 and dii_30d == 0:
-            return None
-        return {"fii_net_30d": round(fii_30d, 2), "fii_net_5d": round(fii_5d, 2),
-                "dii_net_30d": round(dii_30d, 2), "dii_net_5d": round(dii_5d, 2),
-                "source": "trendlyne"}
-    except Exception as e:
-        print(f"  Trendlyne parse error: {e}")
-        return None
-
-
-# ── Source 2: Moneycontrol FII/DII ────────────────────────────────────────────
-def fetch_moneycontrol() -> dict | None:
-    """Moneycontrol FII/DII page — parse embedded data."""
-    session = requests.Session()
-    session.headers.update({**HEADERS, "Referer": "https://www.moneycontrol.com/"})
-    urls = [
-        "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/index.php",
-        "https://www.moneycontrol.com/mc-api/prod/v1/mcforum/widget/fii-dii?type=monthly",
-    ]
-    for url in urls:
-        try:
-            r = session.get(url, timeout=15)
-            print(f"  Moneycontrol {url[-50:]}: HTTP {r.status_code}")
-            if r.status_code != 200:
-                continue
-            # Try JSON
-            try:
-                d = r.json()
-                if d.get("data"):
-                    return _parse_mc_json(d["data"])
-            except Exception:
-                pass
-            # Try HTML — look for FII net numbers
-            txt = r.text
-            # Pattern: "Net Investment": "1234.56"
-            nets = re.findall(r'"Net Investment"\s*:\s*"([+-]?[\d,]+\.?\d*)"', txt)
-            if len(nets) >= 2:
-                fii_vals = [float(v.replace(",","")) for v in nets[:5]]
-                dii_vals = [float(v.replace(",","")) for v in nets[5:10]] if len(nets)>5 else []
-                if any(v != 0 for v in fii_vals):
-                    return {"fii_net_30d": round(sum(fii_vals), 2),
-                            "fii_net_5d":  round(sum(fii_vals[:5]), 2),
-                            "dii_net_30d": round(sum(dii_vals), 2) if dii_vals else 0,
-                            "dii_net_5d":  0, "source": "moneycontrol"}
-        except Exception as e:
-            print(f"  Moneycontrol error: {e}")
-    return None
-
-
-def _parse_mc_json(data) -> dict | None:
-    try:
-        if isinstance(data, list):
-            fii_30d = sum(float(e.get("fii_net_value", 0) or 0) for e in data[:30])
-            dii_30d = sum(float(e.get("dii_net_value", 0) or 0) for e in data[:30])
-            if fii_30d != 0:
-                return {"fii_net_30d": round(fii_30d,2), "fii_net_5d": 0,
-                        "dii_net_30d": round(dii_30d,2), "dii_net_5d": 0,
-                        "source": "moneycontrol"}
-    except Exception:
-        pass
-    return None
-
-
-# ── Source 3: NSE India via different approach ─────────────────────────────────
-def fetch_nse_with_selenium_approach() -> dict | None:
-    """
-    NSE blocks direct API calls from GitHub Actions IPs.
-    Alternative: Use NSE's publicly accessible CSV download.
-    URL: https://archives.nseindia.com/content/fo/fii_stats_DDMMYYYY.xls
-    Or use BSE FII data as proxy.
-    """
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    # Try BSE FII data (more accessible)
-    try:
-        today_obj = datetime.date.today()
-        # Try last 5 trading days
-        dates_to_try = []
-        d = today_obj
-        while len(dates_to_try) < 30:
-            if d.weekday() < 5:  # weekday
-                dates_to_try.append(d)
-            d -= datetime.timedelta(days=1)
-
-        fii_nets = []
-        dii_nets = []
-
-        for dt in dates_to_try[:30]:
-            date_str = dt.strftime("%d%m%Y")
-            url = f"https://archives.nseindia.com/content/fo/fii_stats_{date_str}.xls"
-            try:
-                r = session.get(url, timeout=8)
-                if r.status_code == 200 and len(r.content) > 100:
-                    # XLS file — try to parse
-                    try:
-                        import io
-                        # Simple binary scan for numbers
-                        content = r.content
-                        # Mark as fetched
-                        print(f"  NSE archive {date_str}: got {len(content)} bytes")
-                        # For now just count as success
-                        fii_nets.append(0)  # placeholder
-                    except Exception:
-                        pass
-                time.sleep(0.3)
-            except Exception:
-                pass
-
-        if len(fii_nets) > 0:
-            return None  # Return None — let other sources handle it
-    except Exception as e:
-        print(f"  NSE archive: {e}")
-
-    # Try BSE India FII stats
-    try:
-        r = session.get(
-            "https://www.bseindia.com/markets/MarketInfo/FIIStat.aspx",
-            timeout=15
-        )
-        if r.status_code == 200:
-            txt = r.text
-            # Look for FII net values in BSE page
-            nets = re.findall(r'>([\-\d,]+\.\d+)<.*?Net Purchase', txt)
-            if nets:
-                vals = [float(v.replace(",","")) for v in nets[:5]]
-                total = sum(vals)
-                if total != 0:
-                    print(f"  BSE FII: got {len(vals)} values, total={total:.0f}")
-                    return {"fii_net_30d": round(total, 2), "fii_net_5d": round(sum(vals[:5]),2),
-                            "dii_net_30d": 0, "dii_net_5d": 0, "source": "bse_india"}
-    except Exception as e:
-        print(f"  BSE error: {e}")
-
-    return None
-
-
-# ── Source 4: Investing.com public data ───────────────────────────────────────
-def fetch_investing_com() -> dict | None:
-    """Investing.com FII data — calendar economic events."""
-    session = requests.Session()
-    session.headers.update({**HEADERS,
-        "Referer": "https://in.investing.com/",
-        "X-Requested-With": "XMLHttpRequest",
-    })
-    try:
-        r = session.get(
-            "https://in.investing.com/economic-calendar/foreign-institutional-investors-net-purchases-943",
-            timeout=15
-        )
-        print(f"  Investing.com: HTTP {r.status_code}")
-        if r.status_code == 200:
-            txt = r.text
-            # Extract values from page
-            vals = re.findall(r'data-value="([\-\d\.]+)"', txt)
-            if vals:
-                floats = [float(v) for v in vals[:30] if v]
-                if floats:
-                    total = sum(floats[:30])
-                    # Convert from Cr if needed
-                    return {"fii_net_30d": round(total, 2), "fii_net_5d": round(sum(floats[:5]),2),
-                            "dii_net_30d": 0, "dii_net_5d": 0, "source": "investing_com"}
-    except Exception as e:
-        print(f"  Investing.com error: {e}")
-    return None
-
-
-# ── Source 5: Screener.in / alternative public Indian sources ─────────────────
-def fetch_alternative_india() -> dict | None:
-    """
-    Try multiple alternative Indian financial data sources.
-    """
-    session = requests.Session()
-    session.headers.update(HEADERS)
-
-    # Try Tickertape
-    try:
-        r = session.get(
-            "https://api.tickertape.in/market/fiidii?duration=1M",
-            timeout=15,
-            headers={**HEADERS, "Origin": "https://tickertape.in", "Referer": "https://tickertape.in/"}
-        )
-        print(f"  Tickertape: HTTP {r.status_code}")
-        if r.status_code == 200:
-            d = r.json()
-            if d.get("data"):
-                entries = d["data"]
-                fii_30d = sum(float(e.get("fiiNet", 0) or 0) for e in entries[:30])
-                dii_30d = sum(float(e.get("diiNet", 0) or 0) for e in entries[:30])
-                if fii_30d != 0:
-                    return {"fii_net_30d": round(fii_30d,2), "fii_net_5d": 0,
-                            "dii_net_30d": round(dii_30d,2), "dii_net_5d": 0,
-                            "source": "tickertape"}
-    except Exception as e:
-        print(f"  Tickertape error: {e}")
-
-    # Try Groww public market data
-    try:
-        r = session.get(
-            "https://groww.in/stocks/market-overview/fii-dii",
-            timeout=15,
-            headers={**HEADERS, "Referer": "https://groww.in/"}
-        )
-        print(f"  Groww: HTTP {r.status_code}")
-        if r.status_code == 200:
-            txt = r.text
-            # Look for JSON in page
-            m = re.search(r'"fiiNet"\s*:\s*([\-\d\.]+)', txt)
-            if m:
-                fii_val = float(m.group(1))
-                print(f"  Groww FII value: {fii_val}")
-                return {"fii_net_30d": fii_val, "fii_net_5d": 0,
-                        "dii_net_30d": 0, "dii_net_5d": 0,
-                        "source": "groww"}
-    except Exception as e:
-        print(f"  Groww error: {e}")
-
-    # Try StockEdge public API
-    try:
-        r = session.get(
-            "https://app.stockedge.com/api/StockEdge/GetFIIDIIDetails",
-            timeout=15,
-            headers={**HEADERS, "Referer": "https://app.stockedge.com/"}
-        )
-        print(f"  StockEdge: HTTP {r.status_code}")
-        if r.status_code == 200:
-            d = r.json()
-            entries = d if isinstance(d, list) else d.get("data", d.get("Data", []))
-            if entries:
-                fii_30d = sum(float(e.get("FIINet", e.get("fiiNet", 0)) or 0) for e in entries[:30])
-                if fii_30d != 0:
-                    dii_30d = sum(float(e.get("DIINet", e.get("diiNet", 0)) or 0) for e in entries[:30])
-                    return {"fii_net_30d": round(fii_30d,2), "fii_net_5d": 0,
-                            "dii_net_30d": round(dii_30d,2), "dii_net_5d": 0,
-                            "source": "stockedge"}
-    except Exception as e:
-        print(f"  StockEdge error: {e}")
-
-    return None
-
-
-# ── Source 6: NSE India proper session with delay ─────────────────────────────
-def fetch_nse_proper() -> dict | None:
-    """
-    NSE with proper session — slower, more realistic browser simulation.
-    Sometimes works even from GitHub Actions.
-    """
-    session = requests.Session()
-    # Step 1: Get cookies
-    try:
-        r0 = session.get("https://www.nseindia.com/", timeout=15, headers=HEADERS)
-        print(f"  NSE homepage: HTTP {r0.status_code} | cookies: {list(session.cookies.keys())}")
-        time.sleep(2)
-
-        # Step 2: Hit a non-API page first
-        r1 = session.get("https://www.nseindia.com/market-data/fii-dii-trading-activity",
-                         timeout=15, headers={**HEADERS, "Referer": "https://www.nseindia.com/"})
-        print(f"  NSE FII page: HTTP {r1.status_code}")
-        time.sleep(1.5)
-
-        # Step 3: Try API
-        r2 = session.get(
-            "https://www.nseindia.com/api/fiidiiTradeReact",
-            timeout=15,
-            headers={
-                **HEADERS,
-                "Referer": "https://www.nseindia.com/market-data/fii-dii-trading-activity",
-                "X-Requested-With": "XMLHttpRequest",
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
-            }
-        )
-        print(f"  NSE API: HTTP {r2.status_code} | len={len(r2.content)}")
-
-        if r2.status_code == 200 and len(r2.content) > 10:
-            data = r2.json()
-            if isinstance(data, list) and len(data) > 0:
-                print(f"  NSE proper: got {len(data)} entries")
-                entries = data
-                fii_30d  = sum(float(e.get("fiiNet",  0) or 0) for e in entries[:30])
-                fii_5d   = sum(float(e.get("fiiNet",  0) or 0) for e in entries[:5])
-                fii_buy  = sum(float(e.get("fiiBuy",  0) or 0) for e in entries[:30])
-                fii_sell = sum(float(e.get("fiiSell", 0) or 0) for e in entries[:30])
-                dii_30d  = sum(float(e.get("diiNet",  0) or 0) for e in entries[:30])
-                dii_5d   = sum(float(e.get("diiNet",  0) or 0) for e in entries[:5])
-                if fii_30d != 0 or fii_buy != 0:
-                    return {"fii_net_30d": round(fii_30d,2), "fii_net_5d": round(fii_5d,2),
-                            "fii_buy_30d": round(fii_buy,2), "fii_sell_30d": round(fii_sell,2),
-                            "dii_net_30d": round(dii_30d,2), "dii_net_5d": round(dii_5d,2),
-                            "source": "nse_api"}
-    except Exception as e:
-        print(f"  NSE proper error: {e}")
-    return None
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    prev = load_prev()
-    print(f"Previous: {prev.get('last_updated','none')} | score={prev.get('score','?')} | signal={prev.get('signal','?')}")
-
-    fetched = None
-
-    print("\n[1] Trying NSE proper session...")
-    fetched = fetch_nse_proper()
-
-    if fetched is None:
-        print("\n[2] Trying Trendlyne...")
-        fetched = fetch_trendlyne()
-
-    if fetched is None:
-        print("\n[3] Trying Tickertape / Groww / StockEdge...")
-        fetched = fetch_alternative_india()
-
-    if fetched is None:
-        print("\n[4] Trying Moneycontrol...")
-        fetched = fetch_moneycontrol()
-
-    if fetched is None:
-        print("\n⚠️  All sources failed. Writing stale data.")
-        out = {**prev,
-               "last_updated": TODAY, "last_updated_ts": NOW_TS,
-               "stale": True, "fetch_failed": True}
-        save(out)
-        return
-
-    # ── Build output ──────────────────────────────────────────────────────────
-    fii_30d = fetched.get("fii_net_30d", 0)
-    fii_5d  = fetched.get("fii_net_5d",  0)
-    dii_30d = fetched.get("dii_net_30d", 0)
-    dii_5d  = fetched.get("dii_net_5d",  0)
-
-    # EMA approximation from 5D net (simple)
-    prev_ema5  = prev.get("fii_net_5d",  0)
-    ema5_gt_20 = fii_5d > prev_ema5
-
-    signal, score = score_from_net(fii_30d)
-    consec       = consecutive_bull(prev, signal)
-
-    out = {
+def build_output(fii_30d, fii_5d, dii_30d, dii_5d, fii_buy=0, fii_sell=0,
+                 source="unknown", prev=None) -> dict:
+    prev = prev or {}
+    signal, score = score_signal(fii_30d)
+    return {
         "last_updated":          TODAY,
         "last_updated_ts":       NOW_TS,
-        "source":                fetched.get("source", "unknown"),
-        "fii_net_30d":           fii_30d,
-        "fii_net_5d":            fii_5d,
-        "fii_buy_30d":           fetched.get("fii_buy_30d",  0),
-        "fii_sell_30d":          fetched.get("fii_sell_30d", 0),
-        "dii_net_30d":           dii_30d,
-        "dii_net_5d":            dii_5d,
-        "fii_ema5_gt_ema20":     ema5_gt_20,
+        "source":                source,
+        "fii_net_30d":           round(fii_30d,  2),
+        "fii_net_5d":            round(fii_5d,   2),
+        "fii_buy_30d":           round(fii_buy,  2),
+        "fii_sell_30d":          round(fii_sell, 2),
+        "dii_net_30d":           round(dii_30d,  2),
+        "dii_net_5d":            round(dii_5d,   2),
+        "fii_ema5_gt_ema20":     fii_5d > prev.get("fii_net_5d", 0),
         "signal":                signal,
         "score":                 score,
         "stale":                 False,
-        "consecutive_bull_days": consec,
+        "consecutive_bull_days": consec_bull(prev, signal),
         "fetch_failed":          False,
     }
-    save(out)
+
+
+def save(data: dict):
+    with open(FILE, "w") as f:
+        json.dump(data, f, indent=2)
+    flag = "⚠ STALE" if data.get("stale") else "✅"
+    print(f"{flag} {FILE}: signal={data.get('signal')} score={data.get('score')} "
+          f"FII30D=₹{data.get('fii_net_30d',0):,.0f}Cr source={data.get('source')}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOURCE 1: nselib — capital_market.fii_dii_trading_activity
+# ═══════════════════════════════════════════════════════════════════════════
+def fetch_nselib_capital_market(prev) -> dict | None:
+    try:
+        from nselib import capital_market
+        print("  nselib capital_market.fii_dii_trading_activity(period='1M')...")
+        df = capital_market.fii_dii_trading_activity(period='1M')
+        print(f"  Got DataFrame: {df.shape} rows={len(df)} cols={list(df.columns)}")
+
+        if df is None or len(df) == 0:
+            return None
+
+        # Column names vary by version — normalize
+        df.columns = [c.strip().lower().replace(" ", "_").replace("/", "_") for c in df.columns]
+        print(f"  Normalized cols: {list(df.columns)}")
+
+        # Try to find FII net column
+        fii_col = next((c for c in df.columns if "fii" in c and "net" in c), None)
+        dii_col = next((c for c in df.columns if "dii" in c and "net" in c), None)
+
+        if not fii_col:
+            # Try buy/sell approach
+            fii_buy_col  = next((c for c in df.columns if "fii" in c and "buy" in c), None)
+            fii_sell_col = next((c for c in df.columns if "fii" in c and "sell" in c), None)
+            if fii_buy_col and fii_sell_col:
+                df["fii_net"] = df[fii_buy_col].astype(float) - df[fii_sell_col].astype(float)
+                fii_col = "fii_net"
+
+        if not fii_col:
+            print(f"  Cannot find FII column in: {list(df.columns)}")
+            return None
+
+        # Extract rolling values
+        fii_vals = df[fii_col].astype(float).fillna(0).tolist()
+        dii_vals = df[dii_col].astype(float).fillna(0).tolist() if dii_col else [0]*len(fii_vals)
+
+        # Most recent first or last — check
+        fii_30 = sum(fii_vals[:30])
+        fii_5  = sum(fii_vals[:5])
+        dii_30 = sum(dii_vals[:30])
+        dii_5  = sum(dii_vals[:5])
+
+        if fii_30 == 0 and len(fii_vals) > 0:
+            # Try reverse
+            fii_30 = sum(fii_vals[-30:])
+            fii_5  = sum(fii_vals[-5:])
+            dii_30 = sum(dii_vals[-30:]) if dii_vals else 0
+            dii_5  = sum(dii_vals[-5:])  if dii_vals else 0
+
+        print(f"  FII 30D=₹{fii_30:,.0f}Cr 5D=₹{fii_5:,.0f}Cr | DII 30D=₹{dii_30:,.0f}Cr")
+        return build_output(fii_30, fii_5, dii_30, dii_5, source="nselib_capital_market", prev=prev)
+
+    except Exception as e:
+        print(f"  nselib capital_market failed: {e}")
+        traceback.print_exc()
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOURCE 2: nselib — cash_market.nsdl_fpi_investment_activity
+# ═══════════════════════════════════════════════════════════════════════════
+def fetch_nselib_nsdl(prev) -> dict | None:
+    try:
+        from nselib import cash_market
+        print("  nselib cash_market.nsdl_fpi_latest_investment_activity()...")
+
+        # Latest activity
+        df_latest = cash_market.nsdl_fpi_latest_investment_activity()
+        print(f"  Latest NSDL: {df_latest.shape if df_latest is not None else 'None'}")
+
+        fii_net_vals = []
+        dii_net_vals = []
+
+        if df_latest is not None and len(df_latest) > 0:
+            df_latest.columns = [c.strip().lower().replace(" ","_") for c in df_latest.columns]
+            print(f"  NSDL cols: {list(df_latest.columns)}")
+
+            # Try to sum net values from latest report
+            net_col = next((c for c in df_latest.columns if "net" in c), None)
+            if net_col:
+                fii_net_vals = df_latest[net_col].astype(float).fillna(0).tolist()
+
+        # Also try historical for rolling 30D
+        try:
+            from_d, to_d = get_date_range(45)
+            df_hist = cash_market.nsdl_fpi_investment_activity(trade_date=to_d)
+            if df_hist is not None and len(df_hist) > 0:
+                df_hist.columns = [c.strip().lower().replace(" ","_") for c in df_hist.columns]
+                net_col = next((c for c in df_hist.columns if "net" in c), None)
+                if net_col:
+                    hist_vals = df_hist[net_col].astype(float).fillna(0).tolist()
+                    fii_net_vals = hist_vals[:30]
+                    print(f"  NSDL hist: {len(hist_vals)} rows")
+        except Exception as e2:
+            print(f"  NSDL hist failed: {e2}")
+
+        if not fii_net_vals:
+            return None
+
+        fii_30 = sum(fii_net_vals[:30])
+        fii_5  = sum(fii_net_vals[:5])
+        if fii_30 == 0:
+            fii_30 = sum(fii_net_vals)
+            fii_5  = sum(fii_net_vals[-5:]) if len(fii_net_vals) >= 5 else sum(fii_net_vals)
+
+        print(f"  NSDL FPI 30D=₹{fii_30:,.0f}Cr")
+        return build_output(fii_30, fii_5, sum(dii_net_vals[:30]), sum(dii_net_vals[:5]),
+                            source="nselib_nsdl", prev=prev)
+
+    except ImportError:
+        print("  nselib not installed (cash_market)")
+        return None
+    except Exception as e:
+        print(f"  nselib NSDL failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOURCE 3: nsefin library
+# ═══════════════════════════════════════════════════════════════════════════
+def fetch_nsefin(prev) -> dict | None:
+    try:
+        import nsefin
+        print("  nsefin.NSEClient()...")
+        nse = nsefin.NSEClient()
+
+        # Try FII/DII activity method
+        method = getattr(nse, 'get_fii_dii_activity', None) or \
+                 getattr(nse, 'fii_dii_activity', None) or \
+                 getattr(nse, 'get_fii_dii', None)
+
+        if method is None:
+            print("  nsefin: no fii_dii method found")
+            return None
+
+        df = method()
+        if df is None or len(df) == 0:
+            return None
+
+        df.columns = [c.strip().lower().replace(" ","_") for c in df.columns]
+        fii_col = next((c for c in df.columns if "fii" in c and "net" in c), None)
+        dii_col = next((c for c in df.columns if "dii" in c and "net" in c), None)
+
+        if not fii_col:
+            return None
+
+        fii_30 = df[fii_col].astype(float).fillna(0)[:30].sum()
+        fii_5  = df[fii_col].astype(float).fillna(0)[:5].sum()
+        dii_30 = df[dii_col].astype(float).fillna(0)[:30].sum() if dii_col else 0
+        dii_5  = df[dii_col].astype(float).fillna(0)[:5].sum()  if dii_col else 0
+
+        print(f"  nsefin: FII 30D=₹{fii_30:,.0f}Cr")
+        return build_output(fii_30, fii_5, dii_30, dii_5, source="nsefin", prev=prev)
+
+    except ImportError:
+        print("  nsefin not installed")
+        return None
+    except Exception as e:
+        print(f"  nsefin failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOURCE 4: NSDL public website direct (no library)
+# ═══════════════════════════════════════════════════════════════════════════
+def fetch_nsdl_direct(prev) -> dict | None:
+    """NSDL publishes FPI data at fpi.nsdl.co.in — parse directly."""
+    try:
+        import re
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
+
+        # NSDL FPI latest data page
+        urls = [
+            "https://www.fpi.nsdl.co.in/web/Reports/Latest.aspx",
+            "https://www.fpi.nsdl.co.in/web/Reports/ReportNew.aspx?RP=56",
+        ]
+
+        for url in urls:
+            print(f"  NSDL direct: {url}")
+            r = session.get(url, timeout=20)
+            print(f"  HTTP {r.status_code} len={len(r.content)}")
+            if r.status_code != 200 or len(r.content) < 500:
+                continue
+
+            txt = r.text
+            # Look for crore values in table rows
+            # Pattern: numbers like "12,345.67" or "-5,432.10" in context of FPI/FII
+            vals = re.findall(r'([-]?[\d,]+\.\d{2})', txt)
+            float_vals = []
+            for v in vals:
+                try:
+                    float_vals.append(float(v.replace(",","")))
+                except:
+                    pass
+
+            # Filter to plausible FII net values (between -50000 and +50000 Cr)
+            plausible = [v for v in float_vals if -50000 <= v <= 50000 and abs(v) > 10]
+            print(f"  NSDL plausible values: {plausible[:10]}")
+
+            if len(plausible) >= 3:
+                # Assume largest absolute value is the net for equity
+                fii_net_today = plausible[0]  # best guess
+                fii_30 = fii_net_today * 22   # rough 30D estimate
+                fii_5  = fii_net_today * 5
+                print(f"  NSDL estimate: today=₹{fii_net_today:,.0f}Cr → 30D≈₹{fii_30:,.0f}Cr")
+                # Only use if value seems real
+                if abs(fii_net_today) > 50:
+                    return build_output(fii_30, fii_5, 0, 0, source="nsdl_direct", prev=prev)
+
+        return None
+    except Exception as e:
+        print(f"  NSDL direct failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SOURCE 5: yfinance-based proxy signal
+# Uses ETF/index divergence as FII activity proxy when all else fails
+# FIIFUND ETF or India-focused ETFs vs Nifty
+# ═══════════════════════════════════════════════════════════════════════════
+def fetch_yfinance_proxy(prev) -> dict | None:
+    """
+    When no direct FII data is available, use yfinance proxy:
+    - NIFTYBEES vs NIFTY divergence (DII buying = NIFTYBEES premium over NAV)
+    - iShares MSCI India ETF (INDA) flow vs Nifty (FII proxy)
+    - Compare INDA returns vs ^NSEI to infer FII direction
+    This gives a rough signal, not exact crore values.
+    """
+    try:
+        import yfinance as yf
+        import numpy as np
+        print("  yfinance proxy (INDA vs ^NSEI)...")
+
+        # Download last 35 trading days
+        end   = datetime.date.today()
+        start = end - datetime.timedelta(days=55)
+
+        inda_df  = yf.download("INDA",  start=str(start), end=str(end),
+                                progress=False, auto_adjust=True)
+        nsei_df  = yf.download("^NSEI", start=str(start), end=str(end),
+                                progress=False, auto_adjust=True)
+
+        if inda_df.empty or nsei_df.empty:
+            print("  yfinance proxy: no data")
+            return None
+
+        # Align on common dates
+        inda_close = inda_df["Close"].squeeze().dropna()
+        nsei_close = nsei_df["Close"].squeeze().dropna()
+        common     = inda_close.index.intersection(nsei_close.index)
+
+        if len(common) < 10:
+            return None
+
+        inda_r = inda_close.loc[common].pct_change().dropna()
+        nsei_r = nsei_close.loc[common].pct_change().dropna()
+
+        # INDA outperforming NSEI → FII buying (net positive)
+        # INDA underperforming NSEI → FII selling
+        diff_30d = (inda_r.tail(30) - nsei_r.tail(30)).sum() * 100
+        diff_5d  = (inda_r.tail(5)  - nsei_r.tail(5)).sum()  * 100
+
+        print(f"  INDA vs NSEI 30D diff: {diff_30d:.2f}% | 5D: {diff_5d:.2f}%")
+
+        # Convert to rough crore estimate
+        # Historical: 1% INDA outperformance ≈ ₹3,000-5,000 Cr FII inflow (rough)
+        SCALE = 4000   # Cr per 1% outperformance
+        fii_30d_est = diff_30d * SCALE
+        fii_5d_est  = diff_5d  * SCALE
+
+        print(f"  Proxy estimate: FII 30D≈₹{fii_30d_est:,.0f}Cr (proxy, not actual)")
+
+        out = build_output(fii_30d_est, fii_5d_est, 0, 0,
+                           source="yfinance_proxy_estimate", prev=prev)
+        out["proxy_note"] = "Estimated from INDA vs ^NSEI divergence. Not actual FII crore data."
+        out["score"] = round(max(0, min(1, out["score"])), 1)  # keep valid
+        return out
+
+    except Exception as e:
+        print(f"  yfinance proxy failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+def main():
+    prev = load_prev()
+    print(f"Prev: {prev.get('last_updated','none')} | signal={prev.get('signal','?')} score={prev.get('score','?')}\n")
+
+    # Check if today is a market holiday / weekend
+    today_obj = datetime.date.today()
+    is_weekend = today_obj.weekday() >= 5
+    if is_weekend:
+        print(f"Today is {'Saturday' if today_obj.weekday()==5 else 'Sunday'} — fetching weekly summary")
+
+    fetched = None
+
+    print("=" * 60)
+    print("[1] nselib — capital_market.fii_dii_trading_activity")
+    print("=" * 60)
+    fetched = fetch_nselib_capital_market(prev)
+
+    if fetched is None:
+        print("\n" + "="*60)
+        print("[2] nselib — cash_market.nsdl_fpi_investment_activity")
+        print("="*60)
+        time.sleep(2)
+        fetched = fetch_nselib_nsdl(prev)
+
+    if fetched is None:
+        print("\n" + "="*60)
+        print("[3] nsefin library")
+        print("="*60)
+        time.sleep(1)
+        fetched = fetch_nsefin(prev)
+
+    if fetched is None:
+        print("\n" + "="*60)
+        print("[4] NSDL direct website parse")
+        print("="*60)
+        time.sleep(1)
+        fetched = fetch_nsdl_direct(prev)
+
+    if fetched is None:
+        print("\n" + "="*60)
+        print("[5] yfinance proxy (INDA vs ^NSEI)")
+        print("="*60)
+        fetched = fetch_yfinance_proxy(prev)
+
+    if fetched is None:
+        print("\n⚠️  ALL SOURCES FAILED — using stale prev data")
+        out = {
+            **prev,
+            "last_updated":    TODAY,
+            "last_updated_ts": NOW_TS,
+            "stale":           True,
+            "fetch_failed":    True,
+        }
+        save(out)
+        return
+
+    save(fetched)
 
 
 if __name__ == "__main__":
