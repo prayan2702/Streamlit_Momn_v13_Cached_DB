@@ -4738,7 +4738,7 @@ with _tab_screener:
                 st.markdown(f"""<div style="background:#ede9fe;border:1px solid #a78bfa;border-radius:8px;
                             padding:10px 12px;text-align:center;margin-top:4px;">
                   <div style="font-size:10px;color:#6d28d9;font-weight:600;text-transform:uppercase;">Per Stock Target</div>
-                  <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stock_target:,.0f}</div>
+                  <div style="font-size:22px;font-weight:800;color:#6d28d9;">₹{_per_stk:,.0f}</div>
                   <div style="font-size:10px;color:#7c3aed;">Eq Budget ÷ 30</div>
                 </div>""", unsafe_allow_html=True)
 
@@ -4749,7 +4749,7 @@ with _tab_screener:
                 _liquid_gap  = max(0, _total_pf * _cs - (_lf_curr if '_lf_curr' in dir() else 0))
                 _proceeds_after_gold  = max(0, _exit_proceeds - _gold_gap)
                 _proceeds_after_liq   = max(0, _proceeds_after_gold - _liquid_gap)
-                _new_entry_cost       = _n_new_entries * _per_stock_target if _per_stock_target > 0 else 0
+                _new_entry_cost       = _n_new_entries * _per_stk if _per_stk > 0 else 0
                 _surplus              = _proceeds_after_liq - _new_entry_cost
 
                 st.markdown(f"""
@@ -4772,7 +4772,7 @@ with _tab_screener:
                       <div style="font-size:18px;font-weight:800;color:#{'1d4ed8' if _liquid_gap>0 else '15803d'}">₹{_liquid_gap:,.0f}</div>
                     </div>
                     <div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center;">
-                      <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stock_target:,.0f})</div>
+                      <div style="font-size:10px;color:#15803d;font-weight:600">3. EQUITY ENTRIES ({_n_new_entries} × ₹{_per_stk:,.0f})</div>
                       <div style="font-size:18px;font-weight:800;color:#15803d">₹{_new_entry_cost:,.0f}</div>
                     </div>
                     <div style="background:#{'dcfce7' if _surplus>=0 else 'fee2e2'};border-radius:8px;padding:10px;text-align:center;">
