@@ -1,0 +1,35 @@
+{
+  "build_date": "2026-05-04",
+  "build_time_utc": "12:07:55",
+  "build_duration_min": 3.2,
+  "symbols_total": 2141,
+  "symbols_fetched": 2141,
+  "symbols_failed": 0,
+  "failed_symbols": [],
+  "data_start_full": "2000-01-01",
+  "data_start_recent": "2023-01-04",
+  "data_end": "2026-05-04",
+  "last_date_in_cache": "2026-05-04",
+  "today_data_present": true,
+  "recent_months": 40,
+  "source": "YFinance",
+  "yfinance_end_exclusive": "2026-05-05",
+  "symbol_source": "NSE EQUITY_L.csv (direct)",
+  "extra_symbols": [
+    "GOLDBEES.NS",
+    "SILVERBEES.NS"
+  ],
+  "close_shape": [
+    820,
+    2141
+  ],
+  "high_shape": [
+    820,
+    2141
+  ],
+  "volume_shape": [
+    820,
+    2141
+  ],
+  "ath_count": 2141
+}
