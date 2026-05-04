@@ -5397,22 +5397,43 @@ with _tab_screener:
             excel_file = f"{end_date.strftime('%Y-%m-%d')}_{U}_{rank_method}_{api_source}_lookback.xlsx"
 
         def _add_qfsm_cols(df: "pd.DataFrame", band: int) -> "pd.DataFrame":
-            """Add composite_score + factor cols to dfStats for Excel export."""
+            """
+            Add QFSM factor cols, reorder so they appear right after Rank,
+            sort by composite_rank, rest of columns follow.
+            """
+            QFSM_COLS = ['composite_rank','composite_score',
+                         'f1_momentum','f2_trend','f3_mean_rev','f4_size','f5_vol_score']
             try:
-                # Use Rank column if available, else use positional head
                 if 'Rank' in df.columns:
                     _s1 = df[df['Rank'] <= STAGE1_TOP_N].copy()
                 else:
                     _s1 = df.head(STAGE1_TOP_N).copy()
                 _s1 = _s1.reset_index(drop=True)
                 _s2 = compute_stage2_composite(_s1, band)
-                _qcols = [c for c in ['composite_score','composite_rank',
-                                       'f1_momentum','f2_trend','f3_mean_rev',
-                                       'f4_size','f5_vol_score'] if c in _s2.columns]
+                _qcols = [c for c in QFSM_COLS if c in _s2.columns]
                 if 'Ticker' in _s2.columns and 'Ticker' in df.columns and _qcols:
                     df = df.merge(_s2[['Ticker'] + _qcols], on='Ticker', how='left')
             except Exception:
                 pass
+
+            # ── Reorder columns: Rank → QFSM cols → everything else ──────
+            existing_qfsm = [c for c in QFSM_COLS if c in df.columns]
+            if existing_qfsm:
+                # Find Rank column position
+                rank_col   = 'Rank' if 'Rank' in df.columns else None
+                other_cols = [c for c in df.columns
+                              if c not in existing_qfsm and c != rank_col]
+                if rank_col:
+                    new_order = [rank_col] + existing_qfsm + other_cols
+                else:
+                    new_order = existing_qfsm + other_cols
+                df = df[[c for c in new_order if c in df.columns]]
+
+                # ── Sort by composite_rank (NaN / non-Stage1 stocks go to bottom) ──
+                if 'composite_rank' in df.columns:
+                    df = df.sort_values('composite_rank',
+                                        ascending=True,
+                                        na_position='last').reset_index(drop=True)
             return df
 
         _regime_bd = int(st.session_state.get("_regime_result", {}).get("regime_band",
