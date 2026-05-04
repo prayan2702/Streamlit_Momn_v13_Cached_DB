@@ -4388,9 +4388,9 @@ with _tab_screener:
 
         portfolio = st.session_state.reb_portfolio or []
         # ── Step 3 sub-tabs ───────────────────────────────────────────
-        _s3_tab_a, _s3_tab_b = st.tabs([
-            "🌡️  Regime & Allocation",
+        _s3_tab_b, _s3_tab_a = st.tabs([
             "⚖️  Rebalancer & Orders",
+            "🌡️  Regime & Allocation",
         ])
 
         with _s3_tab_a:
@@ -5435,26 +5435,27 @@ with _tab_screener:
         except Exception as e:
             st.warning(f"Excel formatting partial error (file still usable): {e}")
 
-            with open(excel_file, "rb") as f:
-                st.download_button(
-                    label     = "📥 Download Excel (4 Sheets)",
-                    data      = f.read(),
-                    file_name = excel_file,
-                    mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type      = "primary",
-                )
+        # Download button — always shown, outside try/except
+        with open(excel_file, "rb") as f:
+            st.download_button(
+                label     = "📥 Download Excel (4 Sheets)",
+                data      = f.read(),
+                file_name = excel_file,
+                mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type      = "primary",
+            )
 
-            st.success(f"✅ Excel ready: `{excel_file}`")
-            st.markdown(f"""
-            <div style="background:var(--green-bg);border:1px solid var(--green-bdr);border-radius:var(--radius-md);
-                        padding:10px 16px;font-size:12px;color:#15803d;margin:4px 0 12px 0;">
-            📄 <b>4 Sheets:</b> &nbsp;
-            <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Unfiltered Stocks</span>
-            <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Filtered Stocks</span>
-            <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Failed Downloads</span>
-            <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Portfolio Rebalancing</span>
-            </div>
-            """, unsafe_allow_html=True)
+        st.success(f"✅ Excel ready: `{excel_file}`")
+        st.markdown(f"""
+        <div style="background:var(--green-bg);border:1px solid var(--green-bdr);border-radius:var(--radius-md);
+                    padding:10px 16px;font-size:12px;color:#15803d;margin:4px 0 12px 0;">
+        📄 <b>4 Sheets:</b> &nbsp;
+        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Unfiltered Stocks</span>
+        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Filtered Stocks</span>
+        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Failed Downloads</span>
+        <span style="background:white;padding:2px 8px;border-radius:12px;margin:0 3px;border:1px solid var(--green-bdr);">Portfolio Rebalancing</span>
+        </div>
+        """, unsafe_allow_html=True)
 
         # ── Apps Script / Rebalance Sheet links ───────────────────
         st.markdown('<div class="section-hdr">📊 Apps Script Workflow — Quick Links</div>', unsafe_allow_html=True)
