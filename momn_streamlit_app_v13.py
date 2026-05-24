@@ -160,10 +160,17 @@ warnings.filterwarnings("ignore")
 
 # ── Local modules ──────────────────────────────────────────────
 try:
-    from calculations import build_dfStats, apply_filters
+    from calculations import build_dfStats, apply_filters, calculate_z_score as _calc_z_score
     _CALCS_AVAILABLE = True
 except ImportError:
     _CALCS_AVAILABLE = False
+    def _calc_z_score(data):
+        import numpy as _np2
+        clean = data.replace([_np2.inf, -_np2.inf], float('nan'))
+        mean, std = clean.mean(), clean.std()
+        if std == 0 or pd.isna(std):
+            return pd.Series(0.0, index=data.index)
+        return ((clean - mean) / std).round(2)
 
 import yfinance as yf  # always available (in requirements.txt)
 
@@ -908,7 +915,10 @@ _defaults = {
     # ── ATH Override Memory (persisted in ath_memory.json) ──────
     "_ath_memory":             {},     # loaded from file on first cross-review run
     "_ath_memory_loaded":      False,  # sentinel to load from file exactly once
-    # ── Phase 1: Regime state (7-signal weighted, QFSM) ─────────
+    # ── Step 3 extra-stocks fetch (BE-series / renamed stocks) ──
+    "_s3_extra_fetch_done":       False,  # True = yfinance fetch already done this run
+    "_s3_fetched_tickers":        [],     # tickers added via Step 3 fetch
+
     "_regime_state":           None,   # RegimeState object
     "_regime_prev_state":      None,   # previous RegimeState (for confirmation tracking)
     "_rt_nifty_close":         None,   # fetched Nifty close
@@ -3216,6 +3226,9 @@ with _tab_screener:
             st.session_state["_cross_diff_df"]          = None
             st.session_state["_cross_error"]            = None
             st.session_state["_cross_error_detail"]     = None
+            # Reset Step 3 extra-fetch flag for fresh run
+            st.session_state["_s3_extra_fetch_done"]    = False
+            st.session_state["_s3_fetched_tickers"]     = []
             st.rerun()
 
         if st.session_state.get("_run_download", False):
@@ -4398,6 +4411,228 @@ with _tab_screener:
                 st.success("Updated!")
 
         portfolio = st.session_state.reb_portfolio or []
+
+        # ══════════════════════════════════════════════════════════════
+        # STEP 3 — MISSING / RENAMED STOCKS  (BE-series fix)
+        # Checks which portfolio stocks are absent from dfStats
+        # (e.g. moved to BE series → not in AllNSE EQUITY_L.csv).
+        # Option A: auto-fetch those stocks via yfinance & merge.
+        # Option B: manually add renamed stock symbols (checkbox).
+        # Both paths re-rank dfStats properly before rebalance runs.
+        # ══════════════════════════════════════════════════════════════
+        if portfolio and st.session_state.dfStats is not None:
+            _dfS_cur   = st.session_state.dfStats
+            _dfS_ticks = set(_dfS_cur['Ticker'].tolist())
+
+            # Portfolio stocks NOT present in current screener run
+            _port_missing = [s for s in portfolio if s not in _dfS_ticks]
+
+            # ── helper: merge mini-dfStats into full dfStats + re-rank ──
+            def _merge_and_rerank(existing_dfStats, mini_dfStats, ranking_method):
+                """
+                Merge mini_dfStats (just new/missing stocks) into existing_dfStats.
+                Re-computes z-scores cross-sectionally so ranks are meaningful.
+                Returns updated dfStats with Rank as index.
+                """
+                # Reset both indices so we can concat cleanly
+                _ex = existing_dfStats.reset_index()
+                _mn = mini_dfStats.reset_index()
+
+                # Drop rows in existing whose Ticker is in mini (avoid duplicates)
+                _new_ticks = set(_mn['Ticker'].tolist())
+                _ex = _ex[~_ex['Ticker'].isin(_new_ticks)]
+
+                _merged = pd.concat([_ex, _mn], ignore_index=True)
+
+                # Re-compute cross-sectional z-scores over full merged set
+                for _p in ['12M', '9M', '6M', '3M']:
+                    _sc = f'sharpe{_p}'
+                    _zc = f'z_score{_p}'
+                    if _sc in _merged.columns and _zc in _merged.columns:
+                        _merged[_zc] = _calc_z_score(_merged[_sc])
+
+                # Re-compute ranking metric
+                _rm = ranking_method
+                _z_map = {
+                    'avgZScore12_6_3':   ['z_score12M', 'z_score6M', 'z_score3M'],
+                    'avgZScore12_9_6_3': ['z_score12M', 'z_score9M', 'z_score6M', 'z_score3M'],
+                    'avgSharpe12_6_3':   ['sharpe12M', 'sharpe6M', 'sharpe3M'],
+                    'avgSharpe9_6_3':    ['sharpe9M', 'sharpe6M', 'sharpe3M'],
+                    'avg_All':           ['sharpe12M', 'sharpe9M', 'sharpe6M', 'sharpe3M'],
+                }
+                if _rm in _z_map and all(c in _merged.columns for c in _z_map[_rm]):
+                    _merged[_rm] = _merged[_z_map[_rm]].mean(axis=1).round(2)
+                if _rm in _merged.columns:
+                    _merged[_rm] = _merged[_rm].replace([np.inf, -np.inf], np.nan).fillna(0)
+
+                # Sort + re-assign Rank
+                _sec = {
+                    'avgZScore12_6_3': 'roc3M', 'avgZScore12_9_6_3': 'roc6M',
+                    'avgSharpe12_6_3': 'roc3M',  'avgSharpe9_6_3':   'roc6M',
+                    'avg_All':         'roc12M',  'sharpe12M':        'roc12M',
+                    'sharpe3M':        'roc3M',
+                }.get(_rm, 'roc12M')
+                if _rm in _merged.columns and _sec in _merged.columns:
+                    _merged = _merged.sort_values([_rm, _sec], ascending=[False, False])
+                elif _rm in _merged.columns:
+                    _merged = _merged.sort_values(_rm, ascending=False)
+
+                _merged = _merged.reset_index(drop=True)
+                _merged['Rank'] = range(1, len(_merged) + 1)
+                _merged = _merged.set_index('Rank')
+                return _merged
+
+            _s3_fetch_done = st.session_state.get("_s3_extra_fetch_done", False)
+            _s3_prev_fetched = st.session_state.get("_s3_fetched_tickers", [])
+
+            # Only show this section if there are missing stocks OR fetch was done already
+            _expander_label = (
+                f"⚠️ {len(_port_missing)} portfolio stock(s) not in screener universe — click to fix"
+                if _port_missing else
+                ("✅ Extra stocks added to scan" if _s3_fetch_done else
+                 "➕ Add BE-series / renamed stocks to scan (optional)")
+            )
+            _expander_open = bool(_port_missing) and not _s3_fetch_done
+
+            with st.expander(_expander_label, expanded=_expander_open):
+
+                if _port_missing:
+                    st.markdown(
+                        f"""<div style="background:#fff7ed;border:1.5px solid #f97316;border-left:4px solid #f97316;
+                            border-radius:10px;padding:12px 16px;font-size:13px;color:#7c2d12;margin-bottom:10px;">
+                        ⚠️ <b>{len(_port_missing)} stock(s)</b> aapke portfolio mein hain lekin current screener universe mein nahi hain:<br>
+                        <span style="font-family:monospace;font-size:12px;">{", ".join(_port_missing)}</span><br>
+                        <span style="font-size:12px;color:#92400e;margin-top:4px;display:block;">
+                        Ye stocks BE series mein shift ho gaye hain, ya AllNSE EQUITY_L.csv mein nahi hain —
+                        isliye "Not in selected universe" reason milta hai rebalance mein.<br>
+                        Neeche <b>Fetch button</b> se inhe is run ke liye scan mein add karo.
+                        </span>
+                        </div>""",
+                        unsafe_allow_html=True,
+                    )
+                elif _s3_fetch_done:
+                    st.success(
+                        f"✅ Previously fetched & added: `{'`, `'.join(_s3_prev_fetched)}`"
+                    )
+
+                # ── Checkbox: manually add renamed / extra stocks ──────
+                _show_manual_add = st.checkbox(
+                    "✏️ Manually add stocks (renamed ticker / any extra symbol)",
+                    value=False,
+                    key="_s3_manual_add_cb",
+                    help="Agar kisi stock ka naam change ho gaya hai, ya koi aur stock is run mein add karna hai.",
+                )
+                _manual_extra: list[str] = []
+                if _show_manual_add:
+                    _manual_raw = st.text_area(
+                        "Stock symbols (comma-separated, without .NS suffix):",
+                        placeholder="e.g. NEWNAME1, STOCKABC, RENAMED2",
+                        key="_s3_manual_stocks_text",
+                        height=70,
+                    )
+                    if _manual_raw.strip():
+                        _manual_extra = [
+                            s.strip().upper()
+                            for s in _manual_raw.replace("\n", ",").split(",")
+                            if s.strip()
+                        ]
+                    if _manual_extra:
+                        st.caption(f"Manually added: {', '.join(_manual_extra)}")
+
+                # Combined list = missing portfolio stocks + manual extras
+                _to_fetch_s3 = list(dict.fromkeys(_port_missing + _manual_extra))
+
+                if _to_fetch_s3:
+                    _to_fetch_ns = [
+                        s + ".NS" if not s.endswith(".NS") else s
+                        for s in _to_fetch_s3
+                    ]
+                    _s3_btn_col1, _s3_btn_col2 = st.columns([2, 1])
+                    with _s3_btn_col1:
+                        _do_s3_fetch = st.button(
+                            f"📡 Fetch {len(_to_fetch_s3)} stock(s) from yfinance & add to scan",
+                            key="_s3_fetch_btn",
+                            type="primary",
+                            use_container_width=True,
+                            help="yfinance se data fetch karo aur dfStats mein merge karo (z-scores properly recomputed)",
+                        )
+                    with _s3_btn_col2:
+                        if _s3_fetch_done:
+                            if st.button("↩ Undo — remove added stocks", key="_s3_undo_btn",
+                                         use_container_width=True):
+                                # To undo we'd need original dfStats — for now just signal
+                                st.session_state["_s3_extra_fetch_done"] = False
+                                st.session_state["_s3_fetched_tickers"]  = []
+                                st.warning("⚠️ Undo karne ke liye Step 2 se screener dobara run karo.")
+
+                    if _do_s3_fetch:
+                        _s3_prog2 = st.progress(0)
+                        _s3_stat2 = st.empty()
+                        _dates_s3 = build_dates(st.session_state.lookback_date)
+
+                        with st.spinner(f"⏳ yfinance se {len(_to_fetch_s3)} stock(s) fetch ho rahe hain..."):
+                            try:
+                                _m_cl, _m_hi, _m_vo, _m_fail = _fetch_yfinance_inline(
+                                    _to_fetch_ns,
+                                    _dates_s3['startDate'],
+                                    _dates_s3['endDate'],
+                                    _s3_prog2, _s3_stat2, chunk_size=15,
+                                )
+                                if _m_cl is not None and not _m_cl.empty:
+                                    # Build mini dfStats for fetched stocks
+                                    _mini_dfS = build_dfStats(
+                                        _m_cl, _m_hi, _m_vo,
+                                        _dates_s3,
+                                        st.session_state.ranking_method,
+                                    )
+                                    # Merge into full dfStats with proper z-score recomputation
+                                    _new_dfS = _merge_and_rerank(
+                                        st.session_state.dfStats,
+                                        _mini_dfS,
+                                        st.session_state.ranking_method,
+                                    )
+                                    # Re-apply filters
+                                    _fp_s3 = (
+                                        st.session_state.get("_cross_filter_params")
+                                        or st.session_state.get("_last_filter_params")
+                                        or {}
+                                    )
+                                    _new_dfF = apply_filters(_new_dfS.copy(), _fp_s3)
+
+                                    st.session_state.dfStats   = _new_dfS
+                                    st.session_state.dfFiltered = _new_dfF
+
+                                    _ok_ticks = [
+                                        c.replace(".NS", "") for c in _m_cl.columns
+                                    ]
+                                    _fail_ticks = [
+                                        t.replace(".NS", "") for t in (_m_fail or [])
+                                    ]
+                                    st.session_state["_s3_extra_fetch_done"] = True
+                                    st.session_state["_s3_fetched_tickers"]  = _ok_ticks
+
+                                    if _fail_ticks:
+                                        st.warning(f"⚠️ Fetch failed for: {', '.join(_fail_ticks)}")
+                                    st.success(
+                                        f"✅ {len(_ok_ticks)} stock(s) fetched & merged! "
+                                        f"Total dfStats: {len(_new_dfS):,} stocks. "
+                                        f"Rebalance dobara compute ho raha hai..."
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.error(
+                                        "❌ yfinance se koi data nahi mila. "
+                                        "Symbols check karo (without .NS suffix)."
+                                    )
+                            except Exception as _s3e:
+                                st.error(f"Fetch error: {_s3e}")
+                else:
+                    if not _s3_fetch_done:
+                        st.info(
+                            "ℹ️ Sabhi portfolio stocks screener universe mein hain. "
+                            "Renamed stocks add karne ke liye upar checkbox use karo."
+                        )
+
         # ── Step 3 sub-tabs ───────────────────────────────────────────
         _s3_tab_b, _s3_tab_a = st.tabs([
             "⚖️  Rebalancer & Orders",
