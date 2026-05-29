@@ -1,17 +1,18 @@
 {
   "last_updated": "2026-05-29",
-  "last_updated_ts": "2026-05-29T16:57:07",
-  "source": "nsdl_yearwise",
-  "fii_net_30d": -60847.0,
-  "fii_net_5d": -13828.86,
+  "last_updated_ts": "2026-05-29T18:08:27",
+  "source": "yfinance_proxy",
+  "fii_net_30d": -3184.41,
+  "fii_net_5d": 15402.62,
   "fii_buy_30d": 0,
   "fii_sell_30d": 0,
   "dii_net_30d": 0,
   "dii_net_5d": 0,
-  "fii_ema5_gt_ema20": false,
-  "signal": "BEAR",
+  "fii_ema5_gt_ema20": true,
+  "signal": "NEUTRAL",
   "score": 0.0,
   "stale": false,
   "consecutive_bull_days": 0,
-  "fetch_failed": false
+  "fetch_failed": false,
+  "proxy_note": "Estimated from INDA vs ^NSEI 30D divergence (-0.91%). Not actual FII crore data from NSE/NSDL."
 }
