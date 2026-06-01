@@ -1,6 +1,6 @@
 {
   "last_updated": "2026-06-01",
-  "last_updated_ts": "2026-06-01T19:06:30",
+  "last_updated_ts": "2026-06-01T19:53:06",
   "source": "nsdl_yearwise",
   "fii_net_30d": -32963.0,
   "fii_net_5d": -7491.59,
@@ -8,7 +8,7 @@
   "fii_sell_30d": 0,
   "dii_net_30d": 0,
   "dii_net_5d": 0,
-  "fii_ema5_gt_ema20": true,
+  "fii_ema5_gt_ema20": false,
   "signal": "BEAR",
   "score": 0.0,
   "stale": false,
