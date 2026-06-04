@@ -1,24 +1,17 @@
 {
-  "build_date": "2026-05-28",
-  "build_time_utc": "18:40:58",
-  "build_duration_min": 257.1,
-  "symbols_total": 2143,
-  "symbols_fetched": 2137,
-  "symbols_failed": 1,
-  "not_in_master": 5,
-  "failed_symbols": [
-    "CLEDUCATE.NS",
-    "INSPIRISYS.NS",
-    "LEMERITE.NS",
-    "NIMBSPROJ.NS",
-    "VERTOZ.NS",
-    "WELINV.NS"
-  ],
+  "build_date": "2026-06-04",
+  "build_time_utc": "17:40:32",
+  "build_duration_min": 232.3,
+  "symbols_total": 2131,
+  "symbols_fetched": 2131,
+  "symbols_failed": 0,
+  "not_in_master": 0,
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-01-28",
-  "data_end": "2026-05-28",
-  "last_date_in_cache": "2026-05-27",
-  "today_data_present": false,
+  "data_start_recent": "2023-02-04",
+  "data_end": "2026-06-04",
+  "last_date_in_cache": "2026-06-04",
+  "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
@@ -47,23 +40,23 @@
     ],
     [
       "2021-11-26",
-      "2026-05-29"
+      "2026-06-05"
     ]
   ],
-  "last_chunk_todate": "2026-05-29 15:30",
-  "total_api_calls": 10685,
+  "last_chunk_todate": "2026-06-05 15:30",
+  "total_api_calls": 10655,
   "rate_limit": "3 req/sec",
   "close_shape": [
     823,
-    2137
+    2131
   ],
   "high_shape": [
     823,
-    2137
+    2131
   ],
   "volume_shape": [
     823,
-    2137
+    2131
   ],
-  "ath_count": 2137
+  "ath_count": 2131
 }
