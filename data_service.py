@@ -712,6 +712,210 @@ def fetch_zerodha(symbols, start_date, end_date, chunk_size, progress_bar, statu
     st.stop()
 
 
+# ═════════════════════════════════════════════════════════════
+# SECTION J2 — TRADINGVIEW (tvDatafeed) LIVE FETCHER
+# ═════════════════════════════════════════════════════════════
+#
+# tvDatafeed library se NSE daily OHLCV data fetch karta hai.
+# Login optional — without login free tier (limited bars).
+# With TradingView credentials: up to 5000 bars per symbol.
+#
+# Install: pip install tvDatafeed
+# GitHub Secrets (optional): TV_USERNAME, TV_PASSWORD
+#
+# Symbol format: tvDatafeed 'INFY' (no .NS suffix needed)
+# Exchange: 'NSE'
+# Interval: Interval.in_daily
+# n_bars: max 5000
+# ─────────────────────────────────────────────────────────────
+
+TV_MAX_BARS = 5000  # tvDatafeed maximum bars per symbol
+
+
+def _get_tv_client(tv_username: str = "", tv_password: str = ""):
+    """
+    TvDatafeed client initialize karo.
+    Credentials optional — without login limited data milta hai.
+    """
+    try:
+        from tvDatafeed import TvDatafeed
+    except ImportError:
+        raise ImportError(
+            "tvDatafeed library install nahi hai. "
+            "requirements.txt mein add karo: tvDatafeed"
+        )
+    if tv_username and tv_password:
+        return TvDatafeed(username=tv_username, password=tv_password)
+    return TvDatafeed()  # anonymous / free tier
+
+
+def _fetch_tv_single(tv_client, symbol_ns: str, n_bars: int = TV_MAX_BARS, retries: int = 2):
+    """
+    Single symbol ka daily OHLCV fetch karo TradingView se.
+    symbol_ns: 'INFY.NS' ya 'INFY' — dono chalenge (.NS strip hoga).
+    Returns: pd.DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None
+    """
+    try:
+        from tvDatafeed import Interval
+    except ImportError:
+        return None
+
+    clean = symbol_ns.replace(".NS", "").replace(".BO", "").upper().strip()
+    delay = 2.0
+
+    for attempt in range(retries):
+        try:
+            df = tv_client.get_hist(
+                symbol=clean,
+                exchange="NSE",
+                interval=Interval.in_daily,
+                n_bars=n_bars,
+            )
+            if df is None or df.empty:
+                return None
+
+            # tvDatafeed returns 'datetime' as index or column — normalize
+            if "datetime" in df.columns:
+                df = df.set_index("datetime")
+            df.index = pd.to_datetime(df.index)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            df = df.sort_index()
+
+            # Rename columns to lowercase standard
+            df.columns = [c.lower() for c in df.columns]
+            needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+            return df[needed]
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if "rate" in err_str or "limit" in err_str:
+                time.sleep(delay * 2); delay *= 2
+            elif attempt < retries - 1:
+                time.sleep(delay); delay *= 2
+            else:
+                return None
+    return None
+
+
+def fetch_tradingview(
+    symbols, start_date, end_date, chunk_size, progress_bar, status_text,
+    tv_username: str = "", tv_password: str = ""
+):
+    """
+    TradingView (tvDatafeed) bulk fetcher.
+
+    - Credentials: st.session_state se pick karta hai ya parameter se.
+    - n_bars = 5000 (max) — ~13+ years daily data.
+    - start_date ke baad ka data slice karta hai final DataFrame mein.
+    - Rate limit: 0.2s sleep between symbols.
+
+    Returns: (close_df, high_df, volume_df, failed_symbols)
+    """
+    # Credentials: session_state > parameter > env > anonymous
+    if not tv_username:
+        tv_username = st.session_state.get("tv_username", "") or ""
+    if not tv_password:
+        tv_password = st.session_state.get("tv_password", "") or ""
+    if not tv_username:
+        tv_username = ""
+    if not tv_password:
+        tv_password = ""
+
+    # Initialize client
+    status_text.text("TradingView: Client initialize ho raha hai...")
+    try:
+        tv_client = _get_tv_client(tv_username, tv_password)
+    except ImportError as e:
+        st.error(str(e))
+        st.stop()
+    except Exception as e:
+        st.error(f"TradingView login failed: {e}")
+        st.stop()
+
+    total = len(symbols)
+    close_map, high_map, vol_map = {}, {}, {}
+    failed = []
+
+    status_text.text(f"TradingView: {total:,} symbols fetch ho rahe hain (NSE daily)...")
+
+    ath_map = {}   # sym → lifetime ATH from full 5000-bar history
+
+    for i, sym in enumerate(symbols):
+        progress = (i + 1) / total
+        try:
+            # Full 5000 bars fetch karo — maximum available history (~13 yrs)
+            df_full = _fetch_tv_single(tv_client, sym, n_bars=TV_MAX_BARS)
+            if df_full is not None and not df_full.empty:
+                # ── ATH: FULL history ka max high (slice se PEHLE) ──
+                ath_val = float(df_full["high"].max()) if "high" in df_full.columns else float(df_full["close"].max())
+                ath_map[sym] = ath_val
+
+                # ── Recent slice: start_date ke baad ──────────────
+                df = df_full[df_full.index >= pd.Timestamp(start_date)]
+                if not df.empty and "close" in df.columns:
+                    idx = df.index
+                    close_map[sym] = pd.Series(df["close"].values, index=idx)
+                    high_map[sym]  = pd.Series(df["high"].values,  index=idx) if "high" in df.columns else pd.Series(dtype=float)
+                    vol_map[sym]   = pd.Series(
+                        (df["close"] * df["volume"]).values, index=idx
+                    ) if "volume" in df.columns else pd.Series(dtype=float)
+                else:
+                    failed.append(sym)
+            else:
+                failed.append(sym)
+        except Exception:
+            failed.append(sym)
+
+        if i % 10 == 0 or i == total - 1:
+            progress_bar.progress(min(progress, 1.0))
+            status_text.text(
+                f"TradingView: {int(progress * 100)}% | "
+                f"Fetched: {len(close_map)} | Failed: {len(failed)}"
+            )
+        time.sleep(0.2)  # polite rate limit
+
+    progress_bar.progress(1.0)
+
+    # Assemble DataFrames
+    all_idx = pd.bdate_range(start=start_date, end=end_date)
+    close  = pd.DataFrame({s: v.reindex(all_idx) for s, v in close_map.items()},  index=all_idx)
+    high   = pd.DataFrame({s: v.reindex(all_idx) for s, v in high_map.items()},   index=all_idx)
+    volume = pd.DataFrame({s: v.reindex(all_idx) for s, v in vol_map.items()},    index=all_idx)
+
+    close, high, volume = _trim_trailing_nan(close, high, volume)
+
+    # ── ATH inject: synthetic 2000-01-01 row mein lifetime max high ──
+    # calculations.py mein `ATH = high.max()` use hota hai.
+    # Is row se ensure hota hai ki lookback se pehle ka ATH bhi capture ho.
+    if ath_map and not high.empty:
+        ath_series = pd.Series(ath_map).reindex(high.columns)
+        ath_row    = pd.DataFrame(
+            [ath_series.values],
+            columns=high.columns,
+            index=[pd.Timestamp("2000-01-01")],
+        )
+        high = pd.concat([ath_row, high]).sort_index()
+        high = high.loc[:, ~high.columns.duplicated()]
+
+    if not close.empty:
+        last_date = close.index[-1].date()
+        today_d   = date.today()
+        if last_date >= today_d:
+            status_text.text(
+                f"✅ TradingView up-to-date | {len(close_map)}/{total} fetched | "
+                f"Last: {close.index[-1].strftime('%d-%b-%Y')}"
+            )
+        else:
+            status_text.text(
+                f"⚠️ TradingView {len(close_map)}/{total} | "
+                f"Last: {close.index[-1].strftime('%d-%b-%Y')} "
+                f"(today: {today_d} — holiday/weekend?)"
+            )
+
+    return close, high, volume, failed
+
+
 # ─────────────────────────────────────────────────────────────
 # SECTION K — UNIFIED ENTRY POINT
 # ─────────────────────────────────────────────────────────────
@@ -723,6 +927,8 @@ def fetch_data(api_source, symbols, start_date, end_date,
         return fetch_upstox(symbols, start_date, end_date, chunk_size, progress_bar, status_text)
     elif api_source == "Angel One":
         return fetch_angelone(symbols, start_date, end_date, chunk_size, progress_bar, status_text)
+    elif api_source == "TradingView":
+        return fetch_tradingview(symbols, start_date, end_date, chunk_size, progress_bar, status_text)
     elif api_source == "Zerodha":
         return fetch_zerodha(symbols, start_date, end_date, chunk_size, progress_bar, status_text)
     else:

@@ -254,6 +254,27 @@ try:
 except Exception:
     pass
 
+# ── cache_loader_tradingview (pre-built Parquet cache — TradingView) ──
+_CACHE_TV_AVAILABLE = False
+try:
+    from cache_loader_tradingview import (
+        load_cache            as load_cache_tv,
+        get_cache_meta        as get_cache_meta_tv,
+        get_cache_age_days    as get_cache_age_days_tv,
+        get_cache_status_html as get_cache_status_html_tv,
+    )
+    _CACHE_TV_AVAILABLE = True
+except ImportError:
+    pass
+
+# ── tvDatafeed availability check ─────────────────────────────
+_TV_AVAILABLE = False
+try:
+    from tvDatafeed import TvDatafeed, Interval  # noqa: F401
+    _TV_AVAILABLE = True
+except ImportError:
+    pass
+
 # ── Inline YFinance fetcher (fallback when data_service fails) ─
 def _fetch_yfinance_inline(symbols_ns, start_date, end_date,
                             progress_bar, status_text, chunk_size=15):
@@ -833,10 +854,12 @@ API_OPTIONS  = [
     "📦 Pre-cached Upstox",
     "📦 Pre-cached Angel One",
     "📦 Pre-cached Fyers",
+    "📦 Pre-cached TradingView",
     "YFinance",
     "Upstox",
     "Angel One",
     "Fyers",
+    "TradingView",
 ]
 RANKING_MAP  = {
     "AvgZScore 12M/6M/3M":    "avgZScore12_6_3",
@@ -1386,6 +1409,9 @@ with st.sidebar:
         elif "Angel" in _ds and _CACHE_ANGEL_AVAILABLE:
             from cache_loader_angelone import list_available_dates as _ld_dates
             _avail_dates = _ld_dates()
+        elif "TradingView" in _ds and _CACHE_TV_AVAILABLE:
+            from cache_loader_tradingview import list_available_dates as _ld_dates
+            _avail_dates = _ld_dates()
         elif _CACHE_AVAILABLE:
             from cache_loader import list_available_dates as _ld_dates
             _avail_dates = _ld_dates()
@@ -1455,6 +1481,41 @@ with st.sidebar:
               ⚠️ <b>Fyers unavailable</b><br>
               <span style="font-size:11px;">
               <code>requirements.txt</code> mein add karo: <code>fyers-apiv3</code> + <code>pyotp</code><br>
+              Abhi <b>YFinance</b> fallback use hoga.
+              </span>
+            </div>""", unsafe_allow_html=True)
+
+    elif st.session_state.data_source == "TradingView":
+        st.divider()
+        if _TV_AVAILABLE:
+            st.sidebar.markdown("#### 📺 TradingView Credentials *(optional)*")
+            st.sidebar.caption(
+                "Without login: free tier (limited bars). "
+                "Login se 5000 bars/symbol milte hain."
+            )
+            _tv_user = st.sidebar.text_input(
+                "TV Username", value=st.session_state.get("tv_username", ""),
+                key="tv_username_input", placeholder="TradingView username"
+            )
+            _tv_pass = st.sidebar.text_input(
+                "TV Password", value=st.session_state.get("tv_password", ""),
+                key="tv_password_input", type="password", placeholder="TradingView password"
+            )
+            if _tv_user:
+                st.session_state["tv_username"] = _tv_user
+            if _tv_pass:
+                st.session_state["tv_password"] = _tv_pass
+            if _tv_user and _tv_pass:
+                st.sidebar.success(f"✅ Credentials set: {_tv_user[:4]}****")
+            else:
+                st.sidebar.info("ℹ️ Anonymous mode — credentials optional")
+        else:
+            st.sidebar.markdown("""
+            <div style="background:#fef3c7;border:1px solid #fcd34d;border-left:4px solid #d97706;
+                        border-radius:10px;padding:10px 14px;font-size:12px;color:#92400e;margin:6px 0;">
+              ⚠️ <b>TradingView (tvDatafeed) unavailable</b><br>
+              <span style="font-size:11px;">
+              <code>requirements.txt</code> mein add karo: <code>tvDatafeed</code><br>
               Abhi <b>YFinance</b> fallback use hoga.
               </span>
             </div>""", unsafe_allow_html=True)
@@ -3253,13 +3314,26 @@ with _tab_screener:
                     "📦 Pre-cached Upstox",
                     "📦 Pre-cached Angel One",
                     "📦 Pre-cached Fyers",
+                    "📦 Pre-cached TradingView",
                 ):
                     _is_upstox_cache = (_api_source == "📦 Pre-cached Upstox")
                     _is_angel_cache  = (_api_source == "📦 Pre-cached Angel One")
                     _is_fyers_cache  = (_api_source == "📦 Pre-cached Fyers")
+                    _is_tv_cache     = (_api_source == "📦 Pre-cached TradingView")
 
                     # ── Select correct loader ─────────────────────────
-                    if _is_fyers_cache:
+                    if _is_tv_cache:
+                        if not _CACHE_TV_AVAILABLE:
+                            st.error(
+                                "❌ cache_loader_tradingview.py nahi mila. "
+                                "Repo mein add karo + daily_cache_tradingview.yml workflow run karo."
+                            )
+                            st.stop()
+                        _loader    = load_cache_tv
+                        _meta_fn   = get_cache_meta_tv
+                        _age_fn    = get_cache_age_days_tv
+                        _cache_lbl = "TradingView"
+                    elif _is_fyers_cache:
                         if not _CACHE_FYERS_AVAILABLE:
                             st.error(
                                 "❌ cache_loader_fyers.py nahi mila. "
@@ -3447,7 +3521,7 @@ with _tab_screener:
                     """, unsafe_allow_html=True)
 
                     # Use data_service if available AND source is not YFinance
-                    _use_ds = _DS_AVAILABLE and _api_source in ("Upstox", "Angel One", "Fyers")
+                    _use_ds = _DS_AVAILABLE and _api_source in ("Upstox", "Angel One", "Fyers", "TradingView")
                     try:
                         if _use_ds:
                             close, high, volume, failed_symbols = fetch_data(
