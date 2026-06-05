@@ -1,24 +1,24 @@
 {
-  "build_date": "2026-05-29",
-  "build_time_utc": "14:59:22",
-  "build_duration_min": 77.2,
-  "symbols_total": 2138,
-  "symbols_fetched": 2137,
+  "build_date": "2026-06-05",
+  "build_time_utc": "14:42:29",
+  "build_duration_min": 71.4,
+  "symbols_total": 2125,
+  "symbols_fetched": 2124,
   "symbols_failed": 1,
   "not_in_master": 0,
   "failed_symbols": [
     "CHOLAFIN.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-01-29",
-  "data_end": "2026-05-29",
-  "last_date_in_cache": "2026-05-29",
+  "data_start_recent": "2023-02-05",
+  "data_end": "2026-06-05",
+  "last_date_in_cache": "2026-06-05",
   "today_data_present": true,
-  "today_quotes_fetched": 2137,
+  "today_quotes_fetched": 2118,
   "recent_months": 40,
   "source": "Upstox V3 (historical candle + intraday for today)",
   "today_data_source": "Upstox Intraday API (/v3/historical-candle/intraday)",
-  "upstox_to_date": "2026-05-30",
+  "upstox_to_date": "2026-06-06",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -36,22 +36,22 @@
     ],
     [
       "2020-01-01",
-      "2026-05-30"
+      "2026-06-06"
     ]
   ],
-  "total_api_calls_historical": 6411,
-  "total_api_calls_intraday": 2137,
+  "total_api_calls_historical": 6372,
+  "total_api_calls_intraday": 2118,
   "close_shape": [
     825,
-    2137
+    2124
   ],
   "high_shape": [
     825,
-    2137
+    2124
   ],
   "volume_shape": [
     825,
-    2137
+    2124
   ],
-  "ath_count": 2137
+  "ath_count": 2124
 }
