@@ -67,4 +67,3 @@ pyotp==2.9.0
 websocket-client==1.6.1
 logzero==1.7.0
 fyers-apiv3
-tvdatafeed @ git+https://github.com/StreamAlpha/tvdatafeed.git
