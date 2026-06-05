@@ -812,15 +812,23 @@ def fetch_tradingview(
 
     Returns: (close_df, high_df, volume_df, failed_symbols)
     """
-    # Credentials: session_state > parameter > env > anonymous
+    # Credentials priority: parameter > session_state > Streamlit secrets > anonymous
     if not tv_username:
         tv_username = st.session_state.get("tv_username", "") or ""
     if not tv_password:
         tv_password = st.session_state.get("tv_password", "") or ""
+
+    # Streamlit secrets fallback (st.secrets["tradingview"]["username"])
     if not tv_username:
-        tv_username = ""
+        try:
+            tv_username = st.secrets["tradingview"]["username"]
+        except Exception:
+            tv_username = ""
     if not tv_password:
-        tv_password = ""
+        try:
+            tv_password = st.secrets["tradingview"]["password"]
+        except Exception:
+            tv_password = ""
 
     # Initialize client
     status_text.text("TradingView: Client initialize ho raha hai...")
