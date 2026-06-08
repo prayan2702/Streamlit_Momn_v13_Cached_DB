@@ -730,6 +730,7 @@ def fetch_zerodha(symbols, start_date, end_date, chunk_size, progress_bar, statu
 
 # tv_patch.py ka patched fetcher use karo — CandleStreamer ka broken 16-packet
 # timeout bypass karta hai. tv_patch.py same directory mein hona chahiye.
+TV_MAX_BARS = 5000
 try:
     from tv_patch import fetch_symbol_patched as _fetch_tv_patched
     _TV_PATCH_AVAILABLE = True
