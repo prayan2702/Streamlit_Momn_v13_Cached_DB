@@ -4,15 +4,15 @@ name: Daily Cache Build — TradingView
 # GitHub Actions TradingView cache builder
 # Runs daily at 10:00 PM IST (16:30 UTC), Mon-Fri
 #
-# tvDatafeed: NSE daily data, up to 5000 bars per symbol
-# Anonymous mode works (limited) — set TV_USERNAME + TV_PASSWORD
-# for better data access.
+# tv-scraper (CandleStreamer) — tvDatafeed ki jagah
+# Anonymous WebSocket mode works — NSE daily data milta hai
+# Optional: TV_COOKIE secret set karo better access ke liye
 #
 # Required GitHub Secrets (Repo → Settings → Secrets → Actions):
-#   PAT_TOKEN (repo write access)
+#   PAT_TOKEN   (repo write access — required)
 #
-# Optional Secrets (for logged-in data):
-#   TV_USERNAME | TV_PASSWORD
+# Optional Secrets (for cookie-based auth):
+#   TV_COOKIE   (TradingView session cookie — paste full Cookie header)
 # ════════════════════════════════════════════════════════════
 
 on:
@@ -26,7 +26,7 @@ env:
 jobs:
   build-cache:
     runs-on: ubuntu-latest
-    timeout-minutes: 360       # 6 hours max — 2100+ symbols × ~0.2s + retries
+    timeout-minutes: 360       # 6 hours max — 2100+ symbols × ~1s + retries
 
     steps:
       - name: Checkout repository
@@ -45,17 +45,18 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install \
-            "git+https://github.com/rongardF/tvdatafeed.git" \
+            "git+https://github.com/smitkunpara/tv-scraper.git" \
             "pandas" \
             "numpy" \
             "pyarrow" \
             "requests" \
-            "python-dateutil"
+            "python-dateutil" \
+            "websocket-client>=1.8.0" \
+            "pyjwt>=2.10.1"
 
       - name: Build TradingView cache
         env:
-          TV_USERNAME: ${{ secrets.TV_USERNAME }}
-          TV_PASSWORD: ${{ secrets.TV_PASSWORD }}
+          TV_COOKIE: ${{ secrets.TV_COOKIE }}
         run: |
           python cache_builder_tradingview.py
 
@@ -63,8 +64,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache_tradingview/
-          git diff --cached --quiet && echo "No changes to commit" && exit 0
-          git commit -m "chore: TradingView cache update $(date +'%Y-%m-%d')"
           git pull --rebase origin main
+          git add cache_tradingview/
+          git diff --cached --quiet || git commit -m "chore: TradingView cache update $(date +'%Y-%m-%d')"
           git push
