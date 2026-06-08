@@ -1,32 +1,31 @@
 """
 cache_builder_tradingview.py
 ============================
-TradingView (tv-scraper CandleStreamer) se full history cache build karta hai.
+TradingView se full history cache build karta hai.
 GitHub Actions pe daily chalta hai.
 
-tvDatafeed → tv-scraper migration:
-  - tvDatafeed ka login issue aur nil data problem fix
-  - CandleStreamer WebSocket-based fetch — no login required (anonymous works)
-  - Optional: TV_COOKIE secret set karo GitHub Secrets mein (better access)
+tv-scraper library use karta hai lekin CandleStreamer ka
+broken 16-packet timeout BYPASS karta hai — direct WebSocket
+via tv_patch.py ka fetch_symbol_patched().
 
 ── 5-DAY ROLLING CACHE ──────────────────────────────────────
   cache_tradingview/
     cache_index.json         ← {"dates": [...], "latest": "YYYY-MM-DD"}
-    2026-05-26/
+    2026-06-08/
       close.parquet, high.parquet, volume.parquet, ath.parquet, cache_meta.json
     (max 5 dirs — 6th build pe oldest auto-pruned)
 ──────────────────────────────────────────────────────────────
 
 Key design:
-  • CandleStreamer.get_candles() — NSE daily, numb_candles=5000 (~13+ years)
-  • ATH = all 5000 bars ka high.max() → correct lifetime ATH
+  • tv_patch.fetch_symbol_patched() — NSE daily, 4000 bars (~16 years)
+  • ATH = all bars ka high.max() → correct lifetime ATH
   • Recent 40M = slice from full data
-  • Rate limit: 1.0s sleep between symbols (WebSocket reconnect overhead)
-  • Auth: TV_COOKIE GitHub Secret (optional — anonymous mode bhi kaam karta hai)
+  • Rate limit: 0.3s sleep between symbols
+  • Auth: TV_COOKIE env var (optional — anonymous mode works)
 
 GitHub Secrets:
-  PAT_TOKEN    (required — repo write access)
-  TV_COOKIE    (optional — better data, captcha bypass)
+  PAT_TOKEN  (required — repo write access)
+  TV_COOKIE  (optional — better data, captcha bypass)
 """
 
 import json
@@ -40,10 +39,11 @@ import numpy as np
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
+# tv_patch must be in same directory
 try:
-    from tv_scraper import CandleStreamer
+    from tv_patch import fetch_symbol_patched
 except ImportError:
-    print("ERROR: tv-scraper not installed. pip install git+https://github.com/smitkunpara/tv-scraper.git", flush=True)
+    print("ERROR: tv_patch.py not found in same directory as cache_builder_tradingview.py", flush=True)
     sys.exit(1)
 
 from cache_rolling import save_rolling_cache, MAX_CACHED_DAYS
@@ -54,12 +54,10 @@ from cache_rolling import save_rolling_cache, MAX_CACHED_DAYS
 CACHE_DIR      = Path("cache_tradingview")
 RECENT_MONTHS  = 40
 EXTRA_SYMBOLS  = ["GOLDBEES", "SILVERBEES"]
-NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 GITHUB_BASE    = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
 
-TV_MAX_BARS         = 5000   # CandleStreamer max candles per call
-RATE_LIMIT_SLEEP    = 1.0    # seconds between symbols (WebSocket reconnect)
-MAX_RETRIES         = 2
+RATE_LIMIT_SLEEP = 0.3   # seconds between symbols
+MAX_RETRIES      = 1     # fast fail per symbol
 
 
 # ══════════════════════════════════════════════════════════════
@@ -70,27 +68,9 @@ def log(msg: str):
 
 
 # ══════════════════════════════════════════════════════════════
-# AUTH — CandleStreamer client
-# tv-scraper anonymous mode = no login needed
-# Optional: TV_COOKIE env var set karo better access ke liye
-# ══════════════════════════════════════════════════════════════
-def get_streamer() -> CandleStreamer:
-    cookie = os.environ.get("TV_COOKIE", "").strip()
-    if cookie:
-        log("TradingView: cookie-based auth mode")
-        return CandleStreamer(cookie=cookie)
-    log("TradingView: anonymous mode (no TV_COOKIE found — works for NSE data)")
-    return CandleStreamer()
-
-
-# ══════════════════════════════════════════════════════════════
 # SYMBOL LIST
 # ══════════════════════════════════════════════════════════════
 def load_symbols() -> list[str]:
-    """
-    EQUITY_L.csv se NSE symbols load karo.
-    tv-scraper format: plain symbol (no .NS suffix, no -EQ).
-    """
     csv_path = CACHE_DIR / "EQUITY_L.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path)
@@ -108,108 +88,35 @@ def load_symbols() -> list[str]:
 
 
 # ══════════════════════════════════════════════════════════════
-# SINGLE SYMBOL FETCH via CandleStreamer
-# ══════════════════════════════════════════════════════════════
-def fetch_symbol(streamer: CandleStreamer, symbol: str, retries: int = MAX_RETRIES) -> pd.DataFrame | None:
-    """
-    Single NSE symbol ka full history fetch (upto TV_MAX_BARS daily bars).
-
-    tv-scraper CandleStreamer.get_candles() returns:
-      {
-        "status": "success",
-        "data": {
-          "ohlcv": [
-            {"index":0, "timestamp":1700000000, "open":..., "high":..., "low":..., "close":..., "volume":...},
-            ...
-          ]
-        }
-      }
-
-    Returns DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None.
-    """
-    delay = 2.0
-    for attempt in range(retries + 1):
-        try:
-            result = streamer.get_candles(
-                exchange="NSE",
-                symbol=symbol,
-                timeframe="1d",
-                numb_candles=TV_MAX_BARS,
-            )
-
-            if result.get("status") != "success":
-                err = result.get("error", "Unknown error")
-                if attempt < retries:
-                    time.sleep(delay)
-                    delay *= 2
-                    continue
-                return None
-
-            ohlcv_list = result.get("data", {}).get("ohlcv", [])
-            if not ohlcv_list:
-                return None
-
-            # Convert list of dicts → DataFrame
-            df = pd.DataFrame(ohlcv_list)
-
-            # timestamp → datetime index
-            df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-            df["datetime"] = df["datetime"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-            df = df.set_index("datetime").sort_index()
-
-            # Keep only OHLCV columns
-            cols = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
-            if "close" not in cols:
-                return None
-
-            return df[cols]
-
-        except Exception as e:
-            err_str = str(e).lower()
-            if attempt < retries:
-                wait = delay * 2 if ("rate" in err_str or "limit" in err_str or "429" in err_str) else delay
-                log(f"  Retry {attempt+1}/{retries} for {symbol}: {str(e)[:60]} — waiting {wait:.1f}s")
-                time.sleep(wait)
-                delay *= 2
-            else:
-                return None
-
-    return None
-
-
-# ══════════════════════════════════════════════════════════════
 # MAIN BUILDER
 # ══════════════════════════════════════════════════════════════
 def build_cache():
-    today_str  = date.today().strftime("%Y-%m-%d")
-    today_dt   = datetime.today()
-    cutoff     = today_dt - relativedelta(months=RECENT_MONTHS)
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_dt  = datetime.today()
+    cutoff    = today_dt - relativedelta(months=RECENT_MONTHS)
+
+    tv_cookie = os.environ.get("TV_COOKIE", "").strip()
 
     log("=" * 60)
-    log(f"TradingView Cache Builder (tv-scraper) — {today_str}")
+    log(f"TradingView Cache Builder — {today_str}")
     log(f"Recent slice: last {RECENT_MONTHS} months (from {cutoff.strftime('%Y-%m-%d')})")
-    log(f"Max bars per symbol: {TV_MAX_BARS}")
+    log(f"Auth: {'cookie mode' if tv_cookie else 'anonymous mode'}")
     log("=" * 60)
 
-    # ── Streamer init ─────────────────────────────────────────
-    streamer = get_streamer()
-    symbols  = load_symbols()
-    total    = len(symbols)
+    symbols = load_symbols()
+    total   = len(symbols)
 
-    # ── Per-symbol fetch ──────────────────────────────────────
     close_all, high_all, vol_all = {}, {}, {}
-    ath_dict   = {}
-    failed     = []
-    ok_count   = 0
+    ath_dict  = {}
+    failed    = []
+    ok_count  = 0
 
     for i, sym in enumerate(symbols):
-        df = fetch_symbol(streamer, sym)
+        df = fetch_symbol_patched(sym, cookie=tv_cookie, retries=MAX_RETRIES)
 
         if df is not None and not df.empty and "close" in df.columns:
-            # ATH = entire history ka max high
             ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
 
-            # Recent slice for parquet
             df_recent = df[df.index >= cutoff].copy()
             if not df_recent.empty:
                 idx = df_recent.index
@@ -234,24 +141,21 @@ def build_cache():
     if failed[:20]:
         log(f"First 20 failed: {failed[:20]}")
 
-    # ── Build DataFrames ──────────────────────────────────────
-    close_df  = pd.DataFrame(close_all).sort_index()
-    high_df   = pd.DataFrame(high_all).sort_index()
-    vol_df    = pd.DataFrame(vol_all).sort_index()
+    close_df = pd.DataFrame(close_all).sort_index()
+    high_df  = pd.DataFrame(high_all).sort_index()
+    vol_df   = pd.DataFrame(vol_all).sort_index()
 
     if close_df.empty:
         log("ERROR: No data fetched. Aborting.")
         sys.exit(1)
 
-    # ── ATH DataFrame ─────────────────────────────────────────
     ath_df = pd.DataFrame({"ATH": ath_dict})
 
-    # ── Save via rolling cache ────────────────────────────────
     meta = {
         "build_date":      today_str,
         "build_timestamp": datetime.now().isoformat(),
-        "source":          "TradingView (tv-scraper CandleStreamer)",
-        "n_bars":          TV_MAX_BARS,
+        "source":          "TradingView (tv-scraper patched WebSocket)",
+        "n_bars":          4000,
         "recent_months":   RECENT_MONTHS,
         "symbols_total":   total,
         "symbols_fetched": ok_count,
@@ -265,13 +169,13 @@ def build_cache():
     }
 
     save_rolling_cache(
-        cache_dir  = CACHE_DIR,
-        today_str  = today_str,
-        close      = close_df,
-        high       = high_df,
-        volume     = vol_df,
-        ath_df     = ath_df,
-        meta       = meta,
+        cache_dir = CACHE_DIR,
+        today_str = today_str,
+        close     = close_df,
+        high      = high_df,
+        volume    = vol_df,
+        ath_df    = ath_df,
+        meta      = meta,
     )
 
     log(f"\n✅ Cache saved to {CACHE_DIR}/{today_str}/")
