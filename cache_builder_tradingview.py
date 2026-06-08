@@ -239,12 +239,12 @@ def build_cache():
 
     save_rolling_cache(
         cache_dir  = CACHE_DIR,
-        close_df   = close_df,
-        high_df    = high_df,
-        volume_df  = vol_df,
+        today_str  = today_str,
+        close      = close_df,
+        high       = high_df,
+        volume     = vol_df,
         ath_df     = ath_df,
         meta       = meta,
-        date_str   = today_str,
     )
 
     log(f"\n✅ Cache saved to {CACHE_DIR}/{today_str}/")
