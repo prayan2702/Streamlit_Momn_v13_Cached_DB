@@ -43,7 +43,7 @@ python-dateutil==2.9.0.post0
 pytz==2024.2
 QuantStats==0.0.64
 referencing==0.35.1
-requests==2.31.0
+requests==2.32.4
 rich==13.9.4
 rpds-py==0.22.1
 scipy==1.13.1
@@ -64,7 +64,7 @@ webencodings==0.5.1
 yfinance==0.2.65
 smartapi-python==1.5.5
 pyotp==2.9.0
-websocket-client>=1.8.0
+websocket-client==1.6.1
 logzero==1.7.0
 fyers-apiv3
 git+https://github.com/smitkunpara/tv-scraper.git
