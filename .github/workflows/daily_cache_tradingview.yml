@@ -63,6 +63,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
           git add cache_tradingview/
           git diff --cached --quiet || git commit -m "chore: TradingView cache update $(date +'%Y-%m-%d')"
           git push
