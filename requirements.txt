@@ -64,7 +64,8 @@ webencodings==0.5.1
 yfinance==0.2.65
 smartapi-python==1.5.5
 pyotp==2.9.0
-websocket-client==1.6.1
+websocket-client>=1.8.0
 logzero==1.7.0
 fyers-apiv3
-git+https://github.com/rongardF/tvdatafeed.git
+git+https://github.com/smitkunpara/tv-scraper.git
+pyjwt>=2.10.1
