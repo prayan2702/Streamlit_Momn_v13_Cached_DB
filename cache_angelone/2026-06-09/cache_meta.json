@@ -1,18 +1,16 @@
 {
-  "build_date": "2026-06-01",
-  "build_time_utc": "20:54:28",
-  "build_duration_min": 265.4,
-  "symbols_total": 2142,
-  "symbols_fetched": 2141,
+  "build_date": "2026-06-09",
+  "build_time_utc": "17:50:06",
+  "build_duration_min": 256.6,
+  "symbols_total": 2123,
+  "symbols_fetched": 2123,
   "symbols_failed": 0,
-  "not_in_master": 1,
-  "failed_symbols": [
-    "VIVIANA.NS"
-  ],
+  "not_in_master": 0,
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-02-01",
-  "data_end": "2026-06-01",
-  "last_date_in_cache": "2026-06-01",
+  "data_start_recent": "2023-02-09",
+  "data_end": "2026-06-09",
+  "last_date_in_cache": "2026-06-09",
   "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
@@ -42,23 +40,23 @@
     ],
     [
       "2021-11-26",
-      "2026-06-02"
+      "2026-06-10"
     ]
   ],
-  "last_chunk_todate": "2026-06-02 15:30",
-  "total_api_calls": 10705,
+  "last_chunk_todate": "2026-06-10 15:30",
+  "total_api_calls": 10615,
   "rate_limit": "3 req/sec",
   "close_shape": [
     823,
-    2141
+    2123
   ],
   "high_shape": [
     823,
-    2141
+    2123
   ],
   "volume_shape": [
     823,
-    2141
+    2123
   ],
-  "ath_count": 2141
+  "ath_count": 2123
 }
