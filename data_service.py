@@ -713,73 +713,85 @@ def fetch_zerodha(symbols, start_date, end_date, chunk_size, progress_bar, statu
 
 
 # ═════════════════════════════════════════════════════════════
-# SECTION J2 — TRADINGVIEW (tv-scraper CandleStreamer) LIVE FETCHER
+# SECTION J2 — TRADINGVIEW (tvDatafeed) LIVE FETCHER
 # ═════════════════════════════════════════════════════════════
 #
-# tv-scraper library (CandleStreamer) se NSE daily OHLCV data fetch karta hai.
-# tvDatafeed ki jagah — login issue fix, nil data fix.
+# tvDatafeed library se NSE daily OHLCV data fetch karta hai.
+# Login optional — without login free tier (limited bars).
+# With TradingView credentials: up to 5000 bars per symbol.
 #
-# Anonymous WebSocket mode works for NSE data — no login required.
-# Optional: TV_COOKIE Streamlit secret set karo better access ke liye.
+# Install: pip install tvDatafeed
+# GitHub Secrets (optional): TV_USERNAME, TV_PASSWORD
 #
-# Install: pip install git+https://github.com/smitkunpara/tv-scraper.git
-# Streamlit Secrets (optional): [tradingview] cookie = "..."
-#
-# Symbol format: plain 'INFY' (no .NS suffix), Exchange: NSE, timeframe: 1d
+# Symbol format: tvDatafeed 'INFY' (no .NS suffix needed)
+# Exchange: 'NSE'
+# Interval: Interval.in_daily
+# n_bars: max 5000
 # ─────────────────────────────────────────────────────────────
 
-# tv_patch.py ka patched fetcher use karo — CandleStreamer ka broken 16-packet
-# timeout bypass karta hai. tv_patch.py same directory mein hona chahiye.
-TV_MAX_BARS = 5000
-try:
-    from tv_patch import fetch_symbol_patched as _fetch_tv_patched
-    _TV_PATCH_AVAILABLE = True
-except ImportError:
-    _TV_PATCH_AVAILABLE = False
+TV_MAX_BARS = 5000  # tvDatafeed maximum bars per symbol
 
 
-def _fetch_tv_single(streamer, symbol_ns: str, n_bars: int = 4000, retries: int = 1):
+def _get_tv_client(tv_username: str = "", tv_password: str = ""):
     """
-    Single NSE symbol ka daily OHLCV fetch karo.
-    tv_patch available ho to patched fetcher use karo (recommended).
-    Fallback: CandleStreamer (may timeout on large bar requests).
+    TvDatafeed client initialize karo.
+    Credentials optional — without login limited data milta hai.
+    """
+    try:
+        from tvDatafeed import TvDatafeed
+    except ImportError:
+        raise ImportError(
+            "tvDatafeed library install nahi hai. "
+            "requirements.txt mein add karo: tvDatafeed"
+        )
+    if tv_username and tv_password:
+        return TvDatafeed(username=tv_username, password=tv_password)
+    return TvDatafeed()  # anonymous / free tier
 
+
+def _fetch_tv_single(tv_client, symbol_ns: str, n_bars: int = TV_MAX_BARS, retries: int = 2):
+    """
+    Single symbol ka daily OHLCV fetch karo TradingView se.
+    symbol_ns: 'INFY.NS' ya 'INFY' — dono chalenge (.NS strip hoga).
     Returns: pd.DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None
     """
-    cookie = getattr(streamer, "cookie", "") or ""
+    try:
+        from tvDatafeed import Interval
+    except ImportError:
+        return None
 
-    if _TV_PATCH_AVAILABLE:
-        return _fetch_tv_patched(symbol_ns, cookie=cookie, retries=retries)
-
-    # Fallback: CandleStreamer (capped at 4000 to avoid timeout)
     clean = symbol_ns.replace(".NS", "").replace(".BO", "").upper().strip()
     delay = 2.0
-    for attempt in range(retries + 1):
+
+    for attempt in range(retries):
         try:
-            result = streamer.get_candles(
-                exchange="NSE",
+            df = tv_client.get_hist(
                 symbol=clean,
-                timeframe="1d",
-                numb_candles=min(n_bars, 4000),
+                exchange="NSE",
+                interval=Interval.in_daily,
+                n_bars=n_bars,
             )
-            if result.get("status") != "success":
-                if attempt < retries:
-                    time.sleep(delay); delay *= 2
-                    continue
+            if df is None or df.empty:
                 return None
-            ohlcv_list = result.get("data", {}).get("ohlcv", [])
-            if not ohlcv_list:
-                return None
-            df = pd.DataFrame(ohlcv_list)
-            df["datetime"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-            df["datetime"] = df["datetime"].dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-            df = df.set_index("datetime").sort_index()
+
+            # tvDatafeed returns 'datetime' as index or column — normalize
+            if "datetime" in df.columns:
+                df = df.set_index("datetime")
+            df.index = pd.to_datetime(df.index)
+            if df.index.tz is not None:
+                df.index = df.index.tz_localize(None)
+            df = df.sort_index()
+
+            # Rename columns to lowercase standard
+            df.columns = [c.lower() for c in df.columns]
             needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
-            if "close" not in needed:
-                return None
             return df[needed]
+
         except Exception as e:
-            if attempt < retries:
+            err_str = str(e).lower()
+            if "rate" in err_str or "limit" in err_str:
+                time.sleep(delay * 2); delay *= 2
+            elif attempt < retries - 1:
                 time.sleep(delay); delay *= 2
             else:
                 return None
@@ -791,68 +803,72 @@ def fetch_tradingview(
     tv_username: str = "", tv_password: str = ""
 ):
     """
-    TradingView (tv-scraper CandleStreamer) bulk fetcher.
+    TradingView (tvDatafeed) bulk fetcher.
 
-    - Cookie: Streamlit secrets [tradingview].cookie > session_state > anonymous
+    - Credentials: st.session_state se pick karta hai ya parameter se.
     - n_bars = 5000 (max) — ~13+ years daily data.
     - start_date ke baad ka data slice karta hai final DataFrame mein.
-    - Rate limit: 0.5s sleep between symbols.
+    - Rate limit: 0.2s sleep between symbols.
 
     Returns: (close_df, high_df, volume_df, failed_symbols)
-
-    Note: tv_username/tv_password params legacy compat ke liye hain — unused.
     """
-    # Cookie priority: Streamlit secrets > session_state > env > anonymous
-    tv_cookie = ""
-    try:
-        tv_cookie = st.secrets["tradingview"]["cookie"]
-    except Exception:
-        pass
-    if not tv_cookie:
-        tv_cookie = (
-            st.session_state.get("tv_cookie", "")
-            or st.session_state.get("tv_cookie_input", "")
+    # Credentials priority: Streamlit secrets > session_state > parameter > anonymous
+    # Pehle secrets try karo (most reliable on Streamlit Cloud)
+    if not tv_username:
+        try:
+            tv_username = st.secrets["tradingview"]["username"]
+        except Exception:
+            tv_username = ""
+    if not tv_password:
+        try:
+            tv_password = st.secrets["tradingview"]["password"]
+        except Exception:
+            tv_password = ""
+
+    # Secrets nahi mili to session_state se try karo (sidebar input)
+    if not tv_username:
+        tv_username = (
+            st.session_state.get("tv_username", "")
+            or st.session_state.get("tv_username_input", "")
             or ""
         )
-    if not tv_cookie:
-        import os as _os
-        tv_cookie = _os.environ.get("TV_COOKIE", "").strip()
+    if not tv_password:
+        tv_password = (
+            st.session_state.get("tv_password", "")
+            or st.session_state.get("tv_password_input", "")
+            or ""
+        )
 
-    # Initialize — tv_patch available ho to direct WebSocket, else CandleStreamer
-    status_text.text("TradingView: Initializing data fetcher...")
-    if _TV_PATCH_AVAILABLE:
-        # tv_patch uses direct WebSocket — no streamer object needed
-        # Pass a simple namespace so _fetch_tv_single can read .cookie
-        import types
-        streamer = types.SimpleNamespace(cookie=tv_cookie)
-    else:
-        try:
-            from tv_scraper import CandleStreamer
-            streamer = CandleStreamer(cookie=tv_cookie if tv_cookie else None)
-        except ImportError as e:
-            st.error(str(e))
-            st.stop()
-        except Exception as e:
-            st.error(f"TradingView init failed: {e}")
-            st.stop()
+    # Initialize client
+    status_text.text("TradingView: Client initialize ho raha hai...")
+    try:
+        tv_client = _get_tv_client(tv_username, tv_password)
+    except ImportError as e:
+        st.error(str(e))
+        st.stop()
+    except Exception as e:
+        st.error(f"TradingView login failed: {e}")
+        st.stop()
 
     total = len(symbols)
     close_map, high_map, vol_map = {}, {}, {}
     failed = []
-    ath_map = {}   # sym → lifetime ATH from full 5000-bar history
 
     status_text.text(f"TradingView: {total:,} symbols fetch ho rahe hain (NSE daily)...")
+
+    ath_map = {}   # sym → lifetime ATH from full 5000-bar history
 
     for i, sym in enumerate(symbols):
         progress = (i + 1) / total
         try:
-            df_full = _fetch_tv_single(streamer, sym, n_bars=TV_MAX_BARS)
+            # Full 5000 bars fetch karo — maximum available history (~13 yrs)
+            df_full = _fetch_tv_single(tv_client, sym, n_bars=TV_MAX_BARS)
             if df_full is not None and not df_full.empty:
-                # ATH: FULL history ka max high (slice se PEHLE)
+                # ── ATH: FULL history ka max high (slice se PEHLE) ──
                 ath_val = float(df_full["high"].max()) if "high" in df_full.columns else float(df_full["close"].max())
                 ath_map[sym] = ath_val
 
-                # Recent slice: start_date ke baad
+                # ── Recent slice: start_date ke baad ──────────────
                 df = df_full[df_full.index >= pd.Timestamp(start_date)]
                 if not df.empty and "close" in df.columns:
                     idx = df.index
@@ -874,7 +890,7 @@ def fetch_tradingview(
                 f"TradingView: {int(progress * 100)}% | "
                 f"Fetched: {len(close_map)} | Failed: {len(failed)}"
             )
-        time.sleep(0.5)  # WebSocket reconnect ke liye thoda zyada sleep
+        time.sleep(0.2)  # polite rate limit
 
     progress_bar.progress(1.0)
 
@@ -886,8 +902,9 @@ def fetch_tradingview(
 
     close, high, volume = _trim_trailing_nan(close, high, volume)
 
-    # ATH inject: synthetic 2000-01-01 row mein lifetime max high
-    # calculations.py mein `ATH = high.max()` use hota hai
+    # ── ATH inject: synthetic 2000-01-01 row mein lifetime max high ──
+    # calculations.py mein `ATH = high.max()` use hota hai.
+    # Is row se ensure hota hai ki lookback se pehle ka ATH bhi capture ho.
     if ath_map and not high.empty:
         ath_series = pd.Series(ath_map).reindex(high.columns)
         ath_row    = pd.DataFrame(
