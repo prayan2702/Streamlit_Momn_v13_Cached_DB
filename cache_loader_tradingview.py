@@ -134,7 +134,7 @@ def get_cache_status_html(cache_date: str | None = None) -> str:
 
     fetched    = meta.get("symbols_fetched", "?")
     build_dt   = meta.get("build_date", "?")
-    src        = meta.get("source", "TradingView (tv-scraper CandleStreamer)")
+    src        = meta.get("source", "TradingView (tvDatafeed)")
     failed_ct  = meta.get("symbols_failed", 0)
     n_bars     = meta.get("n_bars", 5000)
     n_dates    = len(dates)
