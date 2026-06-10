@@ -203,6 +203,44 @@ def build_cache():
     if failed[:20]:
         log(f"First 20 failed: {failed[:20]}")
 
+    # ── Retry failed symbols (fresh client + longer sleep) ────
+    if failed:
+        log(f"\n🔄 Retrying {len(failed)} failed symbols with fresh client...")
+        try:
+            tv_retry      = get_tv_client()
+            retry_ok      = 0
+            still_failed  = []
+
+            for j, sym in enumerate(failed):
+                time.sleep(1.5)   # longer sleep for retry
+                df = fetch_symbol(tv_retry, sym, retries=3)
+
+                if df is not None and not df.empty and "close" in df.columns:
+                    ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
+                    df_recent = df[df.index >= cutoff].copy()
+                    if not df_recent.empty:
+                        idx = df_recent.index
+                        close_all[sym] = pd.Series(df_recent["close"].values, index=idx)
+                        high_all[sym]  = pd.Series(df_recent["high"].values,  index=idx) if "high" in df_recent.columns else pd.Series(dtype=float)
+                        vol_all[sym]   = pd.Series(
+                            (df_recent["close"] * df_recent["volume"]).values, index=idx
+                        ) if "volume" in df_recent.columns else pd.Series(dtype=float)
+                        ok_count  += 1
+                        retry_ok  += 1
+                    else:
+                        still_failed.append(sym)
+                else:
+                    still_failed.append(sym)
+
+                if (j + 1) % 20 == 0 or j == len(failed) - 1:
+                    log(f"  Retry progress: {j+1}/{len(failed)} | Recovered: {retry_ok} | Still failed: {len(still_failed)}")
+
+            log(f"✅ Retry complete: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}")
+            failed = still_failed
+
+        except Exception as _re:
+            log(f"❌ Retry error: {_re}")
+
     # ── Build DataFrames ──────────────────────────────────────
     close_df  = pd.DataFrame(close_all).sort_index()
     high_df   = pd.DataFrame(high_all).sort_index()
