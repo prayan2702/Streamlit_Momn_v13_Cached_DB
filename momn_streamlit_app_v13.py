@@ -4397,9 +4397,13 @@ with _tab_screener:
                                 if not _sec_row.empty:
                                     # Update _sec_* fields based on chosen extra source
                                     _e3c = _chosen_lbl_for_sec[:3]
-                                    _new_cl  = float(_sec_row.iloc[0].get(f"Close_{_e3c}", _drow.get("_sec_close", _pri_cl)))
-                                    _new_ath = float(_sec_row.iloc[0].get(f"ATH_{_e3c}",   _drow.get("_sec_ath",   _pri_ath)))
-                                    _new_aw  = float(_sec_row.iloc[0].get(f"Away_{_e3c}%", _drow.get("_sec_away",  _pri_aw)))
+                                    # Safe fallbacks from _drow (avoids NameError if _pri_cl not in scope)
+                                    _fallback_cl  = float(_drow.get(f"Close_{_pri_lbl[:3]}", _drow.get("_sec_close", 0)) or 0)
+                                    _fallback_ath = float(_drow.get(f"ATH_{_pri_lbl[:3]}",   _drow.get("_sec_ath",   0)) or 0)
+                                    _fallback_aw  = float(_drow.get(f"Away_{_pri_lbl[:3]}%", _drow.get("_sec_away",  0)) or 0)
+                                    _new_cl  = float(_sec_row.iloc[0].get(f"Close_{_e3c}", _fallback_cl))
+                                    _new_ath = float(_sec_row.iloc[0].get(f"ATH_{_e3c}",   _fallback_ath))
+                                    _new_aw  = float(_sec_row.iloc[0].get(f"Away_{_e3c}%", _fallback_aw))
                                     _diff_df.loc[_sec_row.index, "_sec_close"] = _new_cl
                                     _diff_df.loc[_sec_row.index, "_sec_ath"]   = _new_ath
                                     _diff_df.loc[_sec_row.index, "_sec_away"]  = _new_aw
