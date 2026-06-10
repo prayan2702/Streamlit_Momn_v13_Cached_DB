@@ -4271,22 +4271,23 @@ with _tab_screener:
                     _all_lbls = [_pri_lbl] + _extra_lbls[:len(_extra_athl)]
                     _min_idx  = _all_athl.index(min(_all_athl)) if _all_athl else 0
                     _suggested_lbl = _all_lbls[_min_idx] if _min_idx < len(_all_lbls) else _pri_lbl
-                    _suggested = "primary" if _suggested_lbl == _pri_lbl else "secondary"
+                    # Store as label string (not "primary"/"secondary") for correct 3-way index mapping
+                    _suggested = _suggested_lbl
 
                     # ── ATH Memory lookup for this ticker ──────────────────
                     _mem_entry = _ath_mem.get(_tick)
                     _mem_hint_html = ""
-                    _mem_role = None  # role (primary/secondary) from memory in THIS session's context
+                    _mem_role = None  # label string from memory if source matches current session
                     if _mem_entry:
                         _m_lbl  = _mem_entry.get("chosen_lbl", "")
                         _m_date = _mem_entry.get("reviewed_date", "?")
                         _m_ath  = _mem_entry.get("chosen_ath", 0)
-                        # Map memory's chosen label to current session's primary/secondary roles
+                        # Map memory's chosen label — store as label string for reliable index mapping
                         if _m_lbl == _pri_lbl:
                             _mem_role = "primary"
                         elif _m_lbl in _extra_lbls:
-                            _mem_role = "secondary"
-                        # else: sources swapped or different — show hint but don't force default
+                            _mem_role = _m_lbl   # e.g. "TradingView", "Angel One", "Upstox"
+                        # else: different source combo — show hint but don't force default
                         _mem_hint_html = (
                             f'&nbsp;&nbsp;&nbsp;'
                             f'<span style="background:#0f3460;border:1px solid #38bdf8;border-radius:10px;'
@@ -4380,7 +4381,21 @@ with _tab_screener:
                         with _c2:
                             # Radio: primary + all extra sources
                             _radio_opts = [f"✅ {_pri_lbl}"] + [f"🔄 {_l}" for _l in _extra_lbls]
-                            _sel_idx = 0 if _cur_sel == "primary" else 1
+
+                            # _cur_sel can be "primary", "secondary", or a source label string
+                            # Map to correct radio index
+                            if _cur_sel == "primary":
+                                _sel_idx = 0
+                            elif _cur_sel == "secondary":
+                                _sel_idx = 1
+                            else:
+                                # _cur_sel is a label string (e.g. "TradingView", "Angel One")
+                                _matching = [i+1 for i, _l in enumerate(_extra_lbls) if _l == _cur_sel]
+                                _sel_idx = _matching[0] if _matching else 0
+
+                            # Clamp to valid range
+                            _sel_idx = min(_sel_idx, len(_radio_opts) - 1)
+
                             _chosen  = st.radio(
                                 f"Source for {_tick}",
                                 _radio_opts,
@@ -4388,7 +4403,11 @@ with _tab_screener:
                                 key=f"cx_radio_{_tick}",
                                 label_visibility="collapsed"
                             )
-                            _overrides[_tick] = "primary" if _chosen == _radio_opts[0] else "secondary"
+                            # Store chosen label string (not "primary"/"secondary") for reliable mapping
+                            if _chosen == _radio_opts[0]:
+                                _overrides[_tick] = "primary"
+                            else:
+                                _overrides[_tick] = _chosen.replace("🔄 ", "")
 
                             # If a non-primary extra source is chosen, store which one for apply
                             if _chosen != _radio_opts[0]:
@@ -4426,7 +4445,10 @@ with _tab_screener:
                         _n_applied = 0
                         for _, _orow in _diff_df.iterrows():
                             _tick = _orow["Ticker"]
-                            if _overrides.get(_tick, "primary") == "secondary":
+                            _ov = _overrides.get(_tick, "primary")
+                            # _ov is now a label string or "primary"
+                            _use_override = (_ov != "primary" and _ov != _pri_lbl)
+                            if _use_override:
                                 _mask = _dfS_mod["Ticker"] == _tick
                                 if _mask.any():
                                     _dfS_mod.loc[_mask, "Close"]    = float(_orow["_sec_close"])
@@ -4443,15 +4465,23 @@ with _tab_screener:
                         for _, _orow in _diff_df.iterrows():
                             _tick = _orow["Ticker"]
                             _chosen_role = _overrides.get(_tick, "primary")
-                            _chosen_lbl  = _pri_lbl if _chosen_role == "primary" else _sec_lbl
-                            _ath_col     = f"ATH_{_pri_lbl[:3]}" if _chosen_role == "primary" else f"ATH_{_sec_lbl[:3]}"
+                            # _chosen_role is now label string or "primary"
+                            if _chosen_role == "primary" or _chosen_role == _pri_lbl:
+                                _chosen_lbl = _pri_lbl
+                                _ath_col    = f"ATH_{_pri_lbl[:3]}"
+                            else:
+                                # It's a label string like "TradingView", "Angel One", "Upstox"
+                                _chosen_lbl = _chosen_role
+                                _ath_col    = f"ATH_{_chosen_lbl[:3]}"
+                            # Fallback if column not present
+                            _ath_val = float(_orow.get(_ath_col, _orow.get("_sec_ath", 0)) or 0)
                             _ath_mem_upd[_tick] = {
-                                "chosen_lbl":   _chosen_lbl,
-                                "chosen_role":  _chosen_role,
-                                "chosen_ath":   float(_orow[_ath_col]),
+                                "chosen_lbl":    _chosen_lbl,
+                                "chosen_role":   _chosen_role,
+                                "chosen_ath":    _ath_val,
                                 "reviewed_date": _today_str,
-                                "pri_lbl":      _pri_lbl,
-                                "sec_lbl":      _sec_lbl,
+                                "pri_lbl":       _pri_lbl,
+                                "sec_lbl":       _sec_lbl,
                             }
                         st.session_state["_ath_memory"] = _ath_mem_upd
                         _mem_saved = _save_ath_memory(_ath_mem_upd)
