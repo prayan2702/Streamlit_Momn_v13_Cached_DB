@@ -2,7 +2,7 @@ name: Daily Cache Build — TradingView
 
 # ════════════════════════════════════════════════════════════
 # GitHub Actions TradingView cache builder
-# Runs daily at 10:00 PM IST (16:30 UTC), Mon-Fri
+# Runs daily at 10:00 PM IST (15:32 UTC), Mon-Fri
 #
 # tvDatafeed: NSE daily data, up to 5000 bars per symbol
 # Anonymous mode works (limited) — set TV_USERNAME + TV_PASSWORD
@@ -17,7 +17,7 @@ name: Daily Cache Build — TradingView
 
 on:
   schedule:
-    - cron: "30 16 * * 1-5"   # Mon-Fri 16:30 UTC = 10:00 PM IST
+    - cron: "02 10 * * 1-5"   # Mon-Fri 15:32 UTC = 10:00 PM IST
   workflow_dispatch:
 
 env:
