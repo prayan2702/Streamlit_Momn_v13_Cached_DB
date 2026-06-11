@@ -4174,9 +4174,10 @@ with _tab_screener:
                         }
                         st.rerun()
                 with _col_all_sec:
-                    if st.button(f"🔄 Sabhi {_sec_lbl} se override karo", key="cx_all_sec", use_container_width=True, type="secondary"):
+                    _sec_btn_lbl = _extra_lbls[0] if _extra_lbls else _sec_lbl
+                    if st.button(f"🔄 Sabhi {_sec_btn_lbl} se override karo", key="cx_all_sec", use_container_width=True, type="secondary"):
                         st.session_state["_cross_review_overrides"] = {
-                            r["Ticker"]: "secondary" for _, r in _diff_df.iterrows()
+                            r["Ticker"]: _sec_btn_lbl for _, r in _diff_df.iterrows()
                         }
                         st.rerun()
                 with _col_skip:
@@ -4382,14 +4383,15 @@ with _tab_screener:
                             # Radio: primary + all extra sources
                             _radio_opts = [f"✅ {_pri_lbl}"] + [f"🔄 {_l}" for _l in _extra_lbls]
 
-                            # _cur_sel can be "primary", "secondary", or a source label string
-                            # Map to correct radio index
-                            if _cur_sel == "primary":
+                            # Normalize _cur_sel: convert legacy "secondary" → actual secondary label
+                            if _cur_sel == "secondary":
+                                _cur_sel = _extra_lbls[0] if _extra_lbls else _pri_lbl
+
+                            # Map _cur_sel to radio index
+                            if _cur_sel == "primary" or _cur_sel == _pri_lbl:
                                 _sel_idx = 0
-                            elif _cur_sel == "secondary":
-                                _sel_idx = 1
                             else:
-                                # _cur_sel is a label string (e.g. "TradingView", "Angel One")
+                                # Find matching extra source label
                                 _matching = [i+1 for i, _l in enumerate(_extra_lbls) if _l == _cur_sel]
                                 _sel_idx = _matching[0] if _matching else 0
 
