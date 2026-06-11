@@ -1,30 +1,41 @@
 """
 cache_builder_tradingview.py
 ============================
-TradingView (tvDatafeed) se full history cache build karta hai.
-GitHub Actions pe daily chalta hai.
+TradingView (tvDatafeed WebSocket) se FULL history cache build karta hai.
+2010-01-01 se aaj tak ka data fetch karta hai — sahi ATH ke liye.
+
+── KEY DESIGN: request_more_data ─────────────────────────────
+  tvDatafeed get_hist() sirf n_bars=5000 (~13 years) deta hai.
+  Pura history (2010+) ke liye TradingView WebSocket ka
+  `request_more_data` message use karta hai same session mein.
+
+  Flow per symbol:
+    1. create_series(n_bars=5000) → latest 5000 bars milte hain
+    2. series_completed aane pe check karo — kitne bars aaye?
+    3. Agar oldest bar > TARGET_FROM_DATE:
+       → request_more_data(5000) bhejo → aur purane bars milte hain
+    4. Repeat until oldest bar <= TARGET_FROM_DATE ya no more data
+
+  TARGET_FROM_DATE = 2010-01-01 (NSE stocks ka sahi ATH ke liye)
 
 ── 5-DAY ROLLING CACHE ──────────────────────────────────────
   cache_tradingview/
-    cache_index.json         ← {"dates": [...], "latest": "YYYY-MM-DD"}
-    2026-05-26/
+    cache_index.json
+    2026-06-10/
       close.parquet, high.parquet, volume.parquet, ath.parquet, cache_meta.json
-    (max 5 dirs — 6th build pe oldest auto-pruned)
+    (max 5 dirs — oldest auto-pruned)
 ──────────────────────────────────────────────────────────────
 
-Key design:
-  • tvDatafeed get_hist() — NSE daily, n_bars=5000 (~13+ years)
-  • ATH = all 5000 bars ka high.max() → correct lifetime ATH
-  • Recent 40M = slice from full data
-  • Rate limit: 0.2s sleep between symbols
-  • Login: TV_USERNAME + TV_PASSWORD GitHub Secrets (optional)
-
-GitHub Secrets required (optional — for better data):
+GitHub Secrets (optional):
   TV_USERNAME | TV_PASSWORD
 """
 
 import json
+import logging
 import os
+import random
+import re
+import string
 import sys
 import time
 from datetime import date, datetime, timedelta
@@ -32,27 +43,28 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
 from dateutil.relativedelta import relativedelta
-
-try:
-    from tvDatafeed import TvDatafeed, Interval
-except ImportError:
-    print("ERROR: tvDatafeed not installed. pip install tvDatafeed", flush=True)
-    sys.exit(1)
+from websocket import create_connection
 
 from cache_rolling import save_rolling_cache, MAX_CACHED_DAYS
+
+logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════
 # CONFIG
 # ══════════════════════════════════════════════════════════════
-CACHE_DIR      = Path("cache_tradingview")
-RECENT_MONTHS  = 40
-EXTRA_SYMBOLS  = ["GOLDBEES", "SILVERBEES"]   # tvDatafeed uses plain NSE symbols
-NSE_EQUITY_URL = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
-GITHUB_BASE    = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
+CACHE_DIR           = Path("cache_tradingview")
+RECENT_MONTHS       = 40          # parquet mein kitne months ka data store karo
+TARGET_FROM_DATE    = datetime(2010, 1, 1)   # ATH ke liye minimum start date
+EXTRA_SYMBOLS       = ["GOLDBEES", "SILVERBEES"]
+NSE_EQUITY_URL      = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
+GITHUB_BASE         = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
 
-TV_MAX_BARS         = 5000   # tvDatafeed maximum bars per symbol
-RATE_LIMIT_SLEEP    = 0.2    # seconds between symbols
+BARS_PER_CALL       = 5000        # tvDatafeed max bars per call
+WS_TIMEOUT          = 30          # WebSocket timeout seconds
+RATE_LIMIT_SLEEP    = 0.3         # seconds between symbols
+MAX_CHUNKS          = 5           # max request_more_data calls per symbol (safety)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -63,38 +75,216 @@ def log(msg: str):
 
 
 # ══════════════════════════════════════════════════════════════
-# AUTH — TradingView client
+# AUTH — TradingView token
 # ══════════════════════════════════════════════════════════════
-def get_tv_client() -> TvDatafeed:
+def _get_tv_token() -> str:
     username = os.environ.get("TV_USERNAME", "").strip()
     password = os.environ.get("TV_PASSWORD", "").strip()
-    if username and password:
-        log(f"TradingView login: {username[:4]}****")
-        return TvDatafeed(username=username, password=password)
-    log("TradingView: anonymous mode (no credentials found)")
-    return TvDatafeed()
+
+    if not username or not password:
+        log("TradingView: anonymous mode (no credentials)")
+        return "unauthorized_user_token"
+
+    log(f"TradingView login: {username[:4]}****")
+    session = requests.Session()
+    session.headers.update({
+        "Referer": "https://www.tradingview.com",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
+        ),
+    })
+    try:
+        session.get("https://www.tradingview.com/", timeout=15)
+        resp = session.post(
+            "https://www.tradingview.com/accounts/signin/",
+            data={"username": username, "password": password, "remember": "on"},
+            timeout=15,
+        )
+        token = resp.json()["user"]["auth_token"]
+        log("TradingView login successful ✅")
+        return token
+    except Exception as e:
+        log(f"Login failed ({e}) — using anonymous mode")
+        return "unauthorized_user_token"
+
+
+# ══════════════════════════════════════════════════════════════
+# WEBSOCKET HELPERS
+# ══════════════════════════════════════════════════════════════
+def _rand_str(n: int) -> str:
+    return "".join(random.choice(string.ascii_lowercase) for _ in range(n))
+
+
+def _prepend(st: str) -> str:
+    return f"~m~{len(st)}~m~{st}"
+
+
+def _msg(func: str, params: list) -> str:
+    return _prepend(json.dumps({"m": func, "p": params}, separators=(",", ":")))
+
+
+def _parse_df(raw_data: str, symbol: str) -> pd.DataFrame | None:
+    """raw WebSocket data se OHLCV DataFrame banao."""
+    try:
+        out = re.search(r'"s":\[(.+?)\}]', raw_data).group(1)
+        x = out.split(',{"')
+        rows = []
+        volume_ok = True
+        for xi in x:
+            xi = re.split(r"[\[:|,\]]", xi)
+            try:
+                ts = datetime.fromtimestamp(float(xi[4]))
+            except (ValueError, IndexError):
+                continue
+            row = [ts]
+            for i in range(5, 10):
+                if not volume_ok and i == 9:
+                    row.append(0.0)
+                    continue
+                try:
+                    row.append(float(xi[i]))
+                except (ValueError, IndexError):
+                    volume_ok = False
+                    row.append(0.0)
+            rows.append(row)
+        if not rows:
+            return None
+        df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
+        df = df.set_index("datetime").sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        return df
+    except AttributeError:
+        return None
+
+
+# ══════════════════════════════════════════════════════════════
+# FULL HISTORY FETCH — request_more_data loop
+# ══════════════════════════════════════════════════════════════
+def fetch_full_history(token: str, symbol: str, retries: int = 2) -> pd.DataFrame | None:
+    """
+    Single symbol ka full history fetch karo 2010 se.
+
+    Strategy:
+      1. create_series(5000) → latest 5000 bars
+      2. series_completed pe check: oldest bar > 2010?
+      3. Agar haan: request_more_data(5000) → aur purane bars
+      4. Repeat until 2010 reach ya max chunks ya no more data
+
+    Returns: pd.DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None
+    """
+    for attempt in range(retries):
+        ws = None
+        try:
+            ws = create_connection(
+                "wss://data.tradingview.com/socket.io/websocket",
+                headers=json.dumps({"Origin": "https://data.tradingview.com"}),
+                timeout=WS_TIMEOUT,
+            )
+
+            session      = "qs_" + _rand_str(12)
+            chart_session = "cs_" + _rand_str(12)
+            tv_symbol    = f"NSE:{symbol}"
+
+            # ── Setup messages ──
+            ws.send(_msg("set_auth_token",         [token]))
+            ws.send(_msg("chart_create_session",   [chart_session, ""]))
+            ws.send(_msg("quote_create_session",   [session]))
+            ws.send(_msg("quote_set_fields", [
+                session,
+                "ch", "chp", "current_session", "description", "local_description",
+                "language", "exchange", "fractional", "is_tradable", "lp", "lp_time",
+                "minmov", "minmove2", "original_name", "pricescale", "pro_name",
+                "short_name", "type", "update_mode", "volume", "currency_code", "rchp", "rtc",
+            ]))
+            ws.send(_msg("quote_add_symbols",  [session, tv_symbol, {"flags": ["force_permission"]}]))
+            ws.send(_msg("quote_fast_symbols", [session, tv_symbol]))
+            ws.send(_msg("resolve_symbol", [
+                chart_session,
+                "symbol_1",
+                f'={{"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}}',
+            ]))
+            ws.send(_msg("create_series",
+                         [chart_session, "s1", "s1", "symbol_1", "1D", BARS_PER_CALL]))
+            ws.send(_msg("switch_timezone", [chart_session, "exchange"]))
+
+            # ── Receive loop with request_more_data ──
+            all_raw     = ""
+            chunks_done = 0
+
+            while True:
+                try:
+                    result = ws.recv()
+                except Exception as e:
+                    logger.debug(f"recv error: {e}")
+                    break
+
+                all_raw += result + "\n"
+
+                if "series_completed" in result:
+                    chunks_done += 1
+
+                    # Parse what we have so far
+                    df_so_far = _parse_df(all_raw, symbol)
+
+                    # Check if we need more data
+                    if (
+                        df_so_far is not None
+                        and not df_so_far.empty
+                        and df_so_far.index[0] > TARGET_FROM_DATE
+                        and chunks_done < MAX_CHUNKS
+                    ):
+                        # Request older data
+                        ws.send(_msg("request_more_data",
+                                     [chart_session, "s1", BARS_PER_CALL]))
+                    else:
+                        # We have enough data or can't get more
+                        break
+
+            ws.close()
+
+            df = _parse_df(all_raw, symbol)
+            if df is None or df.empty:
+                if attempt < retries - 1:
+                    time.sleep(3.0)
+                    continue
+                return None
+
+            # Normalize
+            df.columns = [c.lower() for c in df.columns]
+            needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
+            return df[needed]
+
+        except Exception as e:
+            err = str(e).lower()
+            if ws:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+            if attempt < retries - 1:
+                sleep_time = 5.0 if ("timeout" in err or "connection" in err) else 3.0
+                time.sleep(sleep_time)
+            else:
+                return None
+
+    return None
 
 
 # ══════════════════════════════════════════════════════════════
 # SYMBOL LIST
 # ══════════════════════════════════════════════════════════════
 def load_symbols() -> list[str]:
-    """
-    EQUITY_L.csv se NSE symbols load karo.
-    tvDatafeed format: plain symbol (no .NS suffix, no -EQ).
-    """
     csv_path = CACHE_DIR / "EQUITY_L.csv"
     if csv_path.exists():
         df = pd.read_csv(csv_path)
+        log(f"Loaded EQUITY_L.csv from local cache")
     else:
-        # GitHub se fallback
         url = f"{GITHUB_BASE}/EQUITY_L.csv"
         log(f"Loading EQUITY_L.csv from GitHub: {url}")
         df = pd.read_csv(url)
 
-    # EQUITY_L.csv column is 'SYMBOL'
     syms = df["SYMBOL"].astype(str).str.strip().str.upper().tolist()
-    # Add extra
     for ex in EXTRA_SYMBOLS:
         if ex not in syms:
             syms.append(ex)
@@ -103,82 +293,42 @@ def load_symbols() -> list[str]:
 
 
 # ══════════════════════════════════════════════════════════════
-# SINGLE SYMBOL FETCH
-# ══════════════════════════════════════════════════════════════
-def fetch_symbol(tv: TvDatafeed, symbol: str, retries: int = 2) -> pd.DataFrame | None:
-    """
-    Single symbol ka full history fetch karo (upto TV_MAX_BARS daily bars).
-    Returns DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None.
-    """
-    delay = 2.0
-    for attempt in range(retries):
-        try:
-            df = tv.get_hist(
-                symbol=symbol,
-                exchange="NSE",
-                interval=Interval.in_daily,
-                n_bars=TV_MAX_BARS,
-            )
-            if df is None or df.empty:
-                return None
-
-            # Normalize index
-            if "datetime" in df.columns:
-                df = df.set_index("datetime")
-            df.index = pd.to_datetime(df.index)
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None)
-            df = df.sort_index()
-            df.columns = [c.lower() for c in df.columns]
-
-            needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
-            return df[needed]
-
-        except Exception as e:
-            err_str = str(e).lower()
-            if "rate" in err_str or "limit" in err_str or "429" in err_str:
-                log(f"  Rate limit hit for {symbol} — sleeping {delay*2:.1f}s")
-                time.sleep(delay * 2); delay *= 2
-            elif attempt < retries - 1:
-                time.sleep(delay); delay *= 2
-            else:
-                return None
-    return None
-
-
-# ══════════════════════════════════════════════════════════════
 # MAIN BUILDER
 # ══════════════════════════════════════════════════════════════
 def build_cache():
-    today_str  = date.today().strftime("%Y-%m-%d")
-    today_dt   = datetime.today()
-    cutoff     = today_dt - relativedelta(months=RECENT_MONTHS)
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_dt  = datetime.today()
+    cutoff    = today_dt - relativedelta(months=RECENT_MONTHS)
 
-    log("=" * 60)
+    log("=" * 62)
     log(f"TradingView Cache Builder — {today_str}")
-    log(f"Recent slice: last {RECENT_MONTHS} months (from {cutoff.strftime('%Y-%m-%d')})")
-    log(f"Max bars per symbol: {TV_MAX_BARS}")
-    log("=" * 60)
+    log(f"Full history: {TARGET_FROM_DATE.strftime('%Y-%m-%d')} → today (correct ATH)")
+    log(f"Recent slice: last {RECENT_MONTHS} months → parquet (from {cutoff.strftime('%Y-%m-%d')})")
+    log(f"Bars per chunk: {BARS_PER_CALL} | Max chunks per symbol: {MAX_CHUNKS}")
+    log("=" * 62)
 
-    # ── TV client ─────────────────────────────────────────────
-    tv = get_tv_client()
+    CACHE_DIR.mkdir(exist_ok=True)
+
+    # ── Auth ──────────────────────────────────────────────────
+    token   = _get_tv_token()
     symbols = load_symbols()
     total   = len(symbols)
 
     # ── Per-symbol fetch ──────────────────────────────────────
     close_all, high_all, vol_all = {}, {}, {}
-    ath_dict   = {}
-    failed     = []
-    ok_count   = 0
+    ath_dict  = {}
+    failed    = []
+    ok_count  = 0
+    t0        = time.monotonic()
 
     for i, sym in enumerate(symbols):
-        df = fetch_symbol(tv, sym)
+        df = fetch_full_history(token, sym)
 
         if df is not None and not df.empty and "close" in df.columns:
-            # ATH = entire history ka max high
+            # ATH = full history (2010+) ka max high
             ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
 
-            # Recent slice for parquet
+            # Recent slice only for parquet (saves disk space)
             df_recent = df[df.index >= cutoff].copy()
             if not df_recent.empty:
                 idx = df_recent.index
@@ -194,8 +344,14 @@ def build_cache():
             failed.append(sym)
 
         if (i + 1) % 100 == 0 or i == total - 1:
-            pct = (i + 1) / total * 100
-            log(f"  Progress: {i+1}/{total} ({pct:.1f}%) | OK: {ok_count} | Failed: {len(failed)}")
+            elapsed   = time.monotonic() - t0
+            remaining = (total - i - 1) * (elapsed / max(i + 1, 1))
+            pct       = (i + 1) / total * 100
+            log(
+                f"  Progress: {i+1}/{total} ({pct:.1f}%) | "
+                f"OK: {ok_count} | Failed: {len(failed)} | "
+                f"ETA: {remaining/60:.1f}min"
+            )
 
         time.sleep(RATE_LIMIT_SLEEP)
 
@@ -203,17 +359,17 @@ def build_cache():
     if failed[:20]:
         log(f"First 20 failed: {failed[:20]}")
 
-    # ── Retry failed symbols (fresh client + longer sleep) ────
+    # ── Retry failed symbols (fresh token + longer sleep) ─────
     if failed:
-        log(f"\n🔄 Retrying {len(failed)} failed symbols with fresh client...")
+        log(f"\n🔄 Retrying {len(failed)} failed symbols with fresh token...")
         try:
-            tv_retry      = get_tv_client()
-            retry_ok      = 0
-            still_failed  = []
+            retry_token  = _get_tv_token()
+            retry_ok     = 0
+            still_failed = []
 
             for j, sym in enumerate(failed):
-                time.sleep(1.5)   # longer sleep for retry
-                df = fetch_symbol(tv_retry, sym, retries=3)
+                time.sleep(2.0)
+                df = fetch_full_history(retry_token, sym, retries=3)
 
                 if df is not None and not df.empty and "close" in df.columns:
                     ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
@@ -233,56 +389,64 @@ def build_cache():
                     still_failed.append(sym)
 
                 if (j + 1) % 20 == 0 or j == len(failed) - 1:
-                    log(f"  Retry progress: {j+1}/{len(failed)} | Recovered: {retry_ok} | Still failed: {len(still_failed)}")
+                    log(f"  Retry: {j+1}/{len(failed)} | Recovered: {retry_ok} | Still failed: {len(still_failed)}")
 
-            log(f"✅ Retry complete: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}")
+            log(f"✅ Retry done: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}")
             failed = still_failed
 
-        except Exception as _re:
-            log(f"❌ Retry error: {_re}")
+        except Exception as e:
+            log(f"❌ Retry error: {e}")
 
     # ── Build DataFrames ──────────────────────────────────────
-    close_df  = pd.DataFrame(close_all).sort_index()
-    high_df   = pd.DataFrame(high_all).sort_index()
-    vol_df    = pd.DataFrame(vol_all).sort_index()
+    close_df = pd.DataFrame(close_all).sort_index()
+    high_df  = pd.DataFrame(high_all).sort_index()
+    vol_df   = pd.DataFrame(vol_all).sort_index()
 
     if close_df.empty:
         log("ERROR: No data fetched. Aborting.")
         sys.exit(1)
 
-    # ── ATH DataFrame ─────────────────────────────────────────
-    ath_df = pd.DataFrame.from_dict(
-        {"ATH": ath_dict}, orient="index"
-    ).T  # shape: (1, n_symbols) then transpose to (n_symbols, 1)
-    # Standard format: index=symbol, column=ATH
     ath_df = pd.DataFrame({"ATH": ath_dict})
 
-    # ── Save via rolling cache ────────────────────────────────
+    # ── Log data range ────────────────────────────────────────
+    # Sample a few symbols to show actual oldest date fetched
+    sample_oldest = []
+    for sym in list(ath_dict.keys())[:5]:
+        if sym in close_all and not close_all[sym].empty:
+            # Check full df (close_all has recent slice — ath uses full df)
+            pass
+    oldest_in_recent = close_df.index[0].strftime("%Y-%m-%d") if not close_df.empty else "N/A"
+    latest_in_recent = close_df.index[-1].strftime("%Y-%m-%d") if not close_df.empty else "N/A"
+
+    # ── Meta ──────────────────────────────────────────────────
+    total_elapsed = time.monotonic() - t0
     meta = {
-        "build_date":      today_str,
-        "build_timestamp": datetime.now().isoformat(),
-        "source":          "TradingView (tvDatafeed)",
-        "n_bars":          TV_MAX_BARS,
-        "recent_months":   RECENT_MONTHS,
-        "symbols_total":   total,
-        "symbols_fetched": ok_count,
-        "symbols_failed":  len(failed),
-        "failed_list":     failed[:50],
-        "close_shape":     list(close_df.shape),
-        "date_range":      [
-            close_df.index[0].strftime("%Y-%m-%d"),
-            close_df.index[-1].strftime("%Y-%m-%d"),
-        ] if not close_df.empty else [],
+        "build_date":             today_str,
+        "build_timestamp":        datetime.now().isoformat(),
+        "build_duration_min":     round(total_elapsed / 60, 1),
+        "source":                 "TradingView (tvDatafeed WebSocket + request_more_data)",
+        "ath_start_date":         TARGET_FROM_DATE.strftime("%Y-%m-%d"),
+        "bars_per_chunk":         BARS_PER_CALL,
+        "max_chunks_per_symbol":  MAX_CHUNKS,
+        "recent_months":          RECENT_MONTHS,
+        "symbols_total":          total,
+        "symbols_fetched":        ok_count,
+        "symbols_failed":         len(failed),
+        "failed_list":            failed[:50],
+        "close_shape":            list(close_df.shape),
+        "ath_count":              len(ath_df),
+        "recent_date_range":      [oldest_in_recent, latest_in_recent],
     }
 
-    save_rolling_cache(
-        cache_dir  = CACHE_DIR,
-        today_str  = today_str,
-        close      = close_df,
-        high       = high_df,
-        volume     = vol_df,
-        ath_df     = ath_df,
-        meta       = meta,
+    available_dates = save_rolling_cache(
+        cache_dir = CACHE_DIR,
+        today_str = today_str,
+        close     = close_df,
+        high      = high_df,
+        volume    = vol_df,
+        ath_df    = ath_df,
+        meta      = meta,
+        log       = log,
     )
 
     log(f"\n✅ Cache saved to {CACHE_DIR}/{today_str}/")
@@ -290,7 +454,9 @@ def build_cache():
     log(f"   high.parquet   : {high_df.shape}")
     log(f"   volume.parquet : {vol_df.shape}")
     log(f"   ath.parquet    : {ath_df.shape}")
-    log("=" * 60)
+    log(f"   ATH from       : {TARGET_FROM_DATE.strftime('%Y-%m-%d')} → today")
+    log(f"   Cached dates   : {available_dates}")
+    log("=" * 62)
 
 
 if __name__ == "__main__":
