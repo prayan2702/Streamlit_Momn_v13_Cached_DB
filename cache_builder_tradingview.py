@@ -359,17 +359,23 @@ def build_cache():
     if failed[:20]:
         log(f"First 20 failed: {failed[:20]}")
 
-    # ── Retry failed symbols (fresh token + longer sleep) ─────
+    # ── Retry failed symbols ──────────────────────────────────
     if failed:
-        log(f"\n🔄 Retrying {len(failed)} failed symbols with fresh token...")
+        log(f"\n🔄 Retrying {len(failed)} failed symbols...")
         try:
             retry_token  = _get_tv_token()
             retry_ok     = 0
             still_failed = []
 
-            for j, sym in enumerate(failed):
-                time.sleep(2.0)
-                df = fetch_full_history(retry_token, sym, retries=3)
+            for sym in failed:
+                # Variant 1: same symbol (1 retry)
+                df = fetch_full_history(retry_token, sym, retries=1)
+
+                # Variant 2: dash → underscore (e.g. BAJAJ-AUTO → BAJAJ_AUTO)
+                if (df is None or df.empty) and "-" in sym:
+                    sym_us = sym.replace("-", "_")
+                    log(f"  Trying {sym} → {sym_us}")
+                    df = fetch_full_history(retry_token, sym_us, retries=1)
 
                 if df is not None and not df.empty and "close" in df.columns:
                     ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
@@ -381,15 +387,14 @@ def build_cache():
                         vol_all[sym]   = pd.Series(
                             (df_recent["close"] * df_recent["volume"]).values, index=idx
                         ) if "volume" in df_recent.columns else pd.Series(dtype=float)
-                        ok_count  += 1
-                        retry_ok  += 1
+                        ok_count += 1
+                        retry_ok += 1
+                        log(f"  ✅ Recovered: {sym}")
                     else:
                         still_failed.append(sym)
                 else:
                     still_failed.append(sym)
-
-                if (j + 1) % 20 == 0 or j == len(failed) - 1:
-                    log(f"  Retry: {j+1}/{len(failed)} | Recovered: {retry_ok} | Still failed: {len(still_failed)}")
+                    log(f"  ❌ Skipped: {sym}")
 
             log(f"✅ Retry done: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}")
             failed = still_failed
@@ -446,7 +451,7 @@ def build_cache():
         volume    = vol_df,
         ath_df    = ath_df,
         meta      = meta,
-        log       = log,
+        log_fn    = log,
     )
 
     log(f"\n✅ Cache saved to {CACHE_DIR}/{today_str}/")
