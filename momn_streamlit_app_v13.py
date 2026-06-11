@@ -4111,6 +4111,38 @@ with _tab_screener:
                             st.session_state["_cross_tertiary_label"]   = _tertiary_lbl if _tert_avail else ""
                             st.session_state["_cross_extra_labels"]     = list(_extra_caches.keys())
 
+                            # ── Pre-initialize overrides with suggested values ──
+                            # ATH lowest = most likely split-adjusted correct source
+                            _all_extra_lbls = list(_extra_caches.keys())
+                            _init_overrides = {}
+                            for _, _irow in _diff_df.iterrows():
+                                _it = _irow["Ticker"]
+                                # Check ATH memory first
+                                _im = _ath_mem.get(_it)
+                                if _im:
+                                    _im_lbl = _im.get("chosen_lbl", "")
+                                    if _im_lbl == _primary_lbl:
+                                        _init_overrides[_it] = "primary"
+                                        continue
+                                    elif _im_lbl in _all_extra_lbls:
+                                        _init_overrides[_it] = _im_lbl
+                                        continue
+                                # No memory — use lowest ATH suggestion
+                                _athl_vals = [float(_irow.get(f"ATH_{_primary_lbl[:3]}", 0) or 0)]
+                                _athl_lbls = [_primary_lbl]
+                                for _el in _all_extra_lbls:
+                                    _v = float(_irow.get(f"ATH_{_el[:3]}", 0) or 0)
+                                    if _v > 0:
+                                        _athl_vals.append(_v)
+                                        _athl_lbls.append(_el)
+                                if _athl_vals:
+                                    _mi = _athl_vals.index(min(_athl_vals))
+                                    _sug_lbl = _athl_lbls[_mi]
+                                    _init_overrides[_it] = "primary" if _sug_lbl == _primary_lbl else _sug_lbl
+                                else:
+                                    _init_overrides[_it] = "primary"
+                            st.session_state["_cross_review_overrides"] = _init_overrides
+
                         except Exception as _cx_e:
                             import traceback
                             _cross_error = traceback.format_exc()
@@ -4272,23 +4304,14 @@ with _tab_screener:
                     _all_lbls = [_pri_lbl] + _extra_lbls[:len(_extra_athl)]
                     _min_idx  = _all_athl.index(min(_all_athl)) if _all_athl else 0
                     _suggested_lbl = _all_lbls[_min_idx] if _min_idx < len(_all_lbls) else _pri_lbl
-                    # Store as label string (not "primary"/"secondary") for correct 3-way index mapping
-                    _suggested = _suggested_lbl
 
                     # ── ATH Memory lookup for this ticker ──────────────────
                     _mem_entry = _ath_mem.get(_tick)
                     _mem_hint_html = ""
-                    _mem_role = None  # label string from memory if source matches current session
                     if _mem_entry:
                         _m_lbl  = _mem_entry.get("chosen_lbl", "")
                         _m_date = _mem_entry.get("reviewed_date", "?")
                         _m_ath  = _mem_entry.get("chosen_ath", 0)
-                        # Map memory's chosen label — store as label string for reliable index mapping
-                        if _m_lbl == _pri_lbl:
-                            _mem_role = "primary"
-                        elif _m_lbl in _extra_lbls:
-                            _mem_role = _m_lbl   # e.g. "TradingView", "Angel One", "Upstox"
-                        # else: different source combo — show hint but don't force default
                         _mem_hint_html = (
                             f'&nbsp;&nbsp;&nbsp;'
                             f'<span style="background:#0f3460;border:1px solid #38bdf8;border-radius:10px;'
@@ -4298,11 +4321,9 @@ with _tab_screener:
                             f'</span>'
                         )
 
-                    # Radio default: memory > algorithmic suggestion (only if not already set this session)
-                    if _tick not in _overrides:
-                        _cur_sel = _mem_role if _mem_role is not None else _suggested
-                    else:
-                        _cur_sel = _overrides[_tick]
+                    # _overrides already pre-initialized with correct suggested/memory values
+                    # Just read — "primary" or label string like "TradingView", "Upstox", "Angel One"
+                    _cur_sel = _overrides.get(_tick, "primary")
 
                     with st.container():
                         _c1, _c2 = st.columns([3, 1])
