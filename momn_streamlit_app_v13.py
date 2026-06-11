@@ -4113,6 +4113,7 @@ with _tab_screener:
 
                             # ── Pre-initialize overrides with suggested values ──
                             # ATH lowest = most likely split-adjusted correct source
+                            _ath_mem = st.session_state.get("_ath_memory") or {}
                             _all_extra_lbls = list(_extra_caches.keys())
                             _init_overrides = {}
                             for _, _irow in _diff_df.iterrows():
