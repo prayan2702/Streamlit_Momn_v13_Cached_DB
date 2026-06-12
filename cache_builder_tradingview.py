@@ -250,6 +250,11 @@ def fetch_full_history(token: str, symbol: str, retries: int = 2) -> pd.DataFram
                     continue
                 return None
 
+            # Log chunk info for first few symbols (debugging)
+            if chunks_done > 1:
+                oldest = df.index[0].strftime("%Y-%m-%d")
+                logger.debug(f"{symbol}: {chunks_done} chunks, oldest bar = {oldest}, total bars = {len(df)}")
+
             # Normalize
             df.columns = [c.lower() for c in df.columns]
             needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
@@ -362,45 +367,45 @@ def build_cache():
     # ── Retry failed symbols ──────────────────────────────────
     if failed:
         log(f"\n🔄 Retrying {len(failed)} failed symbols...")
-        try:
-            retry_token  = _get_tv_token()
-            retry_ok     = 0
-            still_failed = []
+        retry_token  = _get_tv_token()
+        retry_ok     = 0
+        still_failed = []
 
-            for sym in failed:
-                # Variant 1: same symbol (1 retry)
-                df = fetch_full_history(retry_token, sym, retries=1)
+        for sym in failed:
+            # Attempt 1: same symbol name (fresh token)
+            time.sleep(1.5)
+            df = fetch_full_history(retry_token, sym, retries=1)
 
-                # Variant 2: dash → underscore (e.g. BAJAJ-AUTO → BAJAJ_AUTO)
-                if (df is None or df.empty) and "-" in sym:
-                    sym_us = sym.replace("-", "_")
-                    log(f"  Trying {sym} → {sym_us}")
-                    df = fetch_full_history(retry_token, sym_us, retries=1)
-
+            # Attempt 2: dash → underscore (BAJAJ-AUTO → BAJAJ_AUTO)
+            if (df is None or df.empty or "close" not in df.columns) and "-" in sym:
+                sym_us = sym.replace("-", "_")
+                log(f"  Trying {sym} → {sym_us}")
+                time.sleep(1.5)
+                df = fetch_full_history(retry_token, sym_us, retries=1)
                 if df is not None and not df.empty and "close" in df.columns:
-                    ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
-                    df_recent = df[df.index >= cutoff].copy()
-                    if not df_recent.empty:
-                        idx = df_recent.index
-                        close_all[sym] = pd.Series(df_recent["close"].values, index=idx)
-                        high_all[sym]  = pd.Series(df_recent["high"].values,  index=idx) if "high" in df_recent.columns else pd.Series(dtype=float)
-                        vol_all[sym]   = pd.Series(
-                            (df_recent["close"] * df_recent["volume"]).values, index=idx
-                        ) if "volume" in df_recent.columns else pd.Series(dtype=float)
-                        ok_count += 1
-                        retry_ok += 1
-                        log(f"  ✅ Recovered: {sym}")
-                    else:
-                        still_failed.append(sym)
+                    log(f"  ✅ {sym} fetched as {sym_us}")
+
+            if df is not None and not df.empty and "close" in df.columns:
+                ath_dict[sym] = float(df["high"].max()) if "high" in df.columns else float(df["close"].max())
+                df_recent = df[df.index >= cutoff].copy()
+                if not df_recent.empty:
+                    idx = df_recent.index
+                    close_all[sym] = pd.Series(df_recent["close"].values, index=idx)
+                    high_all[sym]  = pd.Series(df_recent["high"].values,  index=idx) if "high" in df_recent.columns else pd.Series(dtype=float)
+                    vol_all[sym]   = pd.Series(
+                        (df_recent["close"] * df_recent["volume"]).values, index=idx
+                    ) if "volume" in df_recent.columns else pd.Series(dtype=float)
+                    ok_count += 1
+                    retry_ok += 1
+                    log(f"  ✅ Recovered: {sym}")
                 else:
                     still_failed.append(sym)
-                    log(f"  ❌ Skipped: {sym}")
+            else:
+                log(f"  ❌ Skipped: {sym} (not found on TradingView)")
+                still_failed.append(sym)
 
-            log(f"✅ Retry done: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}")
-            failed = still_failed
-
-        except Exception as e:
-            log(f"❌ Retry error: {e}")
+        log(f"✅ Retry done: {retry_ok}/{len(failed)} recovered | Permanently failed: {len(still_failed)}: {still_failed}")
+        failed = still_failed
 
     # ── Build DataFrames ──────────────────────────────────────
     close_df = pd.DataFrame(close_all).sort_index()
@@ -414,14 +419,27 @@ def build_cache():
     ath_df = pd.DataFrame({"ATH": ath_dict})
 
     # ── Log data range ────────────────────────────────────────
-    # Sample a few symbols to show actual oldest date fetched
-    sample_oldest = []
-    for sym in list(ath_dict.keys())[:5]:
-        if sym in close_all and not close_all[sym].empty:
-            # Check full df (close_all has recent slice — ath uses full df)
-            pass
+    # recent slice range (for parquet)
     oldest_in_recent = close_df.index[0].strftime("%Y-%m-%d") if not close_df.empty else "N/A"
     latest_in_recent = close_df.index[-1].strftime("%Y-%m-%d") if not close_df.empty else "N/A"
+
+    # Actual ATH history oldest date — sample 20 symbols to find min
+    _sample_syms = list(ath_dict.keys())[:20]
+    ath_oldest_dt = None
+    for _s in _sample_syms:
+        if _s in close_all:
+            _idx = close_all[_s].index
+            if len(_idx) > 0:
+                _oldest = _idx[0]
+                if ath_oldest_dt is None or _oldest < ath_oldest_dt:
+                    ath_oldest_dt = _oldest
+    # Note: close_all has recent slice only; ath used full df — log approximation
+    ath_oldest_str = TARGET_FROM_DATE.strftime("%Y-%m-%d")  # guaranteed minimum
+    if ath_oldest_dt is not None:
+        log(f"Recent slice oldest bar : {oldest_in_recent}")
+        log(f"Recent slice latest bar : {latest_in_recent}")
+    log(f"ATH computed from       : {ath_oldest_str} → {latest_in_recent} (full history)")
+    log(f"Symbols with ATH        : {len(ath_dict):,}")
 
     # ── Meta ──────────────────────────────────────────────────
     total_elapsed = time.monotonic() - t0

@@ -136,9 +136,24 @@ def get_cache_status_html(cache_date: str | None = None) -> str:
     build_dt   = meta.get("build_date", "?")
     src        = meta.get("source", "TradingView (tvDatafeed)")
     failed_ct  = meta.get("symbols_failed", 0)
-    n_bars     = meta.get("n_bars", 5000)
+    n_bars     = meta.get("bars_per_chunk", meta.get("n_bars", 5000))
+    max_chunks = meta.get("max_chunks_per_symbol", 1)
+    ath_from   = meta.get("ath_start_date", "")
+    date_range = meta.get("recent_date_range", [])
     n_dates    = len(dates)
     is_hist    = (cache_date and cache_date != dates[-1]) if dates else False
+
+    # ATH range display
+    if ath_from:
+        ath_range_html = f'📈 ATH from: <b>{ath_from} → today</b> &nbsp;·&nbsp; Chunks/symbol: <b>≤{max_chunks}</b><br>'
+    else:
+        ath_range_html = f'📊 Bars/symbol: <b>{n_bars}</b><br>'
+
+    # Recent data range
+    if date_range and len(date_range) == 2:
+        range_html = f'📆 Recent data: <b>{date_range[0]}</b> → <b>{date_range[1]}</b><br>'
+    else:
+        range_html = ""
 
     return f"""
     <div style="background:{color};border:1px solid {bdr};border-left:4px solid {bdr};
@@ -149,9 +164,8 @@ def get_cache_status_html(cache_date: str | None = None) -> str:
         📅 Loaded date: <b>{loaded}</b> &nbsp;·&nbsp;
         📋 Symbols: <b>{fetched:,}</b> &nbsp;·&nbsp;
         ❌ Failed: <b>{failed_ct}</b><br>
-        📡 Source: <b>{src}</b> &nbsp;·&nbsp;
-        📊 Bars/symbol: <b>{n_bars}</b><br>
-        📋 NSE EQUITY_L.csv (+ GOLDBEES &amp; SILVERBEES)<br>
+        📡 Source: <b>{src}</b><br>
+        {ath_range_html}{range_html}        📋 NSE EQUITY_L.csv (+ GOLDBEES &amp; SILVERBEES)<br>
         🗂️ Cached dates: <b>{n_dates}/5</b> available
         &nbsp;·&nbsp; ⚡ Load time: <b>&lt;10 sec</b>
       </span>
