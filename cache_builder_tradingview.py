@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════
 CACHE_DIR           = Path("cache_tradingview")
 RECENT_MONTHS       = 40          # parquet mein kitne months ka data store karo
-TARGET_FROM_DATE    = datetime(2010, 1, 1)   # ATH ke liye minimum start date
+TARGET_FROM_DATE    = datetime(2000, 1, 1)   # ATH ke liye minimum start date
 EXTRA_SYMBOLS       = ["GOLDBEES", "SILVERBEES"]
 NSE_EQUITY_URL      = "https://archives.nseindia.com/content/equities/EQUITY_L.csv"
 GITHUB_BASE         = "https://raw.githubusercontent.com/prayan2702/Streamlit_Momn_v13_Cached_DB/refs/heads/main"
