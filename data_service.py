@@ -768,7 +768,7 @@ def _tv_msg(func: str, params: list) -> str:
 def _tv_parse_df(raw_data: str):
     """Raw WebSocket stream se OHLCV DataFrame banao."""
     try:
-        out = _re.search(r'"s":[((.+?)}]', raw_data).group(1)
+        out = _re.search(r'"s":\[(.+?)\}]', raw_data).group(1)
         rows, vol_ok = [], True
         for xi in out.split(',{"'):
             xi = _re.split(r"[\[:|,\]]", xi)
@@ -831,7 +831,7 @@ def _fetch_tv_single(token: str, symbol_ns: str, n_bars: int = TV_MAX_BARS, retr
                 ("quote_add_symbols",    [sess, tv_symbol, {"flags": ["force_permission"]}]),
                 ("quote_fast_symbols",   [sess, tv_symbol]),
                 ("resolve_symbol",       [csess, "symbol_1",
-                                          f'={"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}']),
+                                          f'={{"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}}']),
                 ("create_series",        [csess, "s1", "s1", "symbol_1", "1D", n_bars]),
                 ("switch_timezone",      [csess, "exchange"]),
             ]:
