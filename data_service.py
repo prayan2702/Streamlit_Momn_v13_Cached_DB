@@ -713,86 +713,159 @@ def fetch_zerodha(symbols, start_date, end_date, chunk_size, progress_bar, statu
 
 
 # ═════════════════════════════════════════════════════════════
-# SECTION J2 — TRADINGVIEW (tvDatafeed) LIVE FETCHER
-# ═════════════════════════════════════════════════════════════
-#
-# tvDatafeed library se NSE daily OHLCV data fetch karta hai.
-# Login optional — without login free tier (limited bars).
-# With TradingView credentials: up to 5000 bars per symbol.
-#
-# Install: pip install tvDatafeed
-# GitHub Secrets (optional): TV_USERNAME, TV_PASSWORD
-#
-# Symbol format: tvDatafeed 'INFY' (no .NS suffix needed)
-# Exchange: 'NSE'
-# Interval: Interval.in_daily
-# n_bars: max 5000
-# ─────────────────────────────────────────────────────────────
+# SECTION J2 — TRADINGVIEW LIVE FETCHER (Direct WebSocket)
+# =============================================================
+# pip install tvDatafeed ka login broken hai (TradingView API change).
+# Direct WebSocket implementation — same as cache_builder_tradingview.py
+# Login: requests.Session() + User-Agent header + homepage GET then POST
+# WebSocket: wss://data.tradingview.com/socket.io/websocket
+# Symbol: NSE:INFY
+# =============================================================
 
-TV_MAX_BARS = 5000  # tvDatafeed maximum bars per symbol
+import json as _json
+import random as _random
+import re as _re
+import string as _string
+from websocket import create_connection as _create_connection
+
+TV_MAX_BARS   = 5000
+TV_WS_TIMEOUT = 30  # seconds
 
 
-def _get_tv_client(tv_username: str = "", tv_password: str = ""):
+def _get_tv_token(tv_username: str = "", tv_password: str = "") -> str:
     """
-    TvDatafeed client initialize karo.
-    Credentials optional — without login limited data milta hai.
+    TradingView auth token — proper session-based login.
+    pip version ka login broken tha (no User-Agent, no cookie prefetch).
     """
+    if not tv_username or not tv_password:
+        return "unauthorized_user_token"
+    session = requests.Session()
+    session.headers.update({
+        "Referer": "https://www.tradingview.com",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+    })
     try:
-        from tvDatafeed import TvDatafeed
-    except ImportError:
-        raise ImportError(
-            "tvDatafeed library install nahi hai. "
-            "requirements.txt mein add karo: tvDatafeed"
+        session.get("https://www.tradingview.com/", timeout=15)
+        resp = session.post(
+            "https://www.tradingview.com/accounts/signin/",
+            data={"username": tv_username, "password": tv_password, "remember": "on"},
+            timeout=15,
         )
-    if tv_username and tv_password:
-        return TvDatafeed(username=tv_username, password=tv_password)
-    return TvDatafeed()  # anonymous / free tier
+        return resp.json()["user"]["auth_token"]
+    except Exception:
+        return "unauthorized_user_token"
 
 
-def _fetch_tv_single(tv_client, symbol_ns: str, n_bars: int = TV_MAX_BARS, retries: int = 2):
-    """
-    Single symbol ka daily OHLCV fetch karo TradingView se.
-    symbol_ns: 'INFY.NS' ya 'INFY' — dono chalenge (.NS strip hoga).
-    Returns: pd.DataFrame(index=datetime, cols=[open,high,low,close,volume]) or None
-    """
+def _tv_msg(func: str, params: list) -> str:
+    body = _json.dumps({"m": func, "p": params}, separators=(",", ":"))
+    return f"~m~{len(body)}~m~{body}"
+
+
+def _tv_parse_df(raw_data: str):
+    """Raw WebSocket stream se OHLCV DataFrame banao."""
     try:
-        from tvDatafeed import Interval
-    except ImportError:
+        out = _re.search(r'"s":[((.+?)}]', raw_data).group(1)
+        rows, vol_ok = [], True
+        for xi in out.split(',{"'):
+            xi = _re.split(r"[\[:|,\]]", xi)
+            try:
+                ts = pd.Timestamp.fromtimestamp(float(xi[4]))
+            except (ValueError, IndexError):
+                continue
+            row = [ts]
+            for i in range(5, 10):
+                if not vol_ok and i == 9:
+                    row.append(0.0)
+                    continue
+                try:
+                    row.append(float(xi[i]))
+                except (ValueError, IndexError):
+                    vol_ok = False
+                    row.append(0.0)
+            rows.append(row)
+        if not rows:
+            return None
+        df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close", "volume"])
+        df = df.set_index("datetime").sort_index()
+        df = df[~df.index.duplicated(keep="last")]
+        df.columns = [c.lower() for c in df.columns]
+        return df
+    except AttributeError:
         return None
 
-    clean = symbol_ns.replace(".NS", "").replace(".BO", "").upper().strip()
-    delay = 2.0
+
+def _fetch_tv_single(token: str, symbol_ns: str, n_bars: int = TV_MAX_BARS, retries: int = 2):
+    """
+    Single symbol ka daily OHLCV TradingView WebSocket se fetch karo.
+    token: _get_tv_token() ka output
+    symbol_ns: 'INFY.NS' ya 'INFY' -- .NS strip hoga
+    Returns: pd.DataFrame or None
+    """
+    clean     = symbol_ns.replace(".NS", "").replace(".BO", "").upper().strip()
+    tv_symbol = f"NSE:{clean}"
 
     for attempt in range(retries):
+        ws = None
         try:
-            df = tv_client.get_hist(
-                symbol=clean,
-                exchange="NSE",
-                interval=Interval.in_daily,
-                n_bars=n_bars,
+            ws = _create_connection(
+                "wss://data.tradingview.com/socket.io/websocket",
+                headers=_json.dumps({"Origin": "https://data.tradingview.com"}),
+                timeout=TV_WS_TIMEOUT,
             )
+            sess  = "qs_" + "".join(_random.choice(_string.ascii_lowercase) for _ in range(12))
+            csess = "cs_" + "".join(_random.choice(_string.ascii_lowercase) for _ in range(12))
+
+            for func, params in [
+                ("set_auth_token",       [token]),
+                ("chart_create_session", [csess, ""]),
+                ("quote_create_session", [sess]),
+                ("quote_set_fields",     [sess, "ch", "chp", "current_session", "description",
+                                          "local_description", "language", "exchange", "fractional",
+                                          "is_tradable", "lp", "lp_time", "minmov", "minmove2",
+                                          "original_name", "pricescale", "pro_name", "short_name",
+                                          "type", "update_mode", "volume", "currency_code", "rchp", "rtc"]),
+                ("quote_add_symbols",    [sess, tv_symbol, {"flags": ["force_permission"]}]),
+                ("quote_fast_symbols",   [sess, tv_symbol]),
+                ("resolve_symbol",       [csess, "symbol_1",
+                                          f'={"symbol":"{tv_symbol}","adjustment":"splits","session":"regular"}']),
+                ("create_series",        [csess, "s1", "s1", "symbol_1", "1D", n_bars]),
+                ("switch_timezone",      [csess, "exchange"]),
+            ]:
+                ws.send(_tv_msg(func, params))
+
+            raw = ""
+            while True:
+                try:
+                    chunk = ws.recv()
+                except Exception:
+                    break
+                raw += chunk + "\n"
+                if "series_completed" in chunk:
+                    break
+            ws.close()
+
+            df = _tv_parse_df(raw)
             if df is None or df.empty:
+                if attempt < retries - 1:
+                    time.sleep(3.0)
+                    continue
                 return None
-
-            # tvDatafeed returns 'datetime' as index or column — normalize
-            if "datetime" in df.columns:
-                df = df.set_index("datetime")
-            df.index = pd.to_datetime(df.index)
-            if df.index.tz is not None:
-                df.index = df.index.tz_localize(None)
-            df = df.sort_index()
-
-            # Rename columns to lowercase standard
-            df.columns = [c.lower() for c in df.columns]
             needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
             return df[needed]
 
         except Exception as e:
-            err_str = str(e).lower()
-            if "rate" in err_str or "limit" in err_str:
-                time.sleep(delay * 2); delay *= 2
-            elif attempt < retries - 1:
-                time.sleep(delay); delay *= 2
+            if ws:
+                try:
+                    ws.close()
+                except Exception:
+                    pass
+            err = str(e).lower()
+            if attempt < retries - 1:
+                time.sleep(5.0 if ("timeout" in err or "connection" in err) else 2.0)
             else:
                 return None
     return None
@@ -839,16 +912,14 @@ def fetch_tradingview(
             or ""
         )
 
-    # Initialize client
-    status_text.text("TradingView: Client initialize ho raha hai...")
-    try:
-        tv_client = _get_tv_client(tv_username, tv_password)
-    except ImportError as e:
-        st.error(str(e))
-        st.stop()
-    except Exception as e:
-        st.error(f"TradingView login failed: {e}")
-        st.stop()
+    # Initialize — get auth token (proper session-based login)
+    status_text.text("TradingView: Login ho raha hai...")
+    tv_token = _get_tv_token(tv_username, tv_password)
+    if tv_token == "unauthorized_user_token":
+        if tv_username:
+            st.warning("TradingView: Login failed — anonymous mode mein chal raha hai (limited data).")
+        else:
+            st.info("TradingView: Anonymous mode (credentials nahi diye — limited bars).")
 
     total = len(symbols)
     close_map, high_map, vol_map = {}, {}, {}
@@ -862,7 +933,7 @@ def fetch_tradingview(
         progress = (i + 1) / total
         try:
             # Full 5000 bars fetch karo — maximum available history (~13 yrs)
-            df_full = _fetch_tv_single(tv_client, sym, n_bars=TV_MAX_BARS)
+            df_full = _fetch_tv_single(tv_token, sym, n_bars=TV_MAX_BARS)
             if df_full is not None and not df_full.empty:
                 # ── ATH: FULL history ka max high (slice se PEHLE) ──
                 ath_val = float(df_full["high"].max()) if "high" in df_full.columns else float(df_full["close"].max())
