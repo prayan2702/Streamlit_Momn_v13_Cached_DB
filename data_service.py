@@ -837,21 +837,36 @@ def _fetch_tv_single(token: str, symbol_ns: str, n_bars: int = TV_MAX_BARS, retr
             ]:
                 ws.send(_tv_msg(func, params))
 
-            raw = ""
-            while True:
+            # recv loop — series_completed aane tak wait karo
+            # Pehle exception pe break mat karo — incomplete data milega
+            raw             = ""
+            series_done     = False
+            recv_errors     = 0
+            MAX_RECV_ERRORS = 3
+
+            while not series_done:
                 try:
                     chunk = ws.recv()
+                    if chunk:
+                        raw += chunk + "\n"
+                        if "series_completed" in chunk:
+                            series_done = True
+                        elif "symbol_error" in chunk or "critical_error" in chunk:
+                            break  # symbol not found
                 except Exception:
-                    break
-                raw += chunk + "\n"
-                if "series_completed" in chunk:
-                    break
-            ws.close()
+                    recv_errors += 1
+                    if recv_errors >= MAX_RECV_ERRORS:
+                        break  # genuine connection issue
+
+            try:
+                ws.close()
+            except Exception:
+                pass
 
             df = _tv_parse_df(raw)
             if df is None or df.empty:
                 if attempt < retries - 1:
-                    time.sleep(3.0)
+                    time.sleep(2.0)
                     continue
                 return None
             needed = [c for c in ["open", "high", "low", "close", "volume"] if c in df.columns]
