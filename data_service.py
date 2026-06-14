@@ -773,7 +773,8 @@ def _tv_parse_df(raw_data: str):
         for xi in out.split(',{"'):
             xi = _re.split(r"[\[:|,\]]", xi)
             try:
-                ts = pd.Timestamp.fromtimestamp(float(xi[4]))
+                # UTC timestamp → tz-naive datetime (date-only precision)
+                ts = pd.Timestamp(float(xi[4]), unit="s").normalize()
             except (ValueError, IndexError):
                 continue
             row = [ts]
@@ -930,11 +931,9 @@ def fetch_tradingview(
     # Initialize — get auth token (proper session-based login)
     status_text.text("TradingView: Login ho raha hai...")
     tv_token = _get_tv_token(tv_username, tv_password)
-    if tv_token == "unauthorized_user_token":
-        if tv_username:
-            st.warning("TradingView: Login failed — anonymous mode mein chal raha hai (limited data).")
-        else:
-            st.info("TradingView: Anonymous mode (credentials nahi diye — limited bars).")
+    # Note: TradingView login server-side pe Cloudflare se block hota hai.
+    # Anonymous mode mein bhi 5000 bars milte hain — data fetch hota hai.
+    # Login warning show mat karo — confusing hai user ke liye.
 
     total = len(symbols)
     close_map, high_map, vol_map = {}, {}, {}
@@ -950,12 +949,20 @@ def fetch_tradingview(
             # Full 5000 bars fetch karo — maximum available history (~13 yrs)
             df_full = _fetch_tv_single(tv_token, sym, n_bars=TV_MAX_BARS)
             if df_full is not None and not df_full.empty:
+                # Normalize index — timezone strip karo
+                df_full.index = pd.to_datetime(df_full.index)
+                if df_full.index.tz is not None:
+                    df_full.index = df_full.index.tz_localize(None)
+
                 # ── ATH: FULL history ka max high (slice se PEHLE) ──
                 ath_val = float(df_full["high"].max()) if "high" in df_full.columns else float(df_full["close"].max())
                 ath_map[sym] = ath_val
 
                 # ── Recent slice: start_date ke baad ──────────────
-                df = df_full[df_full.index >= pd.Timestamp(start_date)]
+                start_ts = pd.Timestamp(start_date)
+                if start_ts.tz is not None:
+                    start_ts = start_ts.tz_localize(None)
+                df = df_full[df_full.index >= start_ts]
                 if not df.empty and "close" in df.columns:
                     idx = df.index
                     close_map[sym] = pd.Series(df["close"].values, index=idx)
