@@ -843,7 +843,7 @@ def _fetch_tv_single(token: str, symbol_ns: str, n_bars: int = TV_MAX_BARS, retr
             raw             = ""
             series_done     = False
             recv_errors     = 0
-            MAX_RECV_ERRORS = 3
+            MAX_RECV_ERRORS = 8   # ping/pong + keepalive messages ignore karo
 
             while not series_done:
                 try:
@@ -854,6 +854,7 @@ def _fetch_tv_single(token: str, symbol_ns: str, n_bars: int = TV_MAX_BARS, retr
                             series_done = True
                         elif "symbol_error" in chunk or "critical_error" in chunk:
                             break  # symbol not found
+                        # ping/pong (~m~X~m~~h~) — silently ignore
                 except Exception:
                     recv_errors += 1
                     if recv_errors >= MAX_RECV_ERRORS:
@@ -983,7 +984,40 @@ def fetch_tradingview(
                 f"TradingView: {int(progress * 100)}% | "
                 f"Fetched: {len(close_map)} | Failed: {len(failed)}"
             )
-        time.sleep(0.2)  # polite rate limit
+        time.sleep(0.5)  # rate limit — 0.2 se badhakar 0.5s (TradingView throttle avoid)
+
+    # ── Retry failed symbols once with longer sleep ─────────────
+    if failed:
+        status_text.text(f"TradingView: Retrying {len(failed)} failed symbols...")
+        still_failed = []
+        for sym in failed:
+            time.sleep(2.0)  # longer sleep for retry
+            try:
+                df_full = _fetch_tv_single(tv_token, sym, n_bars=TV_MAX_BARS, retries=1)
+                if df_full is not None and not df_full.empty:
+                    df_full.index = pd.to_datetime(df_full.index)
+                    if df_full.index.tz is not None:
+                        df_full.index = df_full.index.tz_localize(None)
+                    ath_val = float(df_full["high"].max()) if "high" in df_full.columns else float(df_full["close"].max())
+                    ath_map[sym] = ath_val
+                    start_ts = pd.Timestamp(start_date)
+                    if start_ts.tz is not None:
+                        start_ts = start_ts.tz_localize(None)
+                    df = df_full[df_full.index >= start_ts]
+                    if not df.empty and "close" in df.columns:
+                        idx = df.index
+                        close_map[sym] = pd.Series(df["close"].values, index=idx)
+                        high_map[sym]  = pd.Series(df["high"].values,  index=idx) if "high" in df.columns else pd.Series(dtype=float)
+                        vol_map[sym]   = pd.Series(
+                            (df["close"] * df["volume"]).values, index=idx
+                        ) if "volume" in df.columns else pd.Series(dtype=float)
+                    else:
+                        still_failed.append(sym)
+                else:
+                    still_failed.append(sym)
+            except Exception:
+                still_failed.append(sym)
+        failed = still_failed
 
     progress_bar.progress(1.0)
 
