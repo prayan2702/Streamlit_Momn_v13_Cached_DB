@@ -202,10 +202,6 @@ Dr. Agarwal's Health Care Ltd.,Healthcare,AGARWALEYE,EQ,INE943P01029
 Dr. Lal Path Labs Ltd.,Healthcare,LALPATHLAB,EQ,INE600L01024
 Dr. Reddy's Laboratories Ltd.,Healthcare,DRREDDY,EQ,INE089A01031
 Dummy Allcargo Logistics Ltd.,Services,DUMMYALCAR,EQ,DUM418H01029
-Dummy Vedanta Ltd. 1,Metals & Mining,DUMMYVEDL1,EQ,DU1205A01025
-Dummy Vedanta Ltd. 2,Power,DUMMYVEDL2,EQ,DU2205A01025
-Dummy Vedanta Ltd. 3,Oil Gas & Consumable Fuels,DUMMYVEDL3,EQ,DU3205A01025
-Dummy Vedanta Ltd. 4,Metals & Mining,DUMMYVEDL4,EQ,DU4205A01025
 Dynamatic Technologies Ltd.,Capital Goods,DYNAMATECH,EQ,INE221B01012
 E.I.D. Parry (India) Ltd.,Fast Moving Consumer Goods,EIDPARRY,EQ,INE126A01031
 EIH Ltd.,Consumer Services,EIHOTEL,EQ,INE230A01023
@@ -724,7 +720,11 @@ Vardhman Textiles Ltd.,Textiles,VTL,EQ,INE825A01020
 Varroc Engineering Ltd.,Automobile and Auto Components,VARROC,EQ,INE665L01035
 Varun Beverages Ltd.,Fast Moving Consumer Goods,VBL,EQ,INE200M01039
 Vedant Fashions Ltd.,Consumer Services,MANYAVAR,EQ,INE825V01034
+Vedanta Aluminium Metal Ltd.,Metals & Mining,VAML,BE,INE1CDF01017
+Vedanta Iron and Steel Ltd.,Metals & Mining,VISL,BE,INE1CLE01013
 Vedanta Ltd.,Metals & Mining,VEDL,EQ,INE205A01025
+Vedanta Oil and Gas Ltd.,Oil Gas & Consumable Fuels,VOGL,BE,INE704J01044
+Vedanta Power Ltd.,Power,VEDPOWER,BE,INE694L01019
 Vijaya Diagnostic Centre Ltd.,Healthcare,VIJAYA,EQ,INE043W01024
 Vikram Solar Ltd.,Capital Goods,VIKRAMSOLR,EQ,INE078V01014
 Vishal Mega Mart Ltd.,Consumer Services,VMM,EQ,INE01EA01019

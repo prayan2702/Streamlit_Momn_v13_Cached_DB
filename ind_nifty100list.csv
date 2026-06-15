@@ -29,10 +29,6 @@ Cummins India Ltd.,Capital Goods,CUMMINSIND,EQ,INE298A01020
 DLF Ltd.,Realty,DLF,EQ,INE271C01023
 Divi's Laboratories Ltd.,Healthcare,DIVISLAB,EQ,INE361B01024
 Dr. Reddy's Laboratories Ltd.,Healthcare,DRREDDY,EQ,INE089A01031
-Dummy Vedanta Ltd. 1,Metals & Mining,DUMMYVEDL1,EQ,DU1205A01025
-Dummy Vedanta Ltd. 2,Power,DUMMYVEDL2,EQ,DU2205A01025
-Dummy Vedanta Ltd. 3,Oil Gas & Consumable Fuels,DUMMYVEDL3,EQ,DU3205A01025
-Dummy Vedanta Ltd. 4,Metals & Mining,DUMMYVEDL4,EQ,DU4205A01025
 Eicher Motors Ltd.,Automobile and Auto Components,EICHERMOT,EQ,INE066A01021
 Eternal Ltd.,Consumer Services,ETERNAL,EQ,INE758T01015
 GAIL (India) Ltd.,Oil Gas & Consumable Fuels,GAIL,EQ,INE129A01019
@@ -100,6 +96,10 @@ UltraTech Cement Ltd.,Construction Materials,ULTRACEMCO,EQ,INE481G01011
 Union Bank of India,Financial Services,UNIONBANK,EQ,INE692A01016
 United Spirits Ltd.,Fast Moving Consumer Goods,UNITDSPR,EQ,INE854D01024
 Varun Beverages Ltd.,Fast Moving Consumer Goods,VBL,EQ,INE200M01039
+Vedanta Aluminium Metal Ltd.,Metals & Mining,VAML,BE,INE1CDF01017
+Vedanta Iron and Steel Ltd.,Metals & Mining,VISL,BE,INE1CLE01013
 Vedanta Ltd.,Metals & Mining,VEDL,EQ,INE205A01025
+Vedanta Oil and Gas Ltd.,Oil Gas & Consumable Fuels,VOGL,BE,INE704J01044
+Vedanta Power Ltd.,Power,VEDPOWER,BE,INE694L01019
 Wipro Ltd.,Information Technology,WIPRO,EQ,INE075A01022
 Zydus Lifesciences Ltd.,Healthcare,ZYDUSLIFE,EQ,INE010B01027
