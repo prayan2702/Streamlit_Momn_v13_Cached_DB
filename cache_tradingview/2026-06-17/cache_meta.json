@@ -1,0 +1,23 @@
+{
+  "build_date": "2026-06-17",
+  "build_timestamp": "2026-06-17T15:34:07.197725",
+  "build_duration_min": 109.8,
+  "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
+  "ath_start_date": "2000-01-01",
+  "bars_per_chunk": 5000,
+  "max_chunks_per_symbol": 5,
+  "recent_months": 40,
+  "symbols_total": 2108,
+  "symbols_fetched": 2108,
+  "symbols_failed": 0,
+  "failed_list": [],
+  "close_shape": [
+    822,
+    2108
+  ],
+  "ath_count": 2108,
+  "recent_date_range": [
+    "2023-02-20",
+    "2026-06-17"
+  ]
+}
