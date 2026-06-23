@@ -72,7 +72,7 @@ Aster DM Healthcare Ltd.,Healthcare,ASTERDM,EQ,INE914M01019
 Astra Microwave Products Ltd.,Capital Goods,ASTRAMICRO,EQ,INE386C01029
 Astral Ltd.,Capital Goods,ASTRAL,EQ,INE006I01046
 Ather Energy Ltd.,Automobile and Auto Components,ATHERENERG,EQ,INE0LEZ01016
-Atlanta Electricals Ltd.,Capital Goods,ATLANTAELE,BE,INE0Z4F01028
+Atlanta Electricals Ltd.,Capital Goods,ATLANTAELE,EQ,INE0Z4F01028
 Atul Ltd.,Chemicals,ATUL,EQ,INE100A01010
 Aurionpro Solution Ltd.,Information Technology,AURIONPRO,EQ,INE132H01018
 Aurobindo Pharma Ltd.,Healthcare,AUROPHARMA,EQ,INE406A01037
@@ -239,7 +239,7 @@ Firstsource Solutions Ltd.,Services,FSL,EQ,INE684F01012
 Five-Star Business Finance Ltd.,Financial Services,FIVESTAR,EQ,INE128S01021
 Force Motors Ltd.,Automobile and Auto Components,FORCEMOT,EQ,INE451A01017
 Fortis Healthcare Ltd.,Healthcare,FORTIS,EQ,INE061F01013
-Fujiyama Power Systems Ltd.,Capital Goods,UTLSOLAR,BE,INE12UR01024
+Fujiyama Power Systems Ltd.,Capital Goods,UTLSOLAR,EQ,INE12UR01024
 GAIL (India) Ltd.,Oil Gas & Consumable Fuels,GAIL,EQ,INE129A01019
 GE Vernova T&D India Ltd.,Capital Goods,GVT&D,EQ,INE200A01026
 GHCL Ltd.,Chemicals,GHCL,EQ,INE539A01019
@@ -720,7 +720,6 @@ Vardhman Textiles Ltd.,Textiles,VTL,EQ,INE825A01020
 Varroc Engineering Ltd.,Automobile and Auto Components,VARROC,EQ,INE665L01035
 Varun Beverages Ltd.,Fast Moving Consumer Goods,VBL,EQ,INE200M01039
 Vedant Fashions Ltd.,Consumer Services,MANYAVAR,EQ,INE825V01034
-Vedanta Aluminium Metal Ltd.,Metals & Mining,VAML,BE,INE1CDF01017
 Vedanta Ltd.,Metals & Mining,VEDL,EQ,INE205A01025
 Vedanta Oil and Gas Ltd.,Oil Gas & Consumable Fuels,VOGL,BE,INE704J01044
 Vijaya Diagnostic Centre Ltd.,Healthcare,VIJAYA,EQ,INE043W01024
