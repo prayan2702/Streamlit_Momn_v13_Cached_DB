@@ -1,17 +1,25 @@
 {
-  "build_date": "2026-06-19",
-  "build_time_utc": "17:38:27",
-  "build_duration_min": 221.9,
-  "symbols_total": 2093,
-  "symbols_fetched": 2093,
+  "build_date": "2026-06-26",
+  "build_time_utc": "16:54:22",
+  "build_duration_min": 259.7,
+  "symbols_total": 2083,
+  "symbols_fetched": 2076,
   "symbols_failed": 0,
-  "not_in_master": 0,
-  "failed_symbols": [],
+  "not_in_master": 7,
+  "failed_symbols": [
+    "BLACKROSE.NS",
+    "CHEMCON.NS",
+    "INDOAMIN.NS",
+    "MENONBE.NS",
+    "ORBTEXP.NS",
+    "RAMASTEEL.NS",
+    "STERTOOLS.NS"
+  ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-02-19",
-  "data_end": "2026-06-19",
-  "last_date_in_cache": "2026-06-19",
-  "today_data_present": true,
+  "data_start_recent": "2023-02-26",
+  "data_end": "2026-06-26",
+  "last_date_in_cache": "2026-06-25",
+  "today_data_present": false,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
@@ -40,23 +48,23 @@
     ],
     [
       "2021-11-26",
-      "2026-06-20"
+      "2026-06-27"
     ]
   ],
-  "last_chunk_todate": "2026-06-20 15:30",
-  "total_api_calls": 10465,
+  "last_chunk_todate": "2026-06-27 15:30",
+  "total_api_calls": 10380,
   "rate_limit": "3 req/sec",
   "close_shape": [
-    824,
-    2093
+    823,
+    2076
   ],
   "high_shape": [
-    824,
-    2093
+    823,
+    2076
   ],
   "volume_shape": [
-    824,
-    2093
+    823,
+    2076
   ],
-  "ath_count": 2093
+  "ath_count": 2076
 }
