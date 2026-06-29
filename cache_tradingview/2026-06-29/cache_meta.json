@@ -1,23 +1,23 @@
 {
-  "build_date": "2026-06-22",
-  "build_timestamp": "2026-06-22T16:44:17.262333",
-  "build_duration_min": 78.1,
+  "build_date": "2026-06-29",
+  "build_timestamp": "2026-06-29T15:27:15.332807",
+  "build_duration_min": 79.9,
   "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
   "ath_start_date": "2000-01-01",
   "bars_per_chunk": 5000,
   "max_chunks_per_symbol": 5,
   "recent_months": 40,
-  "symbols_total": 2095,
-  "symbols_fetched": 2095,
+  "symbols_total": 2080,
+  "symbols_fetched": 2080,
   "symbols_failed": 0,
   "failed_list": [],
   "close_shape": [
     822,
-    2095
+    2080
   ],
-  "ath_count": 2095,
+  "ath_count": 2080,
   "recent_date_range": [
-    "2023-02-23",
-    "2026-06-22"
+    "2023-03-01",
+    "2026-06-29"
   ]
 }
