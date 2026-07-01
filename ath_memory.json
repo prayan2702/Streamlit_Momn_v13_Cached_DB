@@ -11,7 +11,7 @@
     "chosen_lbl": "Upstox",
     "chosen_role": "primary",
     "chosen_ath": 45.0,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -19,7 +19,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 45.17,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -27,7 +27,7 @@
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
     "chosen_ath": 164.0,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -51,7 +51,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 35.2,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -123,7 +123,7 @@
     "chosen_lbl": "Upstox",
     "chosen_role": "primary",
     "chosen_ath": 1209.6,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -139,7 +139,7 @@
     "chosen_lbl": "Upstox",
     "chosen_role": "primary",
     "chosen_ath": 220.09,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -179,7 +179,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 940.0,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -243,7 +243,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 40.82,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -297,17 +297,17 @@
   },
   "BBTCL": {
     "chosen_lbl": "TradingView",
-    "chosen_role": "primary",
+    "chosen_role": "TradingView",
     "chosen_ath": 314.3,
-    "reviewed_date": "12-Jun-26",
-    "pri_lbl": "TradingView",
-    "sec_lbl": "Upstox"
+    "reviewed_date": "01-Jul-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
   },
   "BHARATGEAR": {
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
     "chosen_ath": 172.63,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -371,7 +371,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 333.0,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -387,7 +387,7 @@
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
     "chosen_ath": 172.09,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -395,7 +395,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 387.9,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -411,7 +411,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 116.85,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -427,7 +427,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 360.31,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -443,7 +443,7 @@
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
     "chosen_ath": 793.33,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -451,7 +451,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 95.8,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -466,8 +466,8 @@
   "MINDACORP": {
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
-    "chosen_ath": 691.0,
-    "reviewed_date": "27-Jun-26",
+    "chosen_ath": 701.0,
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -475,7 +475,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 99.94,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -506,8 +506,8 @@
   "INDSWFTLAB": {
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
-    "chosen_ath": 204.9,
-    "reviewed_date": "27-Jun-26",
+    "chosen_ath": 211.0,
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -530,8 +530,8 @@
   "IRISDOREME": {
     "chosen_lbl": "TradingView",
     "chosen_role": "TradingView",
-    "chosen_ath": 41.7,
-    "reviewed_date": "27-Jun-26",
+    "chosen_ath": 42.89,
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -547,7 +547,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 118.16,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -563,7 +563,7 @@
     "chosen_lbl": "Upstox",
     "chosen_role": "primary",
     "chosen_ath": 1110.45,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -571,7 +571,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 611.83,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -579,7 +579,7 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 264.8,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   },
@@ -587,7 +587,31 @@
     "chosen_lbl": "Angel One",
     "chosen_role": "Angel One",
     "chosen_ath": 634.23,
-    "reviewed_date": "27-Jun-26",
+    "reviewed_date": "01-Jul-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "TIRUPATIFL": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 72.88,
+    "reviewed_date": "01-Jul-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "MOREPENLAB": {
+    "chosen_lbl": "Upstox",
+    "chosen_role": "primary",
+    "chosen_ath": 100.9,
+    "reviewed_date": "01-Jul-26",
+    "pri_lbl": "Upstox",
+    "sec_lbl": "Angel One"
+  },
+  "PATELENG": {
+    "chosen_lbl": "Angel One",
+    "chosen_role": "Angel One",
+    "chosen_ath": 706.4,
+    "reviewed_date": "01-Jul-26",
     "pri_lbl": "Upstox",
     "sec_lbl": "Angel One"
   }
