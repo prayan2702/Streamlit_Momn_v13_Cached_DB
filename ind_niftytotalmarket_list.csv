@@ -355,6 +355,7 @@ Inventurus Knowledge Solutions Ltd.,Information Technology,IKS,EQ,INE115Q01022
 Ion Exchange (India) Ltd.,Utilities,IONEXCHANG,EQ,INE570A01022
 Ipca Laboratories Ltd.,Healthcare,IPCALAB,EQ,INE571A01038
 J.K. Cement Ltd.,Construction Materials,JKCEMENT,EQ,INE823G01014
+JAI BALAJI INDUSTRIES Ltd.,Metals & Mining,JAIBALAJI,EQ,INE091G01026
 JBM Auto Ltd.,Automobile and Auto Components,JBMA,EQ,INE927D01051
 JK Lakshmi Cement Ltd.,Construction Materials,JKLAKSHMI,EQ,INE786A01032
 JK Paper Ltd.,Forest Materials,JKPAPER,EQ,INE789E01012
@@ -365,7 +366,6 @@ JSW Dulux Ltd.,Consumer Durables,JSWDULUX,EQ,INE133A01011
 JSW Energy Ltd.,Power,JSWENERGY,EQ,INE121E01018
 JSW Infrastructure Ltd.,Services,JSWINFRA,EQ,INE880J01026
 JSW Steel Ltd.,Metals & Mining,JSWSTEEL,EQ,INE019A01038
-Jai Balaji Industries Ltd.,Metals & Mining,JAIBALAJI,BE,INE091G01026
 Jain Resource Recycling Ltd.,Metals & Mining,JAINREC,EQ,INE0YD401026
 Jaiprakash Power Ventures Ltd.,Power,JPPOWER,EQ,INE351F01018
 Jammu & Kashmir Bank Ltd.,Financial Services,J&KBANK,EQ,INE168A01041
@@ -391,7 +391,7 @@ KNR Constructions Ltd.,Construction,KNRCON,EQ,INE634I01029
 KPI Green Energy Ltd.,Power,KPIGREEN,EQ,INE542W01025
 KPIT Technologies Ltd.,Information Technology,KPITTECH,EQ,INE04I401011
 KRBL Ltd.,Fast Moving Consumer Goods,KRBL,EQ,INE001B01026
-KRN Heat Exchanger and Refrigeration Ltd.,Capital Goods,KRN,BE,INE0Q3J01015
+KRN HEAT EXCHANGER AND REFRIGERATION Ltd.,Capital Goods,KRN,EQ,INE0Q3J01015
 KSB Ltd.,Capital Goods,KSB,EQ,INE999A01023
 Kajaria Ceramics Ltd.,Consumer Durables,KAJARIACER,EQ,INE217B01036
 Kalpataru Projects International Ltd.,Construction,KPIL,EQ,INE220B01022
@@ -544,7 +544,7 @@ Privi Speciality Chemicals Ltd.,Chemicals,PRIVISCL,EQ,INE959A01019
 Prudent Corporate Advisory Services Ltd.,Financial Services,PRUDENT,EQ,INE00F201020
 Punjab National Bank,Financial Services,PNB,EQ,INE160A01022
 Puravankara Ltd.,Realty,PURVA,EQ,INE323I01011
-Quality Power Electrical Equipments Ltd.,Capital Goods,QPOWER,BE,INE0SII01026
+QUALITY POWER ELECTRICAL EQUIPMENTS Ltd.,Capital Goods,QPOWER,EQ,INE0SII01026
 Quess Corp Ltd.,Services,QUESS,EQ,INE615P01015
 R R Kabel Ltd.,Capital Goods,RRKABEL,EQ,INE777K01022
 RBL Bank Ltd.,Financial Services,RBLBANK,EQ,INE976G01028
@@ -584,6 +584,7 @@ SKY GOLD AND DIAMONDS Ltd.,Consumer Durables,SKYGOLD,EQ,INE01IU01018
 SML Mahindra Ltd.,Capital Goods,SMLMAH,EQ,INE294B01019
 SPR Auto Technologies Ltd.,Automobile and Auto Components,SHRIPISTON,EQ,INE526E01018
 SRF Ltd.,Chemicals,SRF,EQ,INE647A01010
+SRI LOTUS DEVELOPERS AND REALTY Ltd.,Realty,LOTUSDEV,BE,INE0V9Q01010
 Saatvik Green Energy Ltd.,Capital Goods,SAATVIKGL,EQ,INE13B501022
 Safari Industries (India) Ltd.,Consumer Durables,SAFARI,EQ,INE429E01023
 Sagility Ltd.,Information Technology,SAGILITY,EQ,INE0W2G01015
@@ -622,7 +623,6 @@ Solar Industries India Ltd.,Chemicals,SOLARINDS,EQ,INE343H01029
 Sona BLW Precision Forgings Ltd.,Automobile and Auto Components,SONACOMS,EQ,INE073K01018
 Sonata Software Ltd.,Information Technology,SONATSOFTW,EQ,INE269A01021
 South Indian Bank Ltd.,Financial Services,SOUTHBANK,EQ,INE683A01023
-Sri Lotus Developers and Realty Ltd.,Realty,LOTUSDEV,EQ,INE0V9Q01010
 Star Cement Ltd.,Construction Materials,STARCEMENT,EQ,INE460H01021
 Star Health and Allied Insurance Company Ltd.,Financial Services,STARHEALTH,EQ,INE575P01011
 State Bank of India,Financial Services,SBIN,EQ,INE062A01020
@@ -714,9 +714,9 @@ V-Guard Industries Ltd.,Consumer Durables,VGUARD,EQ,INE951I01027
 V-Mart Retail Ltd.,Consumer Services,VMART,EQ,INE665J01013
 V.I.P. Industries Ltd.,Consumer Durables,VIPIND,EQ,INE054A01027
 V2 Retail Ltd.,Consumer Services,V2RETAIL,EQ,INE945H01021
+VALOR ESTATE Ltd.,Realty,DBREALTY,EQ,INE879I01012
 Va Tech Wabag Ltd.,Utilities,WABAG,EQ,INE956G01038
 Vaibhav Global Ltd.,Consumer Durables,VAIBHAVGBL,EQ,INE884A01027
-Valor Estate Ltd.,Realty,DBREALTY,BE,INE879I01012
 Vardhman Textiles Ltd.,Textiles,VTL,EQ,INE825A01020
 Varroc Engineering Ltd.,Automobile and Auto Components,VARROC,EQ,INE665L01035
 Varun Beverages Ltd.,Fast Moving Consumer Goods,VBL,EQ,INE200M01039
