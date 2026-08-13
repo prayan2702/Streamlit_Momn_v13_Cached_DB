@@ -1,0 +1,25 @@
+{
+  "build_date": "2026-08-13",
+  "build_timestamp": "2026-08-13T12:18:04.266602",
+  "build_duration_min": 74.6,
+  "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
+  "ath_start_date": "2000-01-01",
+  "bars_per_chunk": 5000,
+  "max_chunks_per_symbol": 5,
+  "recent_months": 40,
+  "symbols_total": 2127,
+  "symbols_fetched": 2126,
+  "symbols_failed": 1,
+  "failed_list": [
+    "SHUKRAPHAR"
+  ],
+  "close_shape": [
+    827,
+    2126
+  ],
+  "ath_count": 2126,
+  "recent_date_range": [
+    "2023-04-17",
+    "2026-08-13"
+  ]
+}
