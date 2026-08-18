@@ -1,0 +1,26 @@
+{
+  "build_date": "2026-08-18",
+  "build_timestamp": "2026-08-18T12:03:01.634804",
+  "build_duration_min": 90.3,
+  "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
+  "ath_start_date": "2000-01-01",
+  "bars_per_chunk": 5000,
+  "max_chunks_per_symbol": 5,
+  "recent_months": 40,
+  "symbols_total": 2297,
+  "symbols_fetched": 2295,
+  "symbols_failed": 2,
+  "failed_list": [
+    "APOORVA",
+    "SAMBANDAM"
+  ],
+  "close_shape": [
+    828,
+    2295
+  ],
+  "ath_count": 2296,
+  "recent_date_range": [
+    "2023-04-19",
+    "2026-08-18"
+  ]
+}
