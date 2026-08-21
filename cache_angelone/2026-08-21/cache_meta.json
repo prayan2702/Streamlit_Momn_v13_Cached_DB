@@ -1,18 +1,16 @@
 {
-  "build_date": "2026-08-14",
-  "build_time_utc": "15:38:20",
-  "build_duration_min": 248.8,
-  "symbols_total": 2128,
-  "symbols_fetched": 2127,
-  "symbols_failed": 1,
+  "build_date": "2026-08-21",
+  "build_time_utc": "15:13:55",
+  "build_duration_min": 250.6,
+  "symbols_total": 2293,
+  "symbols_fetched": 2293,
+  "symbols_failed": 0,
   "not_in_master": 0,
-  "failed_symbols": [
-    "AAATECH.NS"
-  ],
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-04-14",
-  "data_end": "2026-08-14",
-  "last_date_in_cache": "2026-08-14",
+  "data_start_recent": "2023-04-21",
+  "data_end": "2026-08-21",
+  "last_date_in_cache": "2026-08-21",
   "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
@@ -42,23 +40,23 @@
     ],
     [
       "2021-11-26",
-      "2026-08-15"
+      "2026-08-22"
     ]
   ],
-  "last_chunk_todate": "2026-08-15 15:30",
-  "total_api_calls": 10635,
+  "last_chunk_todate": "2026-08-22 15:30",
+  "total_api_calls": 11465,
   "rate_limit": "3 req/sec",
   "close_shape": [
-    828,
-    2127
+    829,
+    2293
   ],
   "high_shape": [
-    828,
-    2127
+    829,
+    2293
   ],
   "volume_shape": [
-    828,
-    2127
+    829,
+    2293
   ],
-  "ath_count": 2127
+  "ath_count": 2293
 }
