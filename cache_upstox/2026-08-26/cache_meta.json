@@ -1,28 +1,25 @@
 {
-  "build_date": "2026-08-19",
-  "build_time_utc": "12:38:55",
-  "build_duration_min": 66.7,
-  "symbols_total": 2299,
-  "symbols_fetched": 2294,
-  "symbols_failed": 5,
+  "build_date": "2026-08-26",
+  "build_time_utc": "12:14:04",
+  "build_duration_min": 74.2,
+  "symbols_total": 2293,
+  "symbols_fetched": 2291,
+  "symbols_failed": 2,
   "not_in_master": 0,
   "failed_symbols": [
-    "APOORVA.NS",
-    "BLEL.NS",
     "CHOLAFIN.NS",
-    "SAMBANDAM.NS",
-    "SHIPROCKET.NS"
+    "GAJA.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-04-19",
-  "data_end": "2026-08-19",
-  "last_date_in_cache": "2026-08-19",
+  "data_start_recent": "2023-04-26",
+  "data_end": "2026-08-26",
+  "last_date_in_cache": "2026-08-26",
   "today_data_present": true,
-  "today_quotes_fetched": 2289,
+  "today_quotes_fetched": 2286,
   "recent_months": 40,
   "source": "Upstox V3 (historical candle + intraday for today)",
   "today_data_source": "Upstox Intraday API (/v3/historical-candle/intraday)",
-  "upstox_to_date": "2026-08-20",
+  "upstox_to_date": "2026-08-27",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -40,22 +37,22 @@
     ],
     [
       "2020-01-01",
-      "2026-08-20"
+      "2026-08-27"
     ]
   ],
-  "total_api_calls_historical": 6882,
-  "total_api_calls_intraday": 2289,
+  "total_api_calls_historical": 6873,
+  "total_api_calls_intraday": 2286,
   "close_shape": [
     830,
-    2294
+    2291
   ],
   "high_shape": [
     830,
-    2294
+    2291
   ],
   "volume_shape": [
     830,
-    2294
+    2291
   ],
-  "ath_count": 2294
+  "ath_count": 2291
 }
