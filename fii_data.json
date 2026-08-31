@@ -1,6 +1,6 @@
 {
   "last_updated": "2026-08-31",
-  "last_updated_ts": "2026-08-31T19:34:36",
+  "last_updated_ts": "2026-08-31T20:31:36",
   "source": "nsdl_yearwise",
   "fii_net_30d": 36976.45,
   "fii_net_5d": 6734.0,
@@ -8,10 +8,10 @@
   "fii_sell_30d": 0,
   "dii_net_30d": 0,
   "dii_net_5d": 0,
-  "fii_ema5_gt_ema20": true,
+  "fii_ema5_gt_ema20": false,
   "signal": "BULL",
   "score": 1.0,
   "stale": false,
-  "consecutive_bull_days": 44,
+  "consecutive_bull_days": 45,
   "fetch_failed": false
 }
