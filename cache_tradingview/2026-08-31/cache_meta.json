@@ -1,7 +1,7 @@
 {
   "build_date": "2026-08-31",
-  "build_timestamp": "2026-08-31T18:10:28.358405",
-  "build_duration_min": 88.6,
+  "build_timestamp": "2026-08-31T20:35:39.952797",
+  "build_duration_min": 79.4,
   "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
   "ath_start_date": "2000-01-01",
   "bars_per_chunk": 5000,
