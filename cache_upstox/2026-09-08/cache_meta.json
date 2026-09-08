@@ -1,26 +1,25 @@
 {
-  "build_date": "2026-09-01",
-  "build_time_utc": "16:26:20",
-  "build_duration_min": 84.8,
-  "symbols_total": 2304,
-  "symbols_fetched": 2301,
-  "symbols_failed": 3,
+  "build_date": "2026-09-08",
+  "build_time_utc": "15:52:49",
+  "build_duration_min": 72.5,
+  "symbols_total": 2306,
+  "symbols_fetched": 2304,
+  "symbols_failed": 2,
   "not_in_master": 0,
   "failed_symbols": [
     "CHOLAFIN.NS",
-    "SKYWAYS.NS",
-    "SYMBIOTEC.NS"
+    "DEEPA.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-05-01",
-  "data_end": "2026-09-01",
-  "last_date_in_cache": "2026-09-01",
+  "data_start_recent": "2023-05-08",
+  "data_end": "2026-09-08",
+  "last_date_in_cache": "2026-09-08",
   "today_data_present": true,
-  "today_quotes_fetched": 2298,
+  "today_quotes_fetched": 2301,
   "recent_months": 40,
   "source": "Upstox V3 (historical candle + intraday for today)",
   "today_data_source": "Upstox Intraday API (/v3/historical-candle/intraday)",
-  "upstox_to_date": "2026-09-02",
+  "upstox_to_date": "2026-09-09",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -38,22 +37,22 @@
     ],
     [
       "2020-01-01",
-      "2026-09-02"
+      "2026-09-09"
     ]
   ],
-  "total_api_calls_historical": 6903,
-  "total_api_calls_intraday": 2298,
+  "total_api_calls_historical": 6912,
+  "total_api_calls_intraday": 2301,
   "close_shape": [
-    831,
-    2301
+    832,
+    2304
   ],
   "high_shape": [
-    831,
-    2301
+    832,
+    2304
   ],
   "volume_shape": [
-    831,
-    2301
+    832,
+    2304
   ],
-  "ath_count": 2301
+  "ath_count": 2304
 }
