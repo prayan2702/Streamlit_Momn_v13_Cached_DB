@@ -1,19 +1,17 @@
 {
-  "build_date": "2026-09-14",
-  "build_time_utc": "21:18:27",
-  "build_duration_min": 283.2,
-  "symbols_total": 2294,
-  "symbols_fetched": 2293,
+  "build_date": "2026-09-21",
+  "build_time_utc": "21:21:43",
+  "build_duration_min": 284.8,
+  "symbols_total": 2319,
+  "symbols_fetched": 2319,
   "symbols_failed": 0,
-  "not_in_master": 1,
-  "failed_symbols": [
-    "SREEL.NS"
-  ],
+  "not_in_master": 0,
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-05-14",
-  "data_end": "2026-09-14",
-  "last_date_in_cache": "2026-09-11",
-  "today_data_present": false,
+  "data_start_recent": "2023-05-21",
+  "data_end": "2026-09-21",
+  "last_date_in_cache": "2026-09-21",
+  "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
@@ -42,23 +40,23 @@
     ],
     [
       "2021-11-26",
-      "2026-09-15"
+      "2026-09-22"
     ]
   ],
-  "last_chunk_todate": "2026-09-15 15:30",
-  "total_api_calls": 11465,
+  "last_chunk_todate": "2026-09-22 15:30",
+  "total_api_calls": 11595,
   "rate_limit": "3 req/sec",
   "close_shape": [
     829,
-    2292
+    2318
   ],
   "high_shape": [
     829,
-    2292
+    2318
   ],
   "volume_shape": [
     829,
-    2292
+    2318
   ],
-  "ath_count": 2293
+  "ath_count": 2319
 }
