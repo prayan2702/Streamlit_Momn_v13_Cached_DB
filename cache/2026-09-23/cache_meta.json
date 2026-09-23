@@ -1,19 +1,19 @@
 {
-  "build_date": "2026-09-16",
-  "build_time_utc": "15:00:40",
-  "build_duration_min": 4.8,
-  "symbols_total": 2308,
-  "symbols_fetched": 2308,
+  "build_date": "2026-09-23",
+  "build_time_utc": "15:02:48",
+  "build_duration_min": 3.2,
+  "symbols_total": 2321,
+  "symbols_fetched": 2321,
   "symbols_failed": 0,
   "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-05-16",
-  "data_end": "2026-09-16",
-  "last_date_in_cache": "2026-09-16",
+  "data_start_recent": "2023-05-23",
+  "data_end": "2026-09-23",
+  "last_date_in_cache": "2026-09-23",
   "today_data_present": true,
   "recent_months": 40,
   "source": "YFinance",
-  "yfinance_end_exclusive": "2026-09-17",
+  "yfinance_end_exclusive": "2026-09-24",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -21,15 +21,15 @@
   ],
   "close_shape": [
     830,
-    2308
+    2321
   ],
   "high_shape": [
     830,
-    2308
+    2321
   ],
   "volume_shape": [
     830,
-    2308
+    2321
   ],
-  "ath_count": 2308
+  "ath_count": 2321
 }
