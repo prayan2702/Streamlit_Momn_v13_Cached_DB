@@ -1,6 +1,6 @@
 {
   "last_updated": "2026-09-24",
-  "last_updated_ts": "2026-09-24T17:54:50",
+  "last_updated_ts": "2026-09-24T18:45:43",
   "source": "nsdl_yearwise",
   "fii_net_30d": 29631.0,
   "fii_net_5d": 6734.32,
@@ -12,6 +12,6 @@
   "signal": "BULL",
   "score": 1.0,
   "stale": false,
-  "consecutive_bull_days": 83,
+  "consecutive_bull_days": 84,
   "fetch_failed": false
 }
