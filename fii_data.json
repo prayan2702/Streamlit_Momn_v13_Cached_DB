@@ -1,6 +1,6 @@
 {
   "last_updated": "2026-09-25",
-  "last_updated_ts": "2026-09-25T18:01:35",
+  "last_updated_ts": "2026-09-25T19:03:17",
   "source": "yfinance_proxy",
   "fii_net_30d": 2789.34,
   "fii_net_5d": -525.86,
@@ -12,7 +12,7 @@
   "signal": "MILD_BULL",
   "score": 0.5,
   "stale": false,
-  "consecutive_bull_days": 85,
+  "consecutive_bull_days": 86,
   "fetch_failed": false,
   "proxy_note": "Estimated from INDA vs ^NSEI 30D divergence (+0.80%). Not actual FII crore data from NSE/NSDL."
 }
