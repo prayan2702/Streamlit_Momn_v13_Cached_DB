@@ -1,0 +1,26 @@
+{
+  "build_date": "2026-10-09",
+  "build_timestamp": "2026-10-09T18:28:38.266637",
+  "build_duration_min": 95.8,
+  "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
+  "ath_start_date": "2000-01-01",
+  "bars_per_chunk": 5000,
+  "max_chunks_per_symbol": 5,
+  "recent_months": 40,
+  "symbols_total": 2337,
+  "symbols_fetched": 2335,
+  "symbols_failed": 2,
+  "failed_list": [
+    "AGOL",
+    "BELDING"
+  ],
+  "close_shape": [
+    827,
+    2335
+  ],
+  "ath_count": 2335,
+  "recent_date_range": [
+    "2023-06-12",
+    "2026-10-09"
+  ]
+}
