@@ -1,25 +1,25 @@
 {
-  "build_date": "2026-10-21",
-  "build_timestamp": "2026-10-21T16:17:45.304962",
-  "build_duration_min": 80.9,
+  "build_date": "2026-10-28",
+  "build_timestamp": "2026-10-28T17:55:18.914597",
+  "build_duration_min": 83.9,
   "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
   "ath_start_date": "2000-01-01",
   "bars_per_chunk": 5000,
   "max_chunks_per_symbol": 5,
   "recent_months": 40,
-  "symbols_total": 2356,
-  "symbols_fetched": 2355,
+  "symbols_total": 2369,
+  "symbols_fetched": 2368,
   "symbols_failed": 1,
   "failed_list": [
-    "IIRM"
+    "BONDADA"
   ],
   "close_shape": [
     826,
-    2355
+    2368
   ],
-  "ath_count": 2355,
+  "ath_count": 2368,
   "recent_date_range": [
-    "2023-06-22",
-    "2026-10-21"
+    "2023-06-30",
+    "2026-10-28"
   ]
 }
