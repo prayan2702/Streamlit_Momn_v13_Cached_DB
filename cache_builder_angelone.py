@@ -277,8 +277,7 @@ def _fetch_one_chunk(
             columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
             df = pd.DataFrame(raw_data, columns=columns)
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_localize(None)
-            df.set_index('timestamp', inplace=True)
-            df.sort_index(inplace=True)
+            df = df.set_index('timestamp').sort_index()
             return df[['open', 'high', 'low', 'close', 'volume']]
 
         except ValueError:
