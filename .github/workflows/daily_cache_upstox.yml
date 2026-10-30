@@ -14,7 +14,7 @@ env:
 jobs:
   build-cache-upstox:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
 
     steps:
       - name: Checkout repository
@@ -98,6 +98,7 @@ jobs:
           EOF
 
       - name: Commit and push cache_upstox files
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
