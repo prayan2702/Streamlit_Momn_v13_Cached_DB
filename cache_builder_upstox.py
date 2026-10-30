@@ -156,8 +156,7 @@ def _fetch_one_decade(
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             if df["timestamp"].dt.tz is not None:
                 df["timestamp"] = df["timestamp"].dt.tz_localize(None)
-            df.set_index("timestamp", inplace=True)
-            df.sort_index(inplace=True)
+            df = df.set_index("timestamp").sort_index()
             return df[["open", "high", "low", "close", "volume"]]
 
         except ValueError:
