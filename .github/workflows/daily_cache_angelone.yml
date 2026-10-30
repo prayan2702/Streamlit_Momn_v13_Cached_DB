@@ -16,7 +16,7 @@ name: Daily Cache Build — Angel One
 #   ANGELONE_TOTP_SECRET | PAT_TOKEN
 # ════════════════════════════════════════════════════════════
 
-#on:
+on:
   #schedule:
     #- cron: "47 10 * * 1-5"   # Mon-Fri 10:47 UTC = 4:17 PM IST (odd time to avoid delay)
                               
