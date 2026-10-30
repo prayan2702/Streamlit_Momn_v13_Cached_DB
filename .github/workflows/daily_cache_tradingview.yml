@@ -16,8 +16,8 @@ name: Daily Cache Build — TradingView
 # ════════════════════════════════════════════════════════════
 
 on:
-  schedule:
-    - cron: "02 10 * * 1-5"   # Mon-Fri 15:32 UTC = 10:00 PM IST
+  # schedule:
+  #   - cron: "02 10 * * 1-5"   # Mon-Fri 15:32 UTC = 10:00 PM IST
   workflow_dispatch:
 
 env:
