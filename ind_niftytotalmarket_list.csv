@@ -187,19 +187,17 @@ Deepak Fertilisers & Petrochemicals Corp. Ltd.,Chemicals,DEEPAKFERT,EQ,INE501A01
 Deepak Nitrite Ltd.,Chemicals,DEEPAKNTR,EQ,INE288B01029
 Delhivery Ltd.,Services,DELHIVERY,EQ,INE148O01028
 Devyani International Ltd.,Consumer Services,DEVYANI,EQ,INE872J01023
-Diamond Power Infrastructure Ltd.,Capital Goods,DIACABS,BE,INE989C01038
+Diamond Power Infrastructure Ltd.,Capital Goods,DIACABS,EQ,INE989C01038
 Dilip Buildcon Ltd.,Construction,DBL,EQ,INE917M01012
 Divi's Laboratories Ltd.,Healthcare,DIVISLAB,EQ,INE361B01024
 Dixon Technologies (India) Ltd.,Consumer Durables,DIXON,EQ,INE935N01020
 Dr. Lal Path Labs Ltd.,Healthcare,LALPATHLAB,EQ,INE600L01024
 Dr. Reddy's Laboratories Ltd.,Healthcare,DRREDDY,EQ,INE089A01031
 Dummy HEG Ltd.,Capital Goods,DUMMYHEG,EQ,DUM545A01024
-Dummy India Glycols ltd. 1,Healthcare,DUMMYINGL1,EQ,DU1560A01023
-Dummy India Glycols ltd. 2,Fast Moving Consumer Goods,DUMMYINGL2,EQ,DU2560A01023
 Dummy Inox Green Ltd.,Construction,DUMMYINXGN,EQ,DUM510W01014
 Dynamatic Technologies Ltd.,Capital Goods,DYNAMATECH,EQ,INE221B01012
 E.I.D. Parry (India) Ltd.,Fast Moving Consumer Goods,EIDPARRY,EQ,INE126A01031
-E2E NETWORKS Ltd.,Information Technology,E2E,BE,INE255Z01027
+E2E NETWORKS Ltd.,Information Technology,E2E,EQ,INE255Z01027
 EIH Ltd.,Consumer Services,EIHOTEL,EQ,INE230A01023
 EMBASSY OFFICE PARKS REIT,Realty,EMBASSY,RR,INE041025011
 EPL Ltd.,Capital Goods,EPL,EQ,INE255A01020
@@ -216,6 +214,7 @@ Emcure Pharmaceuticals Ltd.,Healthcare,EMCURE,EQ,INE168P01015
 Emmvee Photovoltaic Power Ltd.,Capital Goods,EMMVEE,EQ,INE1C6T01020
 Endurance Technologies Ltd.,Automobile and Auto Components,ENDURANCE,EQ,INE913H01037
 Engineers India Ltd.,Construction,ENGINERSIN,EQ,INE510A01028
+Ennature Bio Pharma Ltd.,Healthcare,ENNATURE,BE,INE2WCT01016
 Entero Healthcare Solutions Ltd.,Consumer Services,ENTERO,EQ,INE010601016
 Enviro Infra Engineers Ltd.,Utilities,EIEL,EQ,INE0LLY01014
 Equitas Small Finance Bank Ltd.,Financial Services,EQUITASBNK,EQ,INE063P01018
@@ -313,6 +312,7 @@ IDBI Bank Ltd.,Financial Services,IDBI,EQ,INE008A01015
 IDFC First Bank Ltd.,Financial Services,IDFCFIRSTB,EQ,INE092T01019
 IFB Industries Ltd.,Consumer Durables,IFBIND,EQ,INE559A01017
 IFCI Ltd.,Financial Services,IFCI,EQ,INE039A01010
+IGL Spirits Ltd.,Fast Moving Consumer Goods,IGLSPIRITS,BE,INE2W6901017
 IIFL Capital Services Ltd.,Financial Services,IIFLCAPS,EQ,INE489L01022
 IIFL Finance Ltd.,Financial Services,IIFL,EQ,INE530B01024
 INOX India Ltd.,Capital Goods,INOXINDIA,EQ,INE616N01034
@@ -488,7 +488,7 @@ Oil & Natural Gas Corporation Ltd.,Oil Gas & Consumable Fuels,ONGC,EQ,INE213A010
 Oil India Ltd.,Oil Gas & Consumable Fuels,OIL,EQ,INE274J01014
 Ola Electric Mobility Ltd.,Automobile and Auto Components,OLAELEC,EQ,INE0LXG01040
 Olectra Greentech Ltd.,Automobile and Auto Components,OLECTRA,EQ,INE260D01016
-Omnitech Engineering Ltd.,Capital Goods,OMNI,EQ,INE0UH301010
+Omnitech Engineering Ltd.,Capital Goods,OMNI,BE,INE0UH301010
 OnEMI Technology Solutions Ltd.,Financial Services,KISSHT,EQ,INE12F801023
 One 97 Communications Ltd.,Financial Services,PAYTM,EQ,INE982J01020
 Onesource Specialty Pharma Ltd.,Healthcare,ONESOURCE,EQ,INE013P01021
@@ -581,7 +581,7 @@ SKY GOLD AND DIAMONDS Ltd.,Consumer Durables,SKYGOLD,EQ,INE01IU01018
 SML Mahindra Ltd.,Capital Goods,SMLMAH,EQ,INE294B01019
 SPR Auto Technologies Ltd.,Automobile and Auto Components,SHRIPISTON,EQ,INE526E01018
 SRF Ltd.,Chemicals,SRF,EQ,INE647A01010
-SRI LOTUS DEVELOPERS AND REALTY Ltd.,Realty,LOTUSDEV,BE,INE0V9Q01010
+SRI LOTUS DEVELOPERS AND REALTY Ltd.,Realty,LOTUSDEV,EQ,INE0V9Q01010
 Safari Industries (India) Ltd.,Consumer Durables,SAFARI,EQ,INE429E01023
 Sagility Ltd.,Information Technology,SAGILITY,EQ,INE0W2G01015
 Sai Life Sciences Ltd.,Healthcare,SAILIFE,EQ,INE570L01029
