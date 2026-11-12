@@ -1,24 +1,22 @@
 {
-  "build_date": "2026-11-05",
-  "build_time_utc": "19:21:21",
-  "build_duration_min": 69.3,
-  "symbols_total": 2395,
-  "symbols_fetched": 2394,
+  "build_date": "2026-11-12",
+  "build_time_utc": "19:44:38",
+  "build_duration_min": 73.7,
+  "symbols_total": 2398,
+  "symbols_fetched": 2398,
   "symbols_failed": 0,
-  "not_in_master": 1,
-  "failed_symbols": [
-    "BRIGHTOUTD.NS"
-  ],
+  "not_in_master": 0,
+  "failed_symbols": [],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-07-05",
-  "data_end": "2026-11-05",
-  "last_date_in_cache": "2026-11-05",
+  "data_start_recent": "2023-07-12",
+  "data_end": "2026-11-12",
+  "last_date_in_cache": "2026-11-12",
   "today_data_present": true,
   "today_quotes_fetched": 0,
   "recent_months": 40,
   "source": "Upstox V3 (historical candle + intraday for today)",
   "today_data_source": "Upstox Intraday API (/v3/historical-candle/intraday)",
-  "upstox_to_date": "2026-11-06",
+  "upstox_to_date": "2026-11-13",
   "symbol_source": "NSE EQUITY_L.csv (direct)",
   "extra_symbols": [
     "GOLDBEES.NS",
@@ -36,22 +34,22 @@
     ],
     [
       "2020-01-01",
-      "2026-11-06"
+      "2026-11-13"
     ]
   ],
-  "total_api_calls_historical": 7182,
+  "total_api_calls_historical": 7194,
   "total_api_calls_intraday": 0,
   "close_shape": [
     830,
-    2394
+    2398
   ],
   "high_shape": [
     830,
-    2394
+    2398
   ],
   "volume_shape": [
     830,
-    2394
+    2398
   ],
-  "ath_count": 2394
+  "ath_count": 2398
 }
