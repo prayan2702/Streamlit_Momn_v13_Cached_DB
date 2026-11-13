@@ -1,20 +1,22 @@
 {
-  "build_date": "2026-11-06",
-  "build_time_utc": "22:21:26",
-  "build_duration_min": 276.9,
-  "symbols_total": 2392,
-  "symbols_fetched": 2389,
-  "symbols_failed": 3,
+  "build_date": "2026-11-13",
+  "build_time_utc": "22:50:12",
+  "build_duration_min": 282.9,
+  "symbols_total": 2393,
+  "symbols_fetched": 2388,
+  "symbols_failed": 5,
   "not_in_master": 0,
   "failed_symbols": [
-    "CARERATING.NS",
-    "CARRARO.NS",
-    "ROTO.NS"
+    "ASMS.NS",
+    "ASPINWALL.NS",
+    "ASSAMENT.NS",
+    "ASTAR.NS",
+    "ASTEC.NS"
   ],
   "data_start_full": "2000-01-01",
-  "data_start_recent": "2023-07-06",
-  "data_end": "2026-11-06",
-  "last_date_in_cache": "2026-11-06",
+  "data_start_recent": "2023-07-13",
+  "data_end": "2026-11-13",
+  "last_date_in_cache": "2026-11-13",
   "today_data_present": true,
   "recent_months": 40,
   "source": "Angel One SmartAPI V2 (ONE_DAY candles)",
@@ -44,11 +46,11 @@
     ],
     [
       "2021-11-26",
-      "2026-11-07"
+      "2026-11-14"
     ]
   ],
-  "last_chunk_todate": "2026-11-07 15:30",
-  "total_api_calls": 11945,
+  "last_chunk_todate": "2026-11-14 15:30",
+  "total_api_calls": 11940,
   "rate_limit": "3 req/sec",
   "close_shape": [
     829,
@@ -62,5 +64,5 @@
     829,
     2388
   ],
-  "ath_count": 2389
+  "ath_count": 2388
 }
