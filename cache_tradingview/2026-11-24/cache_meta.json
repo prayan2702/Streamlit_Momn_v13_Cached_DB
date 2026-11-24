@@ -1,0 +1,25 @@
+{
+  "build_date": "2026-11-24",
+  "build_timestamp": "2026-11-24T21:48:08.715754",
+  "build_duration_min": 76.1,
+  "source": "TradingView (tvDatafeed WebSocket + request_more_data)",
+  "ath_start_date": "2000-01-01",
+  "bars_per_chunk": 5000,
+  "max_chunks_per_symbol": 5,
+  "recent_months": 40,
+  "symbols_total": 2421,
+  "symbols_fetched": 2420,
+  "symbols_failed": 1,
+  "failed_list": [
+    "MITSU"
+  ],
+  "close_shape": [
+    827,
+    2420
+  ],
+  "ath_count": 2420,
+  "recent_date_range": [
+    "2023-07-25",
+    "2026-11-23"
+  ]
+}
